@@ -539,7 +539,8 @@ def _base_css():
 
 def _login_css(bg_b64: str = ""):
     bg_css = (
-        f'url("{bg_b64}") center center / cover no-repeat fixed'
+        f'linear-gradient(to right, transparent 55%, rgba(0,6,35,0.94) 70%), '
+        f'url("{bg_b64}") center/cover no-repeat fixed'
         if bg_b64 else
         "linear-gradient(160deg,#001F5E 0%,#003087 100%)"
     )
@@ -555,21 +556,6 @@ def _login_css(bg_b64: str = ""):
         overflow: hidden !important;
         height: 100vh !important;
         margin: 0 !important; padding: 0 !important;
-    }}
-
-    /* ── Dark gradient veil on right 40% — prevents background image text
-       from bleeding into the login card area at any viewport width ── */
-    html::after {{
-        content: '' !important;
-        position: fixed !important;
-        top: 0 !important; bottom: 0 !important; right: 0 !important;
-        width: 40% !important;
-        background: linear-gradient(to right,
-            transparent 0%,
-            rgba(0,6,35,0.80) 30%,
-            rgba(0,6,35,0.92) 100%) !important;
-        z-index: 100 !important;
-        pointer-events: none !important;
     }}
 
     /* ── Every Streamlit wrapper layer: transparent, no layout ── */
@@ -1024,7 +1010,11 @@ def show_login():
     _setup_done = sheets.hqo_account_exists()
     if not _setup_done:
         st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-        with st.expander("System Administration"):
+        _show_sa = st.session_state.get("show_sysadmin", False)
+        if st.button("⚙️ System Administration", key="btn_sysadmin_toggle",
+                     use_container_width=True):
+            st.session_state["show_sysadmin"] = not _show_sa
+        if st.session_state.get("show_sysadmin"):
             st.caption(
                 "One-time tool to seed Zone and HQO login accounts "
                 "into UserAccess. Protected by an admin setup key."
