@@ -1418,10 +1418,9 @@ def _save_detail_tables(detail_dfs: dict, user: dict, month_year: str, is_locked
 
 def _inject_field_enhancements(fields: list):
     """
-    Inject JS (via components iframe→parent) that:
-      • Shows a floating validation-rule tooltip on HOVER or FOCUS for every
-        field type: number/int inputs, textareas, AND selectboxes
-      • Positions tooltip above the widget container (not the raw input element)
+    Inject JS (via components iframe→parent) that shows a floating
+    validation-rule tooltip on hover AND focus for number, textarea,
+    and selectbox widgets.
     """
     import json
     import streamlit.components.v1 as components
@@ -1439,9 +1438,9 @@ def _inject_field_enhancements(fields: list):
 <script>
 (function(){{
   var T={tj};
-  var pd=window.parent.document, pw=window.parent;
+  var pd=window.parent.document;
 
-  /* ── Create tooltip box once in parent doc ── */
+  /* ── Create tooltip element once ── */
   if(!pd.getElementById('_mis_tip')){{
     var cs=pd.createElement('style');
     cs.textContent=
@@ -1454,23 +1453,15 @@ def _inject_field_enhancements(fields: list):
       '#_mis_tip::after{{content:"";position:absolute;bottom:-8px;left:22px;'+
       'border:8px solid transparent;border-top-color:#001a6e;border-bottom:none}}';
     pd.head.appendChild(cs);
-    var tb=pd.createElement('div');
-    tb.id='_mis_tip';
+    var tb=pd.createElement('div'); tb.id='_mis_tip';
     pd.body.appendChild(tb);
   }}
   var TIP=pd.getElementById('_mis_tip');
 
-  /* ── Get label text from whichever widget container holds el ── */
-  function getLabel(el){{
-    var c=el.closest(
-      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
-    );
-    return c?(c.querySelector('label')||{{}}).innerText||'':'';
-  }}
-
-  /* ── Show tooltip; always position relative to the widget container ── */
-  function showTip(el){{
-    var lb=getLabel(el).trim(), txt=T[lb];
+  /* ── Show tooltip above a container element ── */
+  /* NOTE: tooltip is position:fixed — use viewport coords from
+     getBoundingClientRect() directly; do NOT add scrollY.          */
+  function showTip(txt, refEl){{
     if(!txt)return;
     var pts=txt.split('  ·  ');
     TIP.innerHTML=
@@ -1479,66 +1470,62 @@ def _inject_field_enhancements(fields: list):
         return '<br><span style="opacity:.85">&#183; '+x+'</span>';
       }}).join('');
     TIP.style.display='block';
-    /* Use container bounds so tooltip lines up with the full widget width */
-    var posEl=el.closest(
-      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
-    )||el;
-    var r=posEl.getBoundingClientRect(), h=TIP.offsetHeight||56;
+    var r=refEl.getBoundingClientRect(), h=TIP.offsetHeight||56;
     TIP.style.left=Math.max(8,r.left)+'px';
-    TIP.style.top=(r.top+pw.scrollY-h-12)+'px';
+    TIP.style.top=(r.top-h-12)+'px';
   }}
   function hideTip(){{ TIP.style.display='none'; }}
 
-  /* ── Attach hover + focus handlers for all three widget types ── */
+  /* ── Extract label text from a widget container ── */
+  function labelKey(c){{
+    var lbl=c.querySelector('label');
+    return lbl?lbl.innerText.trim():'';
+  }}
+
+  /* ── Wire up hover + focus for all three widget types ── */
   function setup(){{
 
-    /* Number / int inputs — focus & hover */
-    pd.querySelectorAll('[data-testid="stNumberInput"] input').forEach(function(el){{
-      if(el.dataset.mis)return; el.dataset.mis='1';
-      el.addEventListener('focus',function(){{ showTip(el); }});
-      el.addEventListener('blur', function(){{ hideTip(); }});
-      var ni=el.closest('[data-testid="stNumberInput"]');
-      if(ni&&!ni.dataset.misHov){{
-        ni.dataset.misHov='1';
-        ni.addEventListener('mouseenter',function(){{ showTip(el); }});
-        ni.addEventListener('mouseleave',function(){{ hideTip(); }});
+    /* number / int inputs */
+    pd.querySelectorAll('[data-testid="stNumberInput"]').forEach(function(ni){{
+      if(ni.dataset.mis)return; ni.dataset.mis='1';
+      var txt=T[labelKey(ni)]; if(!txt)return;
+      var el=ni.querySelector('input');
+      ni.addEventListener('mouseenter',function(){{ showTip(txt,ni); }});
+      ni.addEventListener('mouseleave',function(){{ hideTip(); }});
+      if(el){{
+        el.addEventListener('focus',function(){{ showTip(txt,ni); }});
+        el.addEventListener('blur', function(){{ hideTip(); }});
       }}
     }});
 
-    /* Text areas — focus & hover */
-    pd.querySelectorAll('[data-testid="stTextArea"] textarea').forEach(function(ta){{
-      if(ta.dataset.mis)return; ta.dataset.mis='1';
-      ta.addEventListener('focus',function(){{ showTip(ta); }});
-      ta.addEventListener('blur', function(){{ hideTip(); }});
-      var wa=ta.closest('[data-testid="stTextArea"]');
-      if(wa&&!wa.dataset.misHov){{
-        wa.dataset.misHov='1';
-        wa.addEventListener('mouseenter',function(){{ showTip(ta); }});
-        wa.addEventListener('mouseleave',function(){{ hideTip(); }});
+    /* text areas */
+    pd.querySelectorAll('[data-testid="stTextArea"]').forEach(function(wa){{
+      if(wa.dataset.mis)return; wa.dataset.mis='1';
+      var txt=T[labelKey(wa)]; if(!txt)return;
+      var ta=wa.querySelector('textarea');
+      wa.addEventListener('mouseenter',function(){{ showTip(txt,wa); }});
+      wa.addEventListener('mouseleave',function(){{ hideTip(); }});
+      if(ta){{
+        ta.addEventListener('focus',function(){{ showTip(txt,wa); }});
+        ta.addEventListener('blur', function(){{ hideTip(); }});
       }}
     }});
 
-    /* Selectboxes — hover on container + focus on inner combobox input */
+    /* selectboxes */
     pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
       if(sb.dataset.mis)return; sb.dataset.mis='1';
-      /* Always re-query inner element so re-renders are handled */
-      function tipEl(){{
-        return sb.querySelector('[role="combobox"]')||sb.querySelector('input')||sb;
-      }}
-      sb.addEventListener('mouseenter',function(){{ showTip(tipEl()); }});
+      var txt=T[labelKey(sb)]; if(!txt)return;
+      sb.addEventListener('mouseenter',function(){{ showTip(txt,sb); }});
       sb.addEventListener('mouseleave',function(){{ hideTip(); }});
-      var inp=tipEl();
-      if(inp&&inp!==sb){{
-        inp.addEventListener('focus',function(){{ showTip(inp); }});
-        inp.addEventListener('blur', function(){{ hideTip(); }});
-      }}
     }});
   }}
 
   setup();
-  if(pw._misObs)pw._misObs.disconnect();
-  pw._misObs=new MutationObserver(setup);
-  pw._misObs.observe(pd.body,{{childList:true,subtree:true}});
+  var obs=new MutationObserver(setup);
+  obs.observe(pd.body,{{childList:true,subtree:true}});
+  /* store ref so next injection can disconnect the old observer */
+  if(window.parent._misObs)window.parent._misObs.disconnect();
+  window.parent._misObs=obs;
 }})();
 </script>
 """, height=0)
