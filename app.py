@@ -68,8 +68,9 @@ def _assets() -> dict:
         ("left_panel",    "left_panel.png",    "image/png"),
         ("dh_logo",       "logo.png",          "image/png"),
         ("hpcl_dh",       "hpcl_dh.jpg",       "image/jpeg"),
-        ("side_logo",     "side_logo.png",     "image/png"),
-        ("title_banner",  "title_banner.png",  "image/png"),
+        ("side_logo",          "side_logo.png",          "image/png"),
+        ("side_panel_banner",  "side_panel_banner.png",  "image/png"),
+        ("title_banner",       "title_banner.png",       "image/png"),
         ("login_bg",      "login_bg.png",      "image/png"),
     ]:
         try:
@@ -2925,22 +2926,15 @@ def show_dashboard():
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        sl = _assets().get("side_logo")
-        logo_html = (
-            f'<img src="{sl}" style="height:58px;width:auto;'
-            f'object-fit:contain;display:block;">'
-        ) if sl else ""
-        # ── Logo in white rounded card ──────────────────────────────────────────
-        st.markdown(f"""
-        <div style="padding:10px 12px 6px;">
-          <div style="background:white;border-radius:12px;padding:6px 8px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
-                      height:70px;overflow:hidden;
-                      display:flex;align-items:center;justify-content:center;">
-            {logo_html}
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        spb = _assets().get("side_panel_banner")
+        # Full-width banner flush to top, no card/padding — sits on blue sidebar background
+        if spb:
+            st.markdown(
+                f'<div style="margin:0;padding:0;line-height:0;">'
+                f'<img src="{spb}" style="width:100%;display:block;'
+                f'object-fit:cover;border-radius:0;margin:0;padding:0;"></div>',
+                unsafe_allow_html=True,
+            )
 
         # ── Dashboard home button (blue active when on main dashboard view) ──────
         _on_dash = st.session_state.get("selected_section") is None
@@ -3159,19 +3153,16 @@ def _month_selector_bar(user: dict, role_color: str):
 
 def _zone_sidebar(user: dict, title: str, subtitle: str):
     with st.sidebar:
-        sl = _assets().get("side_logo")
-        logo_html = (f'<img src="{sl}" style="height:58px;width:auto;'
-                     f'object-fit:contain;display:block;">') if sl else ""
+        spb = _assets().get("side_panel_banner")
+        if spb:
+            st.markdown(
+                f'<div style="margin:0;padding:0;line-height:0;">'
+                f'<img src="{spb}" style="width:100%;display:block;'
+                f'object-fit:cover;border-radius:0;margin:0;padding:0;"></div>',
+                unsafe_allow_html=True,
+            )
         st.markdown(f"""
-        <div style="padding:10px 12px 6px;">
-          <div style="background:white;border-radius:12px;padding:6px 8px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
-                      height:70px;overflow:hidden;
-                      display:flex;align-items:center;justify-content:center;">
-            {logo_html}
-          </div>
-        </div>
-        <div style="padding:4px 16px 8px;">
+        <div style="padding:6px 16px 8px;">
           <div style="color:#C8D7FF;font-size:9px;font-weight:700;
                       letter-spacing:2px;text-transform:uppercase;">{title}</div>
           <div style="color:#8AABFF;font-size:9px;margin-top:2px;">{subtitle}</div>
