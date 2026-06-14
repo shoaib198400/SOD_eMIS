@@ -27,6 +27,21 @@ import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
+
+def _api_call(fn, *args, retries: int = 6, **kwargs):
+    """Execute a Sheets API call with exponential backoff on 429 quota errors.
+    Waits 2^n seconds between attempts (1 s, 2 s, 4 s, 8 s, 16 s, 32 s)."""
+    for n in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except gspread.exceptions.APIError as exc:
+            resp = getattr(exc, "response", None)
+            code = getattr(resp, "status_code", 0) if resp else 0
+            if code == 429 and n < retries - 1:
+                time.sleep(min(2 ** n, 32))
+            else:
+                raise
+
 _SCOPES = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
@@ -641,7 +656,7 @@ def load_draft(user_id: str, month_year: str) -> dict:
     """Return draft data dict for user+month, or empty dict."""
     try:
         ws   = _ws(TABS["MIS_DRAFT"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         for i, row in enumerate(rows[1:], start=2):
             row = (row + [""] * 5)[:5]
             if row[0].strip() == user_id and row[1].strip() == month_year:
@@ -663,12 +678,12 @@ def _update_submission_status(user_id: str, month_year: str, status: str, pct: f
     # _ensure_ws auto-creates the tab with headers if it doesn't exist yet.
     # Any exception propagates to save_draft which surfaces it as an error message.
     ws      = _ensure_ws(TABS["SUBMISSION_STATUS"], _SS_HEADERS)
-    rows    = ws.get_all_values()
+    rows    = _api_call(ws.get_all_values)
     now_str = datetime.now().isoformat()
     for i, row in enumerate(rows[1:], start=2):
         row_e = (row + [""] * 9)[:9]
         if row_e[0].strip() == user_id and row_e[1].strip() == month_year:
-            ws.update(f"A{i}:I{i}", [[
+            _api_call(ws.update, f"A{i}:I{i}", [[
                 user_id, month_year, status, str(pct),
                 submitted_at or row_e[4] or now_str,
                 locked_by  or row_e[5],
@@ -678,12 +693,11 @@ def _update_submission_status(user_id: str, month_year: str, status: str, pct: f
             ]])
             get_month_status.clear()
             return
-    ws.append_row(
+    _api_call(ws.append_row,
         [user_id, month_year, status, str(pct),
          submitted_at or now_str, locked_by, locked_at, checker_notes, now_str],
         value_input_option="RAW",
     )
-    # Clear cached status so next dashboard read reflects the new value immediately
     get_month_status.clear()
 
 
@@ -729,10 +743,10 @@ def save_draft(user_id: str, month_year: str,
 
         ws = _ws(TABS["MIS_DRAFT"])
         if sheet_row:
-            ws.update(f"A{sheet_row}:E{sheet_row}",
+            _api_call(ws.update, f"A{sheet_row}:E{sheet_row}",
                       [[user_id, month_year, secs_str, now_str, data_str]])
         else:
-            ws.append_row(
+            _api_call(ws.append_row,
                 [user_id, month_year, secs_str, now_str, data_str],
                 value_input_option="RAW",
             )
@@ -2901,13 +2915,13 @@ def sync_tank_master_to_sheet() -> dict:
         return {"ok": False, "rows": 0, "msg": str(exc)}
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
-    """Return list of row-dicts for user+month from an M&I tab (60 s cache)."""
+    """Return list of row-dicts for user+month from an M&I tab (5-min cache)."""
     try:
         headers = _MI_TAB_HEADERS[tab_key]
         ws      = _ensure_ws(TABS[tab_key], headers)
-        all_rows = ws.get_all_values()
+        all_rows = _api_call(ws.get_all_values)
         if len(all_rows) < 2:
             return []
         hdr = all_rows[0]
@@ -2930,9 +2944,9 @@ def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
 def save_mi_data(tab_key: str, user_id: str, month_year: str, rows: list) -> dict:
     """Replace all rows for user+month in an M&I tab with the provided rows list."""
     try:
-        headers = _MI_TAB_HEADERS[tab_key]
-        ws      = _ensure_ws(TABS[tab_key], headers)
-        all_rows = ws.get_all_values()
+        headers  = _MI_TAB_HEADERS[tab_key]
+        ws       = _ensure_ws(TABS[tab_key], headers)
+        all_rows = _api_call(ws.get_all_values)
         hdr = all_rows[0] if all_rows else headers
         try:
             uid_idx = hdr.index("user_id")
@@ -2944,7 +2958,7 @@ def save_mi_data(tab_key: str, user_id: str, month_year: str, rows: list) -> dic
                   if (row + [""] * len(hdr))[uid_idx].strip() == user_id
                   and (row + [""] * len(hdr))[mon_idx].strip() == month_year]
         for idx in reversed(to_del):
-            ws.delete_rows(idx)
+            _api_call(ws.delete_rows, idx)
 
         now_str = datetime.now().isoformat()
         for rec in rows:
@@ -2958,7 +2972,7 @@ def save_mi_data(tab_key: str, user_id: str, month_year: str, rows: list) -> dic
                     out_row.append(now_str)
                 else:
                     out_row.append(str(rec.get(col, "") or ""))
-            ws.append_row(out_row, value_input_option="RAW")
+            _api_call(ws.append_row, out_row, value_input_option="RAW")
 
         load_mi_data.clear()  # invalidate read cache so next load fetches fresh data
         audit_log(user_id, f"SaveMI {tab_key}", f"month={month_year} rows={len(rows)}")
