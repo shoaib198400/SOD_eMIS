@@ -3527,6 +3527,31 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 else:
                     st.error(f"Sync failed: {res['msg']}")
 
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
+                'padding:0 4px 3px;">Add Maker accounts for any locations in '
+                'LocationMaster that are not yet in UserAccess. '
+                'Default password = location code (users must change it).</div>',
+                unsafe_allow_html=True)
+            if st.button("➕ Sync Missing Location Accounts",
+                         use_container_width=True,
+                         key="btn_sync_loc_accounts"):
+                with st.spinner("Reading LocationMaster and adding missing accounts…"):
+                    res = sheets.sync_missing_maker_accounts()
+                if res["ok"]:
+                    added = res.get("added", [])
+                    skipped = res.get("skipped", 0)
+                    if added:
+                        st.success(
+                            f"Added {len(added)} new account(s): {', '.join(added)}. "
+                            f"{skipped} already existed."
+                        )
+                    else:
+                        st.info(f"All {skipped} locations already have accounts.")
+                else:
+                    st.error(f"Sync failed: {res['msg']}")
+
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
@@ -4045,7 +4070,7 @@ def _an_compliance_tab(compliance_data: dict, fy_months: list, mlabels: list, us
         })
     rows_lb.sort(key=lambda r: r["Compliance %"], reverse=True)
     df_lb = pd.DataFrame(rows_lb)
-    if role != "Admin":
+    if role not in ("Admin", "Viewer"):
         df_lb = df_lb.drop(columns=["Zone"], errors="ignore")
     st.dataframe(df_lb, use_container_width=True, hide_index=True)
 
@@ -4060,7 +4085,7 @@ def show_analytics_page(user: dict):
     role = user.get("role", "")
     zone = user.get("zone", "")
 
-    if role in ("Zone", "Admin"):
+    if role in ("Zone", "Admin", "Viewer"):
         _zone_sidebar(user, "ANALYTICS", "Performance Dashboard")
     else:
         with st.sidebar:
@@ -4096,7 +4121,7 @@ def show_analytics_page(user: dict):
         sel_fy_label = st.selectbox("Financial Year", fy_labels, key="an_fy_sel")
         sel_fy       = fy_opts[fy_labels.index(sel_fy_label)]
 
-    if role == "Admin":
+    if role in ("Admin", "Viewer"):
         with col_zone:
             all_zones   = ["All Zones"] + sorted({
                 l.get("zone", "") for l in sheets.get_all_maker_locations() if l.get("zone")
@@ -4332,10 +4357,14 @@ def show_zone_dashboard(user: dict):
 # ── Phase-6: HQO Admin dashboard ─────────────────────────────────────────────
 
 def show_hqo_dashboard(user: dict):
-    """Dashboard for HQO Admin (SODSBU): all zones, all locations, revision approvals."""
+    """Dashboard for HQO Admin (SODSBU) and Viewer: all zones, all locations."""
     _dashboard_css()
 
-    _zone_sidebar(user, "HQO ADMIN", "All Zones — Full Access")
+    is_viewer = user.get("role") == "Viewer"
+    if is_viewer:
+        _zone_sidebar(user, "HQO VIEW", "All Zones — View Only")
+    else:
+        _zone_sidebar(user, "HQO ADMIN", "All Zones — Full Access")
     _dash_header(user)
 
     month_year, month_label = _month_selector_bar(user, "#6d2077")
@@ -4390,67 +4419,6 @@ def show_hqo_dashboard(user: dict):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Pending revision requests ─────────────────────────────────────────────
-    pending_rr = [r for r in sheets.get_revision_requests() if r["status"] == "PENDING_HQO"]
-    if pending_rr:
-        st.markdown(
-            f'<div style="background:#fffde7;border:1.5px solid #f59e0b;border-radius:12px;'
-            f'padding:16px 22px;margin-bottom:16px;">'
-            f'<div style="font-size:15px;font-weight:700;color:#92400e;margin-bottom:12px;">'
-            f'&#9888; Pending Revision Requests ({len(pending_rr)})</div></div>',
-            unsafe_allow_html=True,
-        )
-        for rr in pending_rr:
-            rc1, rc2, rc3 = st.columns([5, 1.2, 1.2])
-            with rc1:
-                st.markdown(
-                    f'<div style="padding:8px 0;">'
-                    f'<strong>#{rr["request_id"]}</strong> &nbsp;·&nbsp; '
-                    f'Zone: <strong>{rr["zone_id"]}</strong> &nbsp;·&nbsp; '
-                    f'Location: <strong>{rr["location_id"]}</strong> &nbsp;·&nbsp; '
-                    f'Month: {rr["month_year"]}<br>'
-                    f'<span style="font-size:12px;color:#555;">{rr["reason"]}</span>'
-                    f'</div>', unsafe_allow_html=True,
-                )
-            with rc2:
-                if st.button("✅ Approve", key=f"hqo_app_{rr['request_id']}",
-                             use_container_width=True, type="primary"):
-                    res = sheets.approve_revision_request(rr["request_id"], user["userId"])
-                    if res["ok"]:
-                        st.success(f"Revision #{rr['request_id']} approved — location unlocked.")
-                        st.rerun()
-                    else:
-                        st.error(res["msg"])
-            with rc3:
-                if st.button("❌ Reject", key=f"hqo_rej_{rr['request_id']}",
-                             use_container_width=True):
-                    st.session_state[f"hqo_reject_open_{rr['request_id']}"] = True
-
-            if st.session_state.get(f"hqo_reject_open_{rr['request_id']}"):
-                rej_note = st.text_input(
-                    "Rejection reason *",
-                    key=f"hqo_rej_note_{rr['request_id']}",
-                    placeholder="Why is this request being rejected?",
-                )
-                if st.button("Confirm Rejection",
-                             key=f"hqo_rej_confirm_{rr['request_id']}",
-                             use_container_width=True):
-                    note = (rej_note or "").strip()
-                    if not note:
-                        st.error("Please enter a rejection reason.")
-                    else:
-                        res = sheets.reject_revision_request(
-                            rr["request_id"], user["userId"], note
-                        )
-                        if res["ok"]:
-                            st.session_state.pop(f"hqo_reject_open_{rr['request_id']}", None)
-                            st.success(f"Revision #{rr['request_id']} rejected.")
-                            st.rerun()
-                        else:
-                            st.error(res["msg"])
-            st.markdown('<hr style="border:none;border-top:1px solid #f0e0a0;margin:4px 0;">',
-                        unsafe_allow_html=True)
-
     # ── All locations with zone filter ────────────────────────────────────────
     all_zones = sorted({r["zone"] for r in all_rows if r.get("zone")})
     zone_opts = ["All Zones"] + all_zones
@@ -4468,11 +4436,64 @@ def show_hqo_dashboard(user: dict):
     )
     _loc_table(filtered_sorted, month_year, viewer_role="Admin", show_revision_btn=False)
 
-    st.markdown("""
+    # ── Pending revision requests — Admin only, not shown to Viewer ───────────
+    if not is_viewer:
+        pending_rr_hqo = [r for r in sheets.get_revision_requests() if r["status"] == "PENDING_HQO"]
+        if pending_rr_hqo:
+            st.markdown(
+                f'<div style="background:#fffde7;border:1.5px solid #f59e0b;border-radius:12px;'
+                f'padding:16px 22px;margin-top:16px;margin-bottom:16px;">'
+                f'<div style="font-size:15px;font-weight:700;color:#92400e;margin-bottom:12px;">'
+                f'&#9888; Pending Revision Requests ({len(pending_rr_hqo)})</div></div>',
+                unsafe_allow_html=True,
+            )
+            for rr in pending_rr_hqo:
+                rc1, rc2, rc3 = st.columns([5, 1.2, 1.2])
+                with rc1:
+                    st.markdown(
+                        f'<div style="padding:8px 0;">'
+                        f'<strong>#{rr["request_id"]}</strong> &nbsp;·&nbsp; '
+                        f'Zone: <strong>{rr["zone_id"]}</strong> &nbsp;·&nbsp; '
+                        f'Location: <strong>{rr["location_id"]}</strong> &nbsp;·&nbsp; '
+                        f'Month: {rr["month_year"]}<br>'
+                        f'<span style="font-size:12px;color:#555;">{rr["reason"]}</span>'
+                        f'</div>', unsafe_allow_html=True,
+                    )
+                with rc2:
+                    if st.button("✅ Approve", key=f"hqo_app_{rr['request_id']}",
+                                 use_container_width=True, type="primary"):
+                        res = sheets.approve_revision_request(rr["request_id"], user["userId"])
+                        if res["ok"]:
+                            st.success(f"Revision #{rr['request_id']} approved — location unlocked.")
+                            st.rerun()
+                        else:
+                            st.error(res["msg"])
+                with rc3:
+                    if st.button("❌ Reject", key=f"hqo_rej_{rr['request_id']}",
+                                 use_container_width=True):
+                        st.session_state[f"hqo_reject_open_{rr['request_id']}"] = True
+
+                if st.session_state.get(f"hqo_reject_open_{rr['request_id']}"):
+                    rej_note = st.text_input(
+                        "Rejection reason *",
+                        key=f"hqo_rej_note_{rr['request_id']}",
+                    )
+                    if st.button("Confirm Reject", key=f"hqo_rej_confirm_{rr['request_id']}",
+                                 type="primary", use_container_width=True):
+                        res = sheets.reject_revision_request(rr["request_id"], rej_note, user["userId"])
+                        if res["ok"]:
+                            st.session_state.pop(f"hqo_reject_open_{rr['request_id']}", None)
+                            st.success(f"Revision #{rr['request_id']} rejected.")
+                            st.rerun()
+                        else:
+                            st.error(res["msg"])
+
+    footer_label = "HQO View" if is_viewer else "HQO Admin View"
+    st.markdown(f"""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
       <span>&#169; 2025 Hindustan Petroleum Corporation Limited.</span>
-      <span>HPCL SOD &nbsp;·&nbsp; HQO Admin View</span>
+      <span>HPCL SOD &nbsp;·&nbsp; {footer_label}</span>
     </div>""", unsafe_allow_html=True)
 
 
@@ -6509,7 +6530,7 @@ def main():
                             st.session_state.get("current_month_label", ""))
             else:
                 show_zone_dashboard(user)
-        elif role == "Admin":
+        elif role in ("Admin", "Viewer"):
             sec = st.session_state.get("selected_section")
             if sec == "chatbot":
                 show_chatbot_page(user)

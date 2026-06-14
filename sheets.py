@@ -273,9 +273,9 @@ def audit_log(loc_code: str, action: str, details: str = ""):
 
 @st.cache_data(ttl=3600)
 def _loc_name_map() -> dict:
-    """Return {location_code_upper: (location_name, loc_type)} from LocationMaster.
-    loc_type column (col 3) values: HPCL | TOP | HMEL.
-    If column absent, loc_type is derived from the location name."""
+    """Return {location_code_upper: (location_name, loc_type, zone)} from LocationMaster.
+    Col A = code, B = name, C = loc_type (HPCL|TOP|HMEL), D = zone (optional).
+    loc_type is derived from name/code pattern if col C is blank."""
     try:
         ws   = _ws(TABS["LOCATION_MASTER"])
         rows = _api_call(ws.get_all_values)
@@ -292,16 +292,16 @@ def _loc_name_map() -> dict:
             if raw_type in ("TOP", "HMEL", "HPCL"):
                 ltype = raw_type
             else:
-                # Derive from name
-                nu = name.upper()
-                cu = code.upper()
+                nu = name.upper(); cu = code.upper()
                 if "HMEL" in nu or "HMEL" in cu:
                     ltype = "HMEL"
                 elif "TOP" in nu or "JAMNAGAR" in nu or "TOP" in cu:
                     ltype = "TOP"
                 else:
                     ltype = "HPCL"
-            m[code.upper()] = (name, ltype)
+            # Column D (index 3) = zone if present
+            zone = str(row[3]).strip() if len(row) > 3 else ""
+            m[code.upper()] = (name, ltype, zone)
         return m
     except Exception:
         return {}
@@ -312,8 +312,9 @@ def _resolve_loc_info(loc_code: str, stored_name: str) -> tuple:
     code_up = loc_code.strip().upper()
     master  = _loc_name_map()
     if code_up in master:
-        name, ltype = master[code_up]
-        # Use stored_name if it looks valid; otherwise use master name
+        entry = master[code_up]
+        name  = entry[0]
+        ltype = entry[1]
         final_name = stored_name.strip() if (
             stored_name.strip() and stored_name.strip().upper() != code_up
         ) else name
@@ -1241,6 +1242,16 @@ def setup_zone_accounts() -> dict:
             added.append("SODSBU")
             audit_log("SYSTEM", "SetupZoneAccount", "Added HQO account SODSBU")
 
+        # View-only account
+        if "SODVIEW" not in existing_ids:
+            ws.append_row(
+                ["SODVIEW", "View Only Access", "ALL", "VIEWMIS", "Viewer",
+                 "", "", "Y"],
+                value_input_option="RAW",
+            )
+            added.append("SODVIEW")
+            audit_log("SYSTEM", "SetupZoneAccount", "Added Viewer account SODVIEW")
+
         try:
             _spreadsheet.clear()   # force next login to re-read UserAccess
         except Exception:
@@ -1304,6 +1315,66 @@ def upsert_zone_account(zone_name: str, new_user_id: str, new_password: str) -> 
         audit_log("SYSTEM", "CreateZoneAccount",
                   f"zone={zone_name} id={new_user_id}")
         return {"ok": True, "action": "created"}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+def sync_missing_maker_accounts(default_password: str = "") -> dict:
+    """Add UserAccess Maker rows for any LocationMaster location not yet in UserAccess.
+
+    Reads LocationMaster (col A=code, B=name, C=loc_type, D=zone).
+    Skips locations already present in UserAccess (any role).
+    Default password = location code if not supplied.
+    Sets is_first = TRUE so users are prompted to change password on first login.
+    Returns {"ok": True, "added": [...], "skipped": count}.
+    """
+    try:
+        # Read LocationMaster
+        lm_ws   = _ws(TABS["LOCATION_MASTER"])
+        lm_rows = _api_call(lm_ws.get_all_values)
+
+        # Read existing UserAccess IDs
+        ua_ws   = _ensure_ws(TABS["USER_ACCESS"], _UA_HEADERS)
+        ua_rows = _api_call(ua_ws.get_all_values)
+        existing_ids = {
+            str(r[0]).strip().upper()
+            for r in ua_rows[1:]
+            if r and str(r[0]).strip()
+        }
+
+        added   = []
+        skipped = 0
+        now_str = datetime.now().isoformat()
+
+        for row in lm_rows[1:]:
+            if len(row) < 2:
+                continue
+            code = str(row[0]).strip()
+            name = str(row[1]).strip()
+            if not code:
+                continue
+            if code.upper() in existing_ids:
+                skipped += 1
+                continue
+
+            zone = str(row[3]).strip() if len(row) > 3 else ""
+            pw   = default_password or code  # default = location code itself
+            ua_ws.append_row(
+                [code, name, zone, pw, "Maker", "TRUE", now_str, "Y"],
+                value_input_option="RAW",
+            )
+            existing_ids.add(code.upper())
+            added.append(code)
+            audit_log("SYSTEM", "SyncMakerAccount",
+                      f"Added Maker account for {code} ({name})")
+
+        # Invalidate location name cache so new locations resolve immediately
+        try:
+            _loc_name_map.clear()
+        except Exception:
+            pass
+
+        return {"ok": True, "added": added, "skipped": skipped}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
