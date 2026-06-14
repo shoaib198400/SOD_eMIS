@@ -156,7 +156,7 @@ def _ensure_ws(tab_name: str, headers: list = None, force_headers: bool = False)
             if not existing or existing[0] != headers:
                 ws.update("A1", [headers])
         return ws
-    except Exception:
+    except gspread.exceptions.WorksheetNotFound:
         cols = max(len(headers) if headers else 10, 26)
         ws   = ss.add_worksheet(title=tab_name, rows=2000, cols=cols)
         if headers:

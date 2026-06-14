@@ -6287,8 +6287,10 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
         unsafe_allow_html=True,
     )
 
-    with st.spinner("Preparing M&I worksheets…"):
-        sheets.ensure_mi_tabs()
+    if not st.session_state.get("_mi_tabs_ensured"):
+        with st.spinner("Preparing M&I worksheets…"):
+            sheets.ensure_mi_tabs()
+        st.session_state["_mi_tabs_ensured"] = True
 
     zone      = user.get("zone", "")
     loc_name  = user.get("locName", "")
