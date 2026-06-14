@@ -539,7 +539,6 @@ def _base_css():
 
 def _login_css(bg_b64: str = ""):
     bg_css = (
-        f'linear-gradient(to right, transparent 55%, rgba(0,6,35,0.94) 70%), '
         f'url("{bg_b64}") center/cover no-repeat fixed'
         if bg_b64 else
         "linear-gradient(160deg,#001F5E 0%,#003087 100%)"
@@ -927,6 +926,15 @@ def _dashboard_css():
 def show_login():
     assets = _assets()
     _login_css(assets.get("login_bg") or "")
+
+    # ── Dark gradient veil injected as a real DOM element (CSS pseudo-elements
+    #    don't render reliably in Streamlit Cloud). Sits between bg image and card. ──
+    st.markdown(
+        '<div style="position:fixed;top:0;bottom:0;left:54%;right:0;'
+        'background:linear-gradient(to right,transparent 0%,rgba(0,5,30,0.93) 30%);'
+        'z-index:50;pointer-events:none;"></div>',
+        unsafe_allow_html=True,
+    )
 
     # ── block-container is position:fixed over the card area — just render content ──
 
