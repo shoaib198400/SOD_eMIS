@@ -527,42 +527,65 @@ def _base_css():
         background:#dce6f7 !important;
     }
 
-    /* ── data_editor AG Grid styling ── */
-    .ag-root-wrapper {
+    /* ── data_editor AG Grid styling (covers all Streamlit AG Grid themes) ── */
+    .ag-root-wrapper,
+    .ag-theme-alpine .ag-root-wrapper,
+    .ag-theme-streamlit .ag-root-wrapper {
         border-radius:10px !important; overflow:hidden !important;
         border:1.5px solid #b0c8f8 !important;
         box-shadow:0 2px 12px rgba(0,26,110,0.10) !important;
     }
-    .ag-header {
+    .ag-header,
+    .ag-theme-alpine .ag-header,
+    .ag-theme-streamlit .ag-header {
         background:linear-gradient(90deg,#001a6e 0%,#0033A0 100%) !important;
         border-bottom:2px solid #4a80d0 !important;
     }
-    .ag-header-row { background:transparent !important; }
-    .ag-header-cell {
+    .ag-header-row,
+    .ag-theme-alpine .ag-header-row,
+    .ag-theme-streamlit .ag-header-row { background:transparent !important; }
+    .ag-header-cell,
+    .ag-theme-alpine .ag-header-cell,
+    .ag-theme-streamlit .ag-header-cell {
         background:transparent !important;
         border-right:1px solid rgba(255,255,255,0.18) !important;
     }
-    .ag-header-cell-text {
+    .ag-header-cell-text,
+    .ag-theme-alpine .ag-header-cell-text,
+    .ag-theme-streamlit .ag-header-cell-text {
         color:#ffffff !important; font-weight:700 !important;
         font-size:11.5px !important; letter-spacing:0.3px !important;
     }
-    .ag-header-cell-label { justify-content:center !important; }
-    .ag-header-icon, .ag-header-icon svg { color:#cfe0ff !important; fill:#cfe0ff !important; }
-    .ag-sort-indicator-icon { color:#cfe0ff !important; }
+    .ag-header-cell-label,
+    .ag-theme-alpine .ag-header-cell-label,
+    .ag-theme-streamlit .ag-header-cell-label { justify-content:center !important; }
+    .ag-header-icon, .ag-header-icon svg,
+    .ag-theme-alpine .ag-header-icon, .ag-theme-alpine .ag-header-icon svg,
+    .ag-theme-streamlit .ag-header-icon, .ag-theme-streamlit .ag-header-icon svg {
+        color:#cfe0ff !important; fill:#cfe0ff !important;
+    }
+    .ag-sort-indicator-icon,
+    .ag-theme-alpine .ag-sort-indicator-icon,
+    .ag-theme-streamlit .ag-sort-indicator-icon { color:#cfe0ff !important; }
     /* Row zebra & hover */
-    .ag-row-odd  { background:#f0f5ff !important; }
-    .ag-row-even { background:#ffffff !important; }
-    .ag-row:hover { background:#dce8ff !important; }
+    .ag-row-odd, .ag-theme-alpine .ag-row-odd, .ag-theme-streamlit .ag-row-odd
+        { background:#f0f5ff !important; }
+    .ag-row-even, .ag-theme-alpine .ag-row-even, .ag-theme-streamlit .ag-row-even
+        { background:#ffffff !important; }
+    .ag-row:hover, .ag-theme-alpine .ag-row:hover, .ag-theme-streamlit .ag-row:hover
+        { background:#dce8ff !important; }
     /* Center data cells */
-    .ag-cell {
+    .ag-cell,
+    .ag-theme-alpine .ag-cell,
+    .ag-theme-streamlit .ag-cell {
         text-align:center !important; font-size:13px !important;
         display:flex !important; align-items:center !important;
         justify-content:center !important;
     }
-    /* Add row button area */
-    .ag-full-width-row { background:#f8faff !important; }
-    /* Column resize handle */
-    .ag-header-cell-resize::after { background:#7aabff !important; }
+    .ag-full-width-row, .ag-theme-alpine .ag-full-width-row,
+    .ag-theme-streamlit .ag-full-width-row { background:#f8faff !important; }
+    .ag-header-cell-resize::after, .ag-theme-alpine .ag-header-cell-resize::after,
+    .ag-theme-streamlit .ag-header-cell-resize::after { background:#7aabff !important; }
 
     /* ── Alerts ── */
     [data-testid="stAlert"] {
@@ -1123,6 +1146,26 @@ def _dashboard_css():
     h2 { font-size:20px !important; font-weight:700 !important; color:#002b8f !important; }
     h3 { font-size:16px !important; font-weight:700 !important; color:#002b8f !important; }
     p  { font-size:14px !important; color:#2d3a52 !important; line-height:1.65 !important; }
+
+    /* ── .mis-tbl — HTML table used for S5A summaries and detail-table read views ── */
+    table.mis-tbl {
+        width:100%; border-collapse:collapse; font-size:13px;
+        margin-bottom:10px; border-radius:10px; overflow:hidden;
+        box-shadow:0 2px 10px rgba(0,26,110,0.09);
+    }
+    table.mis-tbl th {
+        background:linear-gradient(135deg,#001060 0%,#002b8f 100%);
+        color:#fff; font-weight:700; padding:9px 13px;
+        text-align:center; font-size:11.5px;
+        letter-spacing:0.4px; text-transform:uppercase; border:none;
+    }
+    table.mis-tbl td {
+        padding:7px 12px; text-align:center;
+        border-bottom:1px solid #edf1fb; color:#1a2a4a;
+        vertical-align:middle;
+    }
+    table.mis-tbl tbody tr:nth-child(even) td { background:#f0f4ff; }
+    table.mis-tbl tbody tr:hover td { background:#dce6f7; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1483,6 +1526,22 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
         elif t == "select":
             col_cfg[k] = st.column_config.SelectboxColumn(lbl, options=cfg["opts"])
 
+    if is_locked:
+        # Read-only view: render as styled HTML table (bypasses canvas renderer)
+        st.markdown(
+            f'<div class="sub-header" style="margin-top:22px;">&#128203; &nbsp; {ui["title"]}</div>',
+            unsafe_allow_html=True,
+        )
+        if df_init.empty:
+            st.info("No records entered.")
+        else:
+            display_df = df_init.rename(
+                columns={k: v["label"] for k, v in ui["cols"].items()}
+            )
+            html = display_df.to_html(index=False, escape=True, border=0, classes="mis-tbl")
+            st.markdown(html, unsafe_allow_html=True)
+        return df_init
+
     st.markdown(
         f'<div class="sub-header" style="margin-top:22px;">'
         f'&#128203; &nbsp; {ui["title"]}'
@@ -1497,7 +1556,7 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
         key=f"de_{tab_key}_{mc}",
         num_rows="dynamic",
         use_container_width=True,
-        disabled=is_locked,
+        disabled=False,
         column_config=col_cfg,
         hide_index=True,
     )
@@ -2165,14 +2224,13 @@ def show_review(user: dict, month_year: str, month_label: str):
             if rc_rows:
                 ui   = _DETAIL_UI["RAILWAY_CLAIMS"]
                 keys = list(ui["cols"].keys())
+                lbl_map = {k: v["label"] for k, v in ui["cols"].items()}
+                df_rc = pd.DataFrame(rc_rows, columns=keys).rename(columns=lbl_map)
                 st.markdown(
                     '<div class="sub-header" style="font-size:12px;padding:7px 16px;">'
-                    '&#128203; &nbsp; Railway Claims</div>',
+                    '&#128203; &nbsp; Railway Claims</div>'
+                    + df_rc.to_html(index=False, escape=True, border=0, classes="mis-tbl"),
                     unsafe_allow_html=True,
-                )
-                st.dataframe(
-                    pd.DataFrame(rc_rows, columns=keys),
-                    use_container_width=True, hide_index=True,
                 )
         elif sec_num == 10:
             for tk in ("IRR_DETAILS", "LEGAL_CASES"):
@@ -2180,14 +2238,13 @@ def show_review(user: dict, month_year: str, month_label: str):
                 if tk_rows:
                     ui   = _DETAIL_UI[tk]
                     keys = list(ui["cols"].keys())
+                    lbl_map = {k: v["label"] for k, v in ui["cols"].items()}
+                    df_tk = pd.DataFrame(tk_rows, columns=keys).rename(columns=lbl_map)
                     st.markdown(
                         f'<div class="sub-header" style="font-size:12px;padding:7px 16px;">'
-                        f'&#128203; &nbsp; {ui["title"]}</div>',
+                        f'&#128203; &nbsp; {ui["title"]}</div>'
+                        + df_tk.to_html(index=False, escape=True, border=0, classes="mis-tbl"),
                         unsafe_allow_html=True,
-                    )
-                    st.dataframe(
-                        pd.DataFrame(tk_rows, columns=keys),
-                        use_container_width=True, hide_index=True,
                     )
 
     # ── Checker decision panel ────────────────────────────────────────────────
@@ -4842,12 +4899,13 @@ def _mi_summary_table(rows: list, columns: list):
         return
     import pandas as pd
     df = pd.DataFrame(rows, columns=columns)
+    html = df.to_html(index=False, escape=True, border=0, classes="mis-tbl")
     st.markdown(
         '<div style="font-size:12px;font-weight:700;color:#001a6e;'
-        'margin:10px 0 4px;letter-spacing:0.3px;">📊 Summary — rows entered so far</div>',
+        'margin:10px 0 4px;letter-spacing:0.3px;">&#128202; Summary — rows entered so far</div>'
+        + html,
         unsafe_allow_html=True,
     )
-    st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def _na_checkbox(label: str, key: str) -> bool:
