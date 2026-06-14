@@ -1,0 +1,31 @@
+# Streamlit secrets — NEVER commit
+.streamlit/secrets.toml
+
+# Google service account credentials
+*.json
+!package.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+env/
+
+# Local dev / backups
+*.bak
+*.tmp
+*.log
+=*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
