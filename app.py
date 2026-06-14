@@ -2196,8 +2196,9 @@ def show_review(user: dict, month_year: str, month_label: str):
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 def _dash_header(user: dict):
-    tb       = _assets().get("title_banner")
-    tb_html  = (f'<img src="{tb}" style="height:60px;width:auto;'
+    # SOD logo (1:1 square) displayed in the centre of the header bar
+    tb       = _assets().get("side_logo")
+    tb_html  = (f'<img src="{tb}" style="height:68px;width:68px;'
                 f'object-fit:contain;display:block;">' if tb else "")
 
     # ── Single unified banner: title LEFT · logo CENTRE · badge RIGHT ────────
@@ -2925,9 +2926,10 @@ def show_dashboard():
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        sl = _assets().get("side_logo")
+        # HPCL corporate banner (2.76:1 wide) shown in sidebar white card
+        sl = _assets().get("title_banner")
         logo_html = (
-            f'<img src="{sl}" style="height:58px;width:auto;'
+            f'<img src="{sl}" style="height:46px;width:auto;max-width:100%;'
             f'object-fit:contain;display:block;">'
         ) if sl else ""
         # ── Logo in white rounded card ──────────────────────────────────────────
@@ -3159,8 +3161,8 @@ def _month_selector_bar(user: dict, role_color: str):
 
 def _zone_sidebar(user: dict, title: str, subtitle: str):
     with st.sidebar:
-        sl = _assets().get("side_logo")
-        logo_html = (f'<img src="{sl}" style="height:58px;width:auto;'
+        sl = _assets().get("title_banner")
+        logo_html = (f'<img src="{sl}" style="height:46px;width:auto;max-width:100%;'
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
         <div style="padding:10px 12px 6px;">
