@@ -4759,19 +4759,25 @@ def show_reports_page(user: dict):
             unsafe_allow_html=True,
         )
 
-        _outlook_ok, _outlook_err = _emails.outlook_available()
-        if not _outlook_ok:
+        _email_ok, _email_err = _emails.email_configured()
+        if not _email_ok:
             st.markdown(
                 f'<div style="background:#fff8e1;border:1.5px solid #f59e0b;border-radius:12px;'
                 f'padding:14px 20px;margin-bottom:12px;">'
                 f'<div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:6px;">'
-                f'&#9993;&nbsp; Outlook Required for Email</div>'
+                f'&#9993;&nbsp; Email Setup Required</div>'
                 f'<div style="font-size:13px;color:#78350f;line-height:1.7;">'
-                f'{_outlook_err}<br><br>'
-                f'<strong>How to enable:</strong><br>'
-                f'1. Open <strong>Microsoft Outlook</strong> on this PC<br>'
-                f'2. Ensure <strong>shoaibrehman@hpcl.in</strong> is configured<br>'
-                f'3. Refresh this page — the Send button will appear'
+                f'SMTP credentials not found. Add the following to '
+                f'<strong>Streamlit Cloud → Settings → Secrets</strong>:<br><br>'
+                f'<code style="background:#fef3c7;padding:8px 12px;border-radius:6px;'
+                f'display:block;font-size:12px;white-space:pre-wrap;">'
+                f'[email]\nsmtp_host     = "smtp.gmail.com"\nsmtp_port     = 587\n'
+                f'smtp_user     = "your-gmail@gmail.com"\n'
+                f'smtp_password = "your-app-password"\n'
+                f'sender_name   = "HPCL SOD MIS"'
+                f'</code><br>'
+                f'Use a Gmail account with an <strong>App Password</strong> '
+                f'(Google Account → Security → 2-Step Verification → App Passwords).'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
@@ -4782,7 +4788,7 @@ def show_reports_page(user: dict):
                 f'<div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:8px;">'
                 f'Send Reminder Emails to Non-Submitting Locations</div>'
                 f'<div style="font-size:13px;color:#78350f;">'
-                f'{len(pending_zones)} zone(s) with pending locations will receive emails.'
+                f'{len(pending_zones)} zone(s) with pending locations will receive emails via SMTP.'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )

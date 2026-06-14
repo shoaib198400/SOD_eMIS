@@ -1,21 +1,27 @@
-"""HPCL SOD MIS — Email notifications via local Microsoft Outlook (Phase 9).
+"""HPCL SOD MIS — Email notifications via SMTP (cloud-compatible).
 
-Emails are sent through the Outlook desktop application running on the
-same Windows machine as this Streamlit app. No passwords are required —
-Outlook uses its existing HPCL account authentication.
+Works on Streamlit Cloud (Linux) and local Windows alike.
+Credentials are read from st.secrets["email"]:
 
-Requirements:
-  • Microsoft Outlook must be installed and OPEN on this PC
-  • shoaibrehman@hpcl.in must be configured as an account in Outlook
-  • pywin32 installed:  pip install pywin32
+  [email]
+  smtp_host     = "smtp.gmail.com"
+  smtp_port     = 587
+  smtp_user     = "your-sender@gmail.com"
+  smtp_password = "your-app-password"
+  sender_name   = "HPCL SOD MIS"      # optional display name
 """
 
-import platform
+import smtplib
+import ssl
 from datetime import date
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+import streamlit as st
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-SENDER_EMAIL = "shoaibrehman@hpcl.in"
+SENDER_EMAIL = "shoaibrehman@hpcl.in"   # display / Reply-To address
 
 BCC_EMAILS = [
     "SOD.OPNS.HQO@hpcl.in",
@@ -37,7 +43,7 @@ ZONE_EMAIL_MAP = {
     "Noida (UP-West) Zone": {"to": "aradhnat@hpcl.in",                     "cc": "chraghu@hpcl.in"},
     "North Central Zone":   {"to": "rvpandey@hpcl.in",                     "cc": "adeshmukh@hpcl.in"},
     "North West Zone":      {"to": "sanjaykdewangan@hpcl.in",              "cc": "NWZ.OND.IC@hpcl.in"},
-    "North Zone (NZ)":      {"to": "ajaygr@hpcl.in",                      "cc": "NZ.OND.IC@hpcl.in"},
+    "North Zone (NZ)":      {"to": "ajaygr@hpcl.in",                       "cc": "NZ.OND.IC@hpcl.in"},
     "Patna Zone":           {"to": "ajaisingh@hpcl.in",                    "cc": "dastidar@hpcl.in"},
     "South Central Zone":   {"to": "suryabv@hpcl.in",                      "cc": "SCRZ.OND.IC@hpcl.in"},
     "South Zone":           {"to": "venkates@hpcl.in",                     "cc": "SZ.OND.IC@hpcl.in"},
@@ -45,47 +51,45 @@ ZONE_EMAIL_MAP = {
 }
 
 
-# ── Outlook availability check ────────────────────────────────────────────────
+# ── SMTP credential helper ─────────────────────────────────────────────────────
 
-def outlook_available() -> tuple:
-    """Return (True, '') if Outlook COM is reachable, else (False, reason_str)."""
-    if platform.system() != "Windows":
-        return False, (
-            "Outlook email requires Windows. "
-            "Run the app locally on your Windows PC with Outlook open."
-        )
+def _smtp_cfg() -> dict | None:
+    """Return SMTP config dict from st.secrets, or None if not configured."""
     try:
-        import win32com.client  # noqa: F401
-        import pythoncom        # noqa: F401
-    except ImportError:
-        return False, (
-            "pywin32 is not installed. "
-            "Run:  pip install pywin32  then restart the app."
-        )
-    try:
-        import win32com.client
-        import pythoncom
-        pythoncom.CoInitialize()
-        try:
-            win32com.client.Dispatch("Outlook.Application")
-        finally:
-            pythoncom.CoUninitialize()
-    except Exception as exc:
-        return False, f"Outlook is not running or not installed: {exc}"
-    return True, ""
-
-
-def _get_sender_account(outlook):
-    """Return the Outlook Account object for SENDER_EMAIL, or None."""
-    try:
-        accounts = outlook.GetNamespace("MAPI").Accounts
-        for i in range(1, accounts.Count + 1):
-            acct = accounts.Item(i)
-            if acct.SmtpAddress.lower() == SENDER_EMAIL.lower():
-                return acct
+        cfg = st.secrets.get("email", {})
+        if cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"):
+            return {
+                "host":     str(cfg["smtp_host"]),
+                "port":     int(cfg.get("smtp_port", 587)),
+                "user":     str(cfg["smtp_user"]),
+                "password": str(cfg["smtp_password"]),
+                "name":     str(cfg.get("sender_name", "HPCL SOD MIS")),
+            }
     except Exception:
         pass
     return None
+
+
+def email_configured() -> tuple:
+    """Return (True, '') if SMTP credentials are present, else (False, reason)."""
+    cfg = _smtp_cfg()
+    if cfg:
+        return True, ""
+    return False, (
+        "Email credentials not configured in Streamlit secrets.\n\n"
+        "Add the following to your secrets (Settings → Secrets on Streamlit Cloud):\n\n"
+        "[email]\n"
+        'smtp_host     = "smtp.gmail.com"\n'
+        "smtp_port     = 587\n"
+        'smtp_user     = "your-gmail@gmail.com"\n'
+        'smtp_password = "your-app-password"\n'
+        'sender_name   = "HPCL SOD MIS"'
+    )
+
+
+# kept for backward-compat with any existing callers
+def outlook_available() -> tuple:
+    return email_configured()
 
 
 # ── HTML email builder ────────────────────────────────────────────────────────
@@ -186,48 +190,50 @@ def _build_email_html(zone_name: str, month_year: str,
 
 def send_zone_reminder(zone_name: str, month_year: str,
                        pending_locs: list, due_date: date) -> dict:
-    """Send one reminder email for a zone through Outlook COM."""
+    """Send one reminder email for a zone via SMTP."""
     contacts = ZONE_EMAIL_MAP.get(zone_name)
     if not contacts:
         return {"ok": False, "msg": f"No email contacts configured for: {zone_name}"}
 
-    try:
-        import win32com.client
-        import pythoncom
-    except ImportError:
-        return {"ok": False, "msg": "pywin32 is not installed. Run: pip install pywin32"}
+    cfg = _smtp_cfg()
+    if not cfg:
+        return {"ok": False, "msg": "Email not configured. Add [email] section to Streamlit secrets."}
 
     try:
-        pythoncom.CoInitialize()
-        try:
-            outlook = win32com.client.Dispatch("Outlook.Application")
+        today   = date.today()
+        overdue = today > due_date
 
-            mail = outlook.CreateItem(0)  # 0 = olMailItem
+        to_list  = [e.strip() for e in contacts["to"].split(";") if e.strip()]
+        cc_list  = [e.strip() for e in contacts["cc"].split(";") if e.strip()]
+        bcc_list = list(BCC_EMAILS)
+        all_rcpt = to_list + cc_list + bcc_list
 
-            # Use shoaibrehman@hpcl.in account if present
-            acct = _get_sender_account(outlook)
-            if acct:
-                mail.SendUsingAccount = acct
+        subject = (
+            f"OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
+            if overdue else
+            f"Reminder — MIS Submission Pending | {zone_name} | {month_year}"
+        )
 
-            to_list  = [e.strip() for e in contacts["to"].split(";") if e.strip()]
-            cc_list  = [e.strip() for e in contacts["cc"].split(";") if e.strip()]
-            bcc_list = list(BCC_EMAILS)
+        msg = MIMEMultipart("alternative")
+        msg["Subject"]  = subject
+        msg["From"]     = f"{cfg['name']} <{cfg['user']}>"
+        msg["To"]       = "; ".join(to_list)
+        msg["CC"]       = "; ".join(cc_list)
+        msg["Reply-To"] = SENDER_EMAIL
 
-            mail.To      = "; ".join(to_list)
-            mail.CC      = "; ".join(cc_list)
-            mail.BCC     = "; ".join(bcc_list)
+        msg.attach(MIMEText(
+            _build_email_html(zone_name, month_year, pending_locs, due_date),
+            "html",
+            "utf-8",
+        ))
 
-            today   = date.today()
-            overdue = today > due_date
-            mail.Subject = (
-                f"⚠ OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
-                if overdue else
-                f"Reminder — MIS Submission Pending | {zone_name} | {month_year}"
-            )
-            mail.HTMLBody = _build_email_html(zone_name, month_year, pending_locs, due_date)
-            mail.Send()
-        finally:
-            pythoncom.CoUninitialize()
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(cfg["host"], cfg["port"]) as server:
+            server.ehlo()
+            server.starttls(context=ctx)
+            server.login(cfg["user"], cfg["password"])
+            server.sendmail(cfg["user"], all_rcpt, msg.as_string())
+
         return {"ok": True}
 
     except Exception as exc:
@@ -240,8 +246,8 @@ def send_all_reminders(month_year: str,
                        all_location_rows: list,
                        due_date: date) -> dict:
     """Send reminder emails for every zone that has non-submitted locations."""
-    avail, err = outlook_available()
-    if not avail:
+    ok, err = email_configured()
+    if not ok:
         return {"ok": False, "sent": 0, "failed": 0, "errors": [], "msg": err}
 
     pending_by_zone: dict = {}
@@ -270,13 +276,11 @@ def send_all_reminders(month_year: str,
             errors.append(f"{zone_name}: {res.get('msg', 'unknown error')}")
 
     all_ok = (failed_count == 0)
-    if all_ok:
-        msg = f"Reminder emails sent to {sent_count} zone(s) from {SENDER_EMAIL}."
-    else:
-        msg = (
-            f"Sent: {sent_count} zone(s). Failed: {failed_count}. "
-            + "Errors: " + "; ".join(errors)
-        )
+    msg = (
+        f"Reminder emails sent to {sent_count} zone(s) via SMTP."
+        if all_ok else
+        f"Sent: {sent_count}. Failed: {failed_count}. Errors: " + "; ".join(errors)
+    )
     return {
         "ok": all_ok,
         "sent": sent_count,
