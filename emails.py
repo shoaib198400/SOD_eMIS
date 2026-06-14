@@ -1,27 +1,24 @@
-"""HPCL SOD MIS — Email notifications via SMTP (cloud-compatible).
+"""HPCL SOD MIS — Email notifications via Microsoft Outlook COM.
 
-Works on Streamlit Cloud (Linux) and local Windows alike.
-Credentials are read from st.secrets["email"]:
+Emails are sent through the Outlook desktop application running on the
+same Windows machine as this Streamlit app.  No SMTP credentials needed —
+Outlook uses the currently signed-in HPCL account (shoaibrehman@hpcl.in).
 
-  [email]
-  smtp_host     = "smtp.gmail.com"
-  smtp_port     = 587
-  smtp_user     = "your-sender@gmail.com"
-  smtp_password = "your-app-password"
-  sender_name   = "HPCL SOD MIS"      # optional display name
+Requirements (local only):
+  • Microsoft Outlook must be installed and OPEN on this PC
+  • shoaibrehman@hpcl.in must be the active Outlook account
+  • pywin32 installed:  pip install pywin32
+
+When running on Streamlit Cloud (Linux), email is not available and the
+UI shows an informational notice — this is expected.
 """
 
-import smtplib
-import ssl
+import platform
 from datetime import date
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
-import streamlit as st
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-SENDER_EMAIL = "shoaibrehman@hpcl.in"   # display / Reply-To address
+SENDER_EMAIL = "shoaibrehman@hpcl.in"
 
 BCC_EMAILS = [
     "SOD.OPNS.HQO@hpcl.in",
@@ -51,56 +48,31 @@ ZONE_EMAIL_MAP = {
 }
 
 
-# ── SMTP credential helper ─────────────────────────────────────────────────────
-
-def _smtp_cfg() -> dict | None:
-    """Return SMTP config dict from st.secrets, or None if not configured.
-
-    Secrets keys (under [email]):
-      smtp_host     – SMTP server (e.g. smtp.office365.com)
-      smtp_port     – default 587
-      smtp_user     – login username (usually the sending email address)
-      smtp_password – SMTP/app password
-      from_email    – optional From address; defaults to smtp_user
-      sender_name   – display name; default "HPCL SOD MIS"
-    """
-    try:
-        cfg = st.secrets.get("email", {})
-        if cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"):
-            user = str(cfg["smtp_user"])
-            return {
-                "host":       str(cfg["smtp_host"]),
-                "port":       int(cfg.get("smtp_port", 587)),
-                "user":       user,
-                "password":   str(cfg["smtp_password"]),
-                "from_email": str(cfg.get("from_email", user)),
-                "name":       str(cfg.get("sender_name", "HPCL SOD MIS")),
-            }
-    except Exception:
-        pass
-    return None
-
-
-_O365_TEMPLATE = (
-    '[email]\n'
-    'smtp_host     = "smtp.office365.com"\n'
-    'smtp_port     = 587\n'
-    'smtp_user     = "shoaibrehman@hpcl.in"\n'
-    'smtp_password = "your-hpcl-password"\n'
-    'from_email    = "shoaibrehman@hpcl.in"\n'
-    'sender_name   = "HPCL SOD MIS"'
-)
-
+# ── Outlook availability check ────────────────────────────────────────────────
 
 def email_configured() -> tuple:
-    """Return (True, '') if SMTP credentials are present, else (False, reason)."""
-    cfg = _smtp_cfg()
-    if cfg:
+    """Return (True, '') if Outlook COM is reachable, else (False, reason)."""
+    if platform.system() != "Windows":
+        return False, "local_only"   # sentinel — not an error, just local feature
+    try:
+        import win32com.client  # noqa: F401
+        import pythoncom        # noqa: F401
+    except ImportError:
+        return False, "pywin32 not installed — run: pip install pywin32"
+    try:
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        try:
+            win32com.client.Dispatch("Outlook.Application")
+        finally:
+            pythoncom.CoUninitialize()
         return True, ""
-    return False, _O365_TEMPLATE
+    except Exception as exc:
+        return False, f"Outlook is not running or not installed: {exc}"
 
 
-# kept for backward-compat with any existing callers
+# backward-compat alias
 def outlook_available() -> tuple:
     return email_configured()
 
@@ -168,7 +140,8 @@ def _build_email_html(zone_name: str, month_year: str,
 
       {overdue_banner}
 
-      <table style="width:100%;border-collapse:collapse;margin-top:16px;border-radius:8px;overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;margin-top:16px;
+                    border-radius:8px;overflow:hidden;">
         <thead>
           <tr style="background:#002B8F;">
             <th style="padding:10px 12px;color:white;text-align:left;font-size:13px;">Location Code</th>
@@ -203,54 +176,63 @@ def _build_email_html(zone_name: str, month_year: str,
 
 def send_zone_reminder(zone_name: str, month_year: str,
                        pending_locs: list, due_date: date) -> dict:
-    """Send one reminder email for a zone via SMTP."""
+    """Send one reminder email for a zone through Outlook COM.
+    Falls back to saving as Outlook draft if direct Send() fails.
+    """
     contacts = ZONE_EMAIL_MAP.get(zone_name)
     if not contacts:
         return {"ok": False, "msg": f"No email contacts configured for: {zone_name}"}
 
-    cfg = _smtp_cfg()
-    if not cfg:
-        return {"ok": False, "msg": "Email not configured. Add [email] section to Streamlit secrets."}
+    try:
+        import pythoncom
+        import win32com.client as win32
+    except ImportError:
+        return {"ok": False, "msg": "pywin32 not installed. Run: pip install pywin32"}
 
     try:
         today   = date.today()
         overdue = today > due_date
-
-        to_list  = [e.strip() for e in contacts["to"].split(";") if e.strip()]
-        cc_list  = [e.strip() for e in contacts["cc"].split(";") if e.strip()]
-        bcc_list = list(BCC_EMAILS)
-        all_rcpt = to_list + cc_list + bcc_list
-
         subject = (
             f"OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
             if overdue else
             f"Reminder — MIS Submission Pending | {zone_name} | {month_year}"
         )
+        html_body = _build_email_html(zone_name, month_year, pending_locs, due_date)
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"]  = subject
-        msg["From"]     = f"{cfg['name']} <{cfg['from_email']}>"
-        msg["To"]       = "; ".join(to_list)
-        msg["CC"]       = "; ".join(cc_list)
-        msg["Reply-To"] = cfg["from_email"]
+        to_str  = contacts["to"]
+        cc_str  = contacts["cc"]
+        bcc_str = "; ".join(BCC_EMAILS)
 
-        msg.attach(MIMEText(
-            _build_email_html(zone_name, month_year, pending_locs, due_date),
-            "html",
-            "utf-8",
-        ))
+        pythoncom.CoInitialize()
+        try:
+            outlook   = win32.Dispatch("Outlook.Application")
+            mail_item = outlook.CreateItem(0)   # 0 = olMailItem
 
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP(cfg["host"], cfg["port"]) as server:
-            server.ehlo()
-            server.starttls(context=ctx)
-            server.login(cfg["user"], cfg["password"])
-            server.sendmail(cfg["from_email"], all_rcpt, msg.as_string())
+            mail_item.To       = to_str
+            mail_item.CC       = cc_str
+            mail_item.BCC      = bcc_str
+            mail_item.Subject  = subject
+            mail_item.HTMLBody = html_body
 
-        return {"ok": True}
+            try:
+                mail_item.Send()
+                return {"ok": True, "mode": "sent"}
+            except Exception as send_exc:
+                # Fallback: save as Outlook draft
+                try:
+                    mail_item.Save()
+                    return {
+                        "ok": True,
+                        "mode": "draft",
+                        "msg": f"Saved as Outlook draft (send error: {send_exc})",
+                    }
+                except Exception as draft_exc:
+                    return {"ok": False, "msg": f"Send and draft both failed: {draft_exc}"}
+        finally:
+            pythoncom.CoUninitialize()
 
     except Exception as exc:
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": f"Outlook error: {exc}"}
 
 
 # ── All-zones batch sender ────────────────────────────────────────────────────
@@ -286,13 +268,13 @@ def send_all_reminders(month_year: str,
             sent_count += 1
         else:
             failed_count += 1
-            errors.append(f"{zone_name}: {res.get('msg', 'unknown error')}")
+            errors.append(f"{zone_name}: {res.get('msg', 'unknown')}")
 
     all_ok = (failed_count == 0)
     msg = (
-        f"Reminder emails sent to {sent_count} zone(s) via SMTP."
+        f"Emails sent to {sent_count} zone(s) via Outlook ({SENDER_EMAIL})."
         if all_ok else
-        f"Sent: {sent_count}. Failed: {failed_count}. Errors: " + "; ".join(errors)
+        f"Sent: {sent_count}. Failed: {failed_count}. " + "; ".join(errors)
     )
     return {
         "ok": all_ok,

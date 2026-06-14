@@ -1368,69 +1368,57 @@ def show_change_password():
     _login_css()
     user = st.session_state.user
 
-    col_left, col_right = st.columns([42, 58])
+    _, mid, _ = st.columns([1, 10, 1])
+    with mid:
+        st.markdown("<div style='height:48px;'></div>", unsafe_allow_html=True)
 
-    with col_left:
-        lp = _assets().get("left_panel")
-        if lp:
-            st.markdown(f"""
-            <div style="margin:0;padding:0;line-height:0;height:100vh;
-                        overflow:hidden;background:white;">
-              <img src="{lp}" style="width:100%;height:100vh;display:block;object-fit:contain;">
-            </div>""", unsafe_allow_html=True)
+        dh = _assets().get("dh_logo")
+        if dh:
+            st.markdown(
+                f'<div style="text-align:center;margin-bottom:18px;">'
+                f'<img src="{dh}" style="height:65px;object-fit:contain;"></div>',
+                unsafe_allow_html=True,
+            )
 
-    with col_right:
-        _, mid, _ = st.columns([1, 14, 1])
-        with mid:
-            st.markdown("<div style='height:60px;'></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <h1 style="font-size:20px;font-weight:800;color:{HPCL_BLUE};margin:0 0 6px;">
+          🔐 Set Your New Password
+        </h1>
+        <p style="font-size:13px;color:#888;margin:0 0 6px;">
+          Location: <strong style="color:#1a1a2e;">{user['locName']}</strong>
+          ({user['userId']}) &nbsp;·&nbsp; Zone: {user['zone']}
+        </p>
+        <div style="width:44px;height:3px;margin-bottom:16px;
+                    background:linear-gradient(to right,#e53935,#0033A0);border-radius:2px;"></div>
+        <hr style="border:none;border-top:1px solid #f0f0f0;margin-bottom:16px;">
+        """, unsafe_allow_html=True)
 
-            dh = _assets().get("dh_logo")
-            if dh:
-                st.markdown(
-                    f'<div style="text-align:center;margin-bottom:18px;">'
-                    f'<img src="{dh}" style="height:65px;object-fit:contain;"></div>',
-                    unsafe_allow_html=True,
-                )
+        if user.get("isFirstLogin"):
+            st.info("**First Login detected.** You must set a new password to continue.")
 
-            st.markdown(f"""
-            <h1 style="font-size:20px;font-weight:800;color:{HPCL_BLUE};margin:0 0 6px;">
-              🔐 Set Your New Password
-            </h1>
-            <p style="font-size:13px;color:#888;margin:0 0 6px;">
-              Location: <strong style="color:#1a1a2e;">{user['locName']}</strong>
-              ({user['userId']}) &nbsp;·&nbsp; Zone: {user['zone']}
-            </p>
-            <div style="width:44px;height:3px;margin-bottom:16px;
-                        background:linear-gradient(to right,#e53935,#0033A0);border-radius:2px;"></div>
-            <hr style="border:none;border-top:1px solid #f0f0f0;margin-bottom:16px;">
-            """, unsafe_allow_html=True)
+        with st.form("chgpass_form"):
+            curr = st.text_input("Current Password",     type="password")
+            new1 = st.text_input("New Password",         type="password",
+                                 help="Minimum 6 characters")
+            new2 = st.text_input("Confirm New Password", type="password")
+            chg  = st.form_submit_button("Change Password", use_container_width=True)
 
-            if user.get("isFirstLogin"):
-                st.info("**First Login detected.** You must set a new password to continue.")
-
-            with st.form("chgpass_form"):
-                curr = st.text_input("Current Password",     type="password")
-                new1 = st.text_input("New Password",         type="password",
-                                     help="Minimum 6 characters")
-                new2 = st.text_input("Confirm New Password", type="password")
-                chg  = st.form_submit_button("Change Password", use_container_width=True)
-
-            if chg:
-                with st.spinner("Updating…"):
-                    res = sheets.change_password(user["userId"], curr, new1, new2)
-                if res["ok"]:
-                    st.session_state.user["isFirstLogin"] = False
-                    st.session_state.user["_password"]    = new1
-                    st.session_state.page  = "dashboard"
-                    st.session_state.flash = "Password changed successfully! Welcome to the SOD MIS Portal."
-                    st.rerun()
-                else:
-                    st.error(res["msg"])
-
-            if st.button("← Back to Login", key="back_btn"):
-                st.session_state.user = None
-                st.session_state.page = "login"
+        if chg:
+            with st.spinner("Updating…"):
+                res = sheets.change_password(user["userId"], curr, new1, new2)
+            if res["ok"]:
+                st.session_state.user["isFirstLogin"] = False
+                st.session_state.user["_password"]    = new1
+                st.session_state.page  = "dashboard"
+                st.session_state.flash = "Password changed successfully! Welcome to the SOD MIS Portal."
                 st.rerun()
+            else:
+                st.error(res["msg"])
+
+        if st.button("← Back to Login", key="back_btn"):
+            st.session_state.user = None
+            st.session_state.page = "login"
+            st.rerun()
 
     st.markdown("""
     <div class="login-footer">
@@ -2177,16 +2165,15 @@ def show_review(user: dict, month_year: str, month_label: str):
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        sl       = _assets().get("side_logo")
-        logo_html = (
-            f'<img src="{sl}" style="width:100%;height:100%;'
-            f'object-fit:cover;display:block;">'
-        ) if sl else ""
+        sl = _assets().get("side_logo")
+        if sl:
+            st.markdown(
+                f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                f'<img src="{sl}" style="width:100%;height:auto;display:block;'
+                f'margin:0;padding:0;"></div>',
+                unsafe_allow_html=True,
+            )
         st.markdown(f"""
-        <div style="width:100%;aspect-ratio:1/1;overflow:hidden;
-                    display:flex;align-items:center;justify-content:center;">
-          {logo_html}
-        </div>
         <div style="padding:10px 18px 12px;border-bottom:2px solid #c62828;">
           <div style="color:#ff4d4d;font-size:11px;font-weight:700;
                       letter-spacing:1.5px;text-transform:uppercase;">REVIEW MODE</div>
@@ -4093,13 +4080,14 @@ def show_analytics_page(user: dict):
     else:
         with st.sidebar:
             sl = _assets().get("side_logo")
-            logo_html = (f'<img src="{sl}" style="width:100%;height:100%;'
-                         f'object-fit:cover;display:block;">') if sl else ""
-            st.markdown(f"""
-            <div style="width:100%;aspect-ratio:1/1;overflow:hidden;
-                        display:flex;align-items:center;justify-content:center;">
-              {logo_html}
-            </div>
+            if sl:
+                st.markdown(
+                    f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                    f'<img src="{sl}" style="width:100%;height:auto;display:block;'
+                    f'margin:0;padding:0;"></div>',
+                    unsafe_allow_html=True,
+                )
+            st.markdown("""
             <div style="padding:10px 18px 12px;border-bottom:2px solid #c62828;">
               <div style="color:#ff4d4d;font-size:11px;font-weight:700;
                           letter-spacing:1.5px;text-transform:uppercase;">ANALYTICS</div>
@@ -4761,21 +4749,35 @@ def show_reports_page(user: dict):
 
         _email_ok, _email_err = _emails.email_configured()
         if not _email_ok:
-            st.markdown(
-                f'<div style="background:#fff8e1;border:1.5px solid #f59e0b;border-radius:12px;'
-                f'padding:14px 20px;margin-bottom:12px;">'
-                f'<div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:6px;">'
-                f'&#9993;&nbsp; Email Setup Required</div>'
-                f'<div style="font-size:13px;color:#78350f;line-height:1.7;">'
-                f'SMTP credentials not configured. Go to <strong>Streamlit Cloud → '
-                f'Settings → Secrets</strong> and add:<br><br>'
-                f'<code style="background:#fef3c7;padding:8px 12px;border-radius:6px;'
-                f'display:block;font-size:12px;white-space:pre-wrap;">{_email_err}</code>'
-                f'<br>Use your HPCL Outlook password as <strong>smtp_password</strong>. '
-                f'If login fails, ask HPCL IT to enable SMTP AUTH for your mailbox.'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
+            if _email_err == "local_only":
+                # Running on cloud / Linux — email is a local-only feature
+                st.markdown(
+                    '<div style="background:#e8f4fd;border:1.5px solid #1565C0;border-radius:12px;'
+                    'padding:14px 20px;margin-bottom:12px;">'
+                    '<div style="font-size:13px;font-weight:700;color:#0d47a1;margin-bottom:6px;">'
+                    '&#x2709;&nbsp; Email via Outlook — Local Feature</div>'
+                    '<div style="font-size:13px;color:#1a237e;line-height:1.8;">'
+                    'Reminder emails are sent through <strong>Microsoft Outlook</strong> running on '
+                    'your Windows PC. To send emails, run the app <strong>locally</strong> with '
+                    'Outlook open and signed in as <strong>shoaibrehman@hpcl.in</strong>.<br><br>'
+                    'No email configuration is needed — emails go automatically from your HPCL '
+                    'Outlook account.'
+                    '</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div style="background:#fff8e1;border:1.5px solid #f59e0b;border-radius:12px;'
+                    f'padding:14px 20px;margin-bottom:12px;">'
+                    f'<div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:6px;">'
+                    f'&#9888;&nbsp; Outlook Not Available</div>'
+                    f'<div style="font-size:13px;color:#78350f;line-height:1.7;">'
+                    f'{_email_err}<br><br>'
+                    f'Make sure <strong>Microsoft Outlook is open</strong> and '
+                    f'<strong>pywin32</strong> is installed (<code>pip install pywin32</code>).'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.markdown(
                 f'<div style="background:#fffde7;border:1.5px solid #f59e0b;border-radius:14px;'
@@ -4783,15 +4785,18 @@ def show_reports_page(user: dict):
                 f'<div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:8px;">'
                 f'Send Reminder Emails to Non-Submitting Locations</div>'
                 f'<div style="font-size:13px;color:#78350f;">'
-                f'{len(pending_zones)} zone(s) with pending locations will receive emails via SMTP.'
+                f'{len(pending_zones)} zone(s) with pending locations will receive emails via '
+                f'Outlook ({_emails.SENDER_EMAIL}).'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
 
-            email_key = f"_rpt_email_open_{month_year}"
+            email_key   = f"_rpt_email_open_{month_year}"
+            confirm_key = f"_rpt_email_confirm_{month_year}"
             if not st.session_state.get(email_key):
                 if st.button("Show Email Options", key="rpt_email_toggle", use_container_width=False):
                     st.session_state[email_key] = True
+                    st.session_state[confirm_key] = False
                     st.rerun()
             else:
                 st.warning(
@@ -4807,20 +4812,34 @@ def show_reports_page(user: dict):
                 else:
                     st.info("All zones have submitted. No emails to send.")
 
+                confirmed = st.checkbox(
+                    "I confirm I have reviewed the list above and want to send reminder emails "
+                    f"for **{month_year}** via Microsoft Outlook.",
+                    key=confirm_key,
+                )
+
                 em_col1, em_col2 = st.columns([2, 1])
                 with em_col1:
-                    if pending_zones and st.button("Send Reminder Emails", key="rpt_send_emails",
-                                                   type="primary", use_container_width=True):
-                        with st.spinner("Sending emails…"):
-                            result = _emails.send_all_reminders(month_year, all_rows, due_date)
-                        if result["ok"]:
-                            st.success(result["msg"])
+                    send_clicked = pending_zones and st.button(
+                        "Send Reminder Emails", key="rpt_send_emails",
+                        type="primary", use_container_width=True,
+                    )
+                    if send_clicked:
+                        if not confirmed:
+                            st.warning("Please tick the confirmation checkbox before sending.")
                         else:
-                            st.error(result["msg"])
-                        st.session_state.pop(email_key, None)
+                            with st.spinner("Sending emails via Outlook…"):
+                                result = _emails.send_all_reminders(month_year, all_rows, due_date)
+                            if result["ok"]:
+                                st.success(result["msg"])
+                            else:
+                                st.error(result["msg"])
+                            st.session_state.pop(email_key, None)
+                            st.session_state.pop(confirm_key, None)
                 with em_col2:
                     if st.button("Cancel", key="rpt_email_cancel", use_container_width=True):
                         st.session_state.pop(email_key, None)
+                        st.session_state.pop(confirm_key, None)
                         st.rerun()
 
     st.markdown("""
@@ -4849,8 +4868,9 @@ def show_chatbot_page(user: dict):
             sl = _assets().get("side_logo")
             if sl:
                 st.markdown(
-                    f'<div style="width:100%;aspect-ratio:1/1;overflow:hidden;">'
-                    f'<img src="{sl}" style="width:100%;height:100%;object-fit:cover;display:block;"></div>',
+                    f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                    f'<img src="{sl}" style="width:100%;height:auto;display:block;'
+                    f'margin:0;padding:0;"></div>',
                     unsafe_allow_html=True,
                 )
             st.markdown(
