@@ -569,24 +569,24 @@ def _login_css(bg_b64: str = ""):
         padding: 0 !important; margin: 0 !important;
     }}
 
-    /* ── Login card — fixed over the right dark portion of the image.
-       The bg image has its own bottom bar (8vh) so bottom stops just above it.
-       Wildcard class selector survives Streamlit's generated class hash names. ── */
+    /* ── Login card — fixed to the RIGHT of the background image text.
+       Left edge anchored at 68vw so it never overlaps the "SOD e-MIS Portal"
+       title text regardless of viewport width or browser zoom level. ── */
     div[class*="block-container"] {{
         position: fixed !important;
-        right: 2vw !important;
-        top: 2vh !important;
-        bottom: 9vh !important;
-        left: auto !important;
-        width: 32% !important;
-        max-width: 420px !important;
-        min-width: 290px !important;
+        left: 68vw !important;
+        right: 1vw !important;
+        top: 4vh !important;
+        bottom: 10vh !important;
+        width: auto !important;
+        max-width: 400px !important;
+        min-width: 270px !important;
         background: #ffffff !important;
         border-top: 5px solid #CC0000 !important;
         border-radius: 14px !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
-        padding: 0 22px 16px !important;
+        padding: 0 18px 12px !important;
         margin: 0 !important;
         z-index: 200 !important;
         box-shadow: 0 12px 56px rgba(0,20,80,0.38) !important;
@@ -926,15 +926,6 @@ def _dashboard_css():
 def show_login():
     assets = _assets()
     _login_css(assets.get("login_bg") or "")
-
-    # ── Dark gradient veil injected as a real DOM element (CSS pseudo-elements
-    #    don't render reliably in Streamlit Cloud). Sits between bg image and card. ──
-    st.markdown(
-        '<div style="position:fixed;top:0;bottom:0;left:54%;right:0;'
-        'background:linear-gradient(to right,transparent 0%,rgba(0,5,30,0.93) 30%);'
-        'z-index:50;pointer-events:none;"></div>',
-        unsafe_allow_html=True,
-    )
 
     # ── block-container is position:fixed over the card area — just render content ──
 
