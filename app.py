@@ -444,9 +444,21 @@ def _base_css():
 
     /* ── Dataframe / table ── */
     [data-testid="stDataFrame"] td,
-    [data-testid="stDataFrame"] th { font-size:14px !important; padding:8px 12px !important; }
     [data-testid="stDataFrame"] th {
-        background: #001F5E !important; color: white !important; font-weight:700 !important;
+        font-size:13px !important; padding:8px 14px !important;
+        text-align:center !important; vertical-align:middle !important;
+    }
+    [data-testid="stDataFrame"] th {
+        background: linear-gradient(135deg,#001060 0%,#002b8f 100%) !important;
+        color: white !important; font-weight:700 !important;
+        font-size:12px !important; letter-spacing:0.5px !important;
+        text-transform:uppercase !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:nth-child(even) td {
+        background:#f0f4ff !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:hover td {
+        background:#dce6f7 !important;
     }
 
     /* ── Alerts ── */
@@ -921,6 +933,47 @@ def _dashboard_css():
     .stTabs [aria-selected="true"] {
         background: #001F5E !important; color: white !important;
     }
+
+    /* ── DataFrame / st.table professional styling ── */
+    [data-testid="stDataFrame"] div[data-testid="stDataFrameResizable"],
+    [data-testid="stTable"] {
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 12px rgba(0,31,94,0.10) !important;
+        border: 1px solid #dce6f7 !important;
+    }
+    /* Header cells */
+    [data-testid="stDataFrame"] th,
+    [data-testid="stTable"] th {
+        background: linear-gradient(135deg,#001060 0%,#002b8f 100%) !important;
+        color: white !important; font-weight:700 !important;
+        font-size:12px !important; letter-spacing:0.5px !important;
+        text-transform:uppercase !important; text-align:center !important;
+        padding:10px 14px !important; border:none !important;
+    }
+    /* Data cells */
+    [data-testid="stDataFrame"] td,
+    [data-testid="stTable"] td {
+        font-size:13px !important; padding:8px 14px !important;
+        text-align:center !important; vertical-align:middle !important;
+        border-bottom: 1px solid #edf1fb !important; color:#1a2a4a !important;
+    }
+    /* Alternating row color */
+    [data-testid="stDataFrame"] tbody tr:nth-child(even) td,
+    [data-testid="stTable"] tbody tr:nth-child(even) td {
+        background:#f0f4ff !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:hover td,
+    [data-testid="stTable"] tbody tr:hover td {
+        background:#dce6f7 !important;
+    }
+
+    /* ── Professional heading hierarchy ── */
+    h1 { font-size:24px !important; font-weight:800 !important; color:#001060 !important;
+         letter-spacing:-0.3px !important; }
+    h2 { font-size:20px !important; font-weight:700 !important; color:#002b8f !important; }
+    h3 { font-size:16px !important; font-weight:700 !important; color:#002b8f !important; }
+    p  { font-size:14px !important; color:#2d3a52 !important; line-height:1.65 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2840,22 +2893,22 @@ def show_dashboard():
     with st.sidebar:
         sl = _assets().get("side_logo")
         logo_html = (
-            f'<img src="{sl}" style="width:100%;height:100%;'
-            f'object-fit:cover;display:block;">'
+            f'<img src="{sl}" style="max-width:100%;height:100%;'
+            f'object-fit:contain;display:block;">'
         ) if sl else ""
         st.markdown(f"""
-        <div style="width:100%;aspect-ratio:1/1;overflow:hidden;
+        <div style="width:100%;height:120px;overflow:hidden;padding:6px 8px 0;
                     display:flex;align-items:center;justify-content:center;">
           {logo_html}
         </div>
-        <div style="padding:10px 18px 12px;border-bottom:2px solid #c62828;">
+        <div style="padding:8px 18px 10px;border-bottom:2px solid #c62828;">
           <div style="color:#ff4d4d;font-size:11px;font-weight:700;
                       letter-spacing:1.5px;text-transform:uppercase;">MIS SECTIONS</div>
-          <div style="color:#ff9999;font-size:10px;margin-top:3px;">
+          <div style="color:#ff9999;font-size:10px;margin-top:2px;">
             Click a section to enter data
           </div>
         </div>
-        <div style="height:4px;"></div>
+        <div style="height:2px;"></div>
         """, unsafe_allow_html=True)
 
         for num, name in SECTIONS:
@@ -3060,19 +3113,19 @@ def _month_selector_bar(user: dict, role_color: str):
 def _zone_sidebar(user: dict, title: str, subtitle: str):
     with st.sidebar:
         sl = _assets().get("side_logo")
-        logo_html = (f'<img src="{sl}" style="width:100%;height:100%;'
-                     f'object-fit:cover;display:block;">') if sl else ""
+        logo_html = (f'<img src="{sl}" style="max-width:100%;height:100%;'
+                     f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
-        <div style="width:100%;aspect-ratio:1/1;overflow:hidden;
+        <div style="width:100%;height:120px;overflow:hidden;padding:6px 8px 0;
                     display:flex;align-items:center;justify-content:center;">
           {logo_html}
         </div>
-        <div style="padding:10px 18px 12px;border-bottom:2px solid #c62828;">
+        <div style="padding:8px 18px 10px;border-bottom:2px solid #c62828;">
           <div style="color:#ff4d4d;font-size:11px;font-weight:700;
                       letter-spacing:1.5px;text-transform:uppercase;">{title}</div>
-          <div style="color:#ff9999;font-size:10px;margin-top:3px;">{subtitle}</div>
+          <div style="color:#ff9999;font-size:10px;margin-top:2px;">{subtitle}</div>
         </div>
-        <div style="height:4px;"></div>
+        <div style="height:2px;"></div>
         """, unsafe_allow_html=True)
 
         if user.get("role") == "Admin":
