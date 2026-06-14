@@ -69,7 +69,7 @@ def _assets() -> dict:
         ("dh_logo",       "logo.png",          "image/png"),
         ("hpcl_dh",       "hpcl_dh.jpg",       "image/jpeg"),
         ("side_logo",          "side_logo.png",          "image/png"),
-        ("side_panel_banner",  "side_panel_banner.png",  "image/png"),
+        ("side_panel_banner",  "side_logo.png",          "image/png"),
         ("title_banner",       "title_banner.png",       "image/png"),
         ("login_bg",      "login_bg.png",      "image/png"),
     ]:
@@ -6678,6 +6678,11 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
 # ── Router ────────────────────────────────────────────────────────────────────
 
 def main():
+    # Clear the asset cache once per browser session so a redeployed logo is
+    # picked up without requiring a full server restart on localhost.
+    if not st.session_state.get("_assets_loaded"):
+        _assets.clear()
+        st.session_state["_assets_loaded"] = True
     _base_css()
     st.session_state.setdefault("page", "login")
     st.session_state.setdefault("user", None)
