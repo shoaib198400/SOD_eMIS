@@ -1320,27 +1320,31 @@ def upsert_zone_account(zone_name: str, new_user_id: str, new_password: str) -> 
 
 
 def sync_missing_maker_accounts(default_password: str = "") -> dict:
-    """Add UserAccess Maker rows for any LocationMaster location not yet in UserAccess.
+    """Add Maker and Checker UserAccess rows for every LocationMaster location
+    that is missing either role.
 
     Reads LocationMaster (col A=code, B=name, C=loc_type, D=zone).
-    Skips locations already present in UserAccess (any role).
-    Default password = location code if not supplied.
-    Sets is_first = TRUE so users are prompted to change password on first login.
-    Returns {"ok": True, "added": [...], "skipped": count}.
+    Checks separately for Maker and Checker rows — a location already having
+    a Maker account will still get a Checker row added (and vice-versa).
+    Default passwords: Maker = loc_code, Checker = loc_code + "C".
+    Sets is_first = TRUE so users change password on first login.
+    Returns {"ok": True, "added": [...descriptions...], "skipped": count}.
     """
     try:
         # Read LocationMaster
         lm_ws   = _ws(TABS["LOCATION_MASTER"])
         lm_rows = _api_call(lm_ws.get_all_values)
 
-        # Read existing UserAccess IDs (any role — skip duplicates)
+        # Build (code_upper, role) set of what already exists
         ua_ws   = _ensure_ws(TABS["USER_ACCESS"], _UA_HEADERS)
         ua_rows = _api_call(ua_ws.get_all_values)
-        existing_ids = {
-            str(r[0]).strip().upper()
-            for r in ua_rows[1:]
-            if r and len(r) > 0 and str(r[0]).strip()
-        }
+        existing = set()   # {(code_upper, role_upper)}
+        for r in ua_rows[1:]:
+            if not r or not str(r[0]).strip():
+                continue
+            c = str(r[0]).strip().upper()
+            role_r = str(r[4]).strip().upper() if len(r) > 4 else "MAKER"
+            existing.add((c, role_r))
 
         added   = []
         skipped = 0
@@ -1353,22 +1357,37 @@ def sync_missing_maker_accounts(default_password: str = "") -> dict:
             name = str(row[1]).strip()
             if not code:
                 continue
-            if code.upper() in existing_ids:
-                skipped += 1
-                continue
-
-            # Col D = zone if present, else blank (Admin can fill manually)
             zone = str(row[3]).strip() if len(row) > 3 else ""
-            pw   = str(default_password).strip() or code
-            _api_call(
-                ua_ws.append_row,
-                [code, name, zone, pw, "Maker", "TRUE", now_str, "Y"],
-                value_input_option="RAW",
-            )
-            existing_ids.add(code.upper())
-            added.append(code)
-            audit_log("SYSTEM", "SyncMakerAccount",
-                      f"Added Maker account for {code} ({name})")
+            code_up = code.upper()
+            base_pw = str(default_password).strip() or code
+
+            # Add Maker if missing
+            if (code_up, "MAKER") not in existing:
+                _api_call(
+                    ua_ws.append_row,
+                    [code, name, zone, base_pw, "Maker", "TRUE", now_str, "Y"],
+                    value_input_option="RAW",
+                )
+                existing.add((code_up, "MAKER"))
+                added.append(f"{code} (Maker)")
+                audit_log("SYSTEM", "SyncAccount",
+                          f"Added Maker for {code} ({name})")
+            else:
+                skipped += 1
+
+            # Add Checker if missing
+            if (code_up, "CHECKER") not in existing:
+                _api_call(
+                    ua_ws.append_row,
+                    [code, name, zone, base_pw + "C", "Checker", "TRUE", now_str, "Y"],
+                    value_input_option="RAW",
+                )
+                existing.add((code_up, "CHECKER"))
+                added.append(f"{code} (Checker)")
+                audit_log("SYSTEM", "SyncAccount",
+                          f"Added Checker for {code} ({name})")
+            else:
+                skipped += 1
 
         return {"ok": True, "added": added, "skipped": skipped}
     except Exception as e:
