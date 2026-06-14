@@ -2196,40 +2196,47 @@ def show_review(user: dict, month_year: str, month_label: str):
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 def _dash_header(user: dict):
-    tb         = _assets().get("title_banner")
-    role_color = "#c62828" if user["role"] == "Checker" else "#002b8f"
+    tb       = _assets().get("title_banner")
+    tb_html  = (f'<img src="{tb}" style="height:60px;width:auto;'
+                f'object-fit:contain;display:block;">' if tb else "")
 
-    # ── Row 1: HPCL branding image — dark blue card so white text is visible ──
-    if tb:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg,#001060 0%,#002b8f 60%,#003eb5 100%);
-                    border-radius:12px;padding:8px 18px;
-                    box-shadow:0 2px 10px rgba(0,43,143,0.20);margin-bottom:8px;
-                    display:flex;justify-content:center;align-items:center;
-                    min-height:76px;">
-          <img src="{tb}" style="height:64px;width:auto;display:block;object-fit:contain;">
-        </div>""", unsafe_allow_html=True)
-
-    # ── Row 2: Portal title + user badge — separate card below ───────────────
+    # ── Single unified banner: title LEFT · logo CENTRE · badge RIGHT ────────
     st.markdown(f"""
-    <div style="background:white;padding:10px 18px;border-radius:12px;
-                box-shadow:0 2px 10px rgba(0,43,143,0.10);margin-bottom:10px;
+    <div style="background:linear-gradient(135deg,#001060 0%,#002b8f 55%,#003eb5 100%);
+                border-radius:14px;padding:12px 22px;
+                box-shadow:0 3px 14px rgba(0,43,143,0.28);margin-bottom:10px;
                 display:flex;align-items:center;justify-content:space-between;
-                min-height:44px;">
-      <div>
-        <div style="font-size:15px;font-weight:700;color:#002b8f;
-                    line-height:1.2;letter-spacing:-0.2px;">
-          HPCL SOD — MIS Entry Portal
+                min-height:80px;gap:12px;">
+
+      <!-- Left: portal title -->
+      <div style="flex:1 1 0;min-width:0;">
+        <div style="font-size:15px;font-weight:800;color:#ffffff;
+                    line-height:1.25;letter-spacing:-0.1px;white-space:nowrap;">
+          HPCL SOD &mdash; MIS Entry Portal
         </div>
-        <div style="font-size:10px;color:#667085;margin-top:2px;">
+        <div style="font-size:10px;color:rgba(255,255,255,0.68);margin-top:3px;
+                    letter-spacing:0.2px;">
           Supply, Operations &amp; Distribution
         </div>
       </div>
-      <span style="flex-shrink:0;background:{role_color};color:white;
-                    padding:5px 16px;border-radius:20px;
-                    font-size:11px;font-weight:600;white-space:nowrap;">
-        {user['locName']} &nbsp;|&nbsp; {user['role']}
-      </span>
+
+      <!-- Centre: HPCL logo / banner image -->
+      <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+                  padding:0 8px;">
+        {tb_html}
+      </div>
+
+      <!-- Right: location + role badge -->
+      <div style="flex:1 1 0;display:flex;justify-content:flex-end;align-items:center;">
+        <span style="display:inline-flex;align-items:center;gap:5px;
+                     background:rgba(255,255,255,0.12);color:white;
+                     border:1.5px solid rgba(255,255,255,0.30);
+                     padding:6px 16px;border-radius:20px;
+                     font-size:11px;font-weight:600;white-space:nowrap;
+                     backdrop-filter:blur(4px);">
+          &#128205; {user['locName']} &nbsp;|&nbsp; {user['role']}
+        </span>
+      </div>
     </div>""", unsafe_allow_html=True)
 
 
