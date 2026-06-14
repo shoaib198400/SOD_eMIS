@@ -1333,13 +1333,13 @@ def sync_missing_maker_accounts(default_password: str = "") -> dict:
         lm_ws   = _ws(TABS["LOCATION_MASTER"])
         lm_rows = _api_call(lm_ws.get_all_values)
 
-        # Read existing UserAccess IDs
+        # Read existing UserAccess IDs (any role — skip duplicates)
         ua_ws   = _ensure_ws(TABS["USER_ACCESS"], _UA_HEADERS)
         ua_rows = _api_call(ua_ws.get_all_values)
         existing_ids = {
             str(r[0]).strip().upper()
             for r in ua_rows[1:]
-            if r and str(r[0]).strip()
+            if r and len(r) > 0 and str(r[0]).strip()
         }
 
         added   = []
@@ -1347,7 +1347,7 @@ def sync_missing_maker_accounts(default_password: str = "") -> dict:
         now_str = datetime.now().isoformat()
 
         for row in lm_rows[1:]:
-            if len(row) < 2:
+            if not row or len(row) < 2:
                 continue
             code = str(row[0]).strip()
             name = str(row[1]).strip()
@@ -1357,9 +1357,11 @@ def sync_missing_maker_accounts(default_password: str = "") -> dict:
                 skipped += 1
                 continue
 
+            # Col D = zone if present, else blank (Admin can fill manually)
             zone = str(row[3]).strip() if len(row) > 3 else ""
-            pw   = default_password or code  # default = location code itself
-            ua_ws.append_row(
+            pw   = str(default_password).strip() or code
+            _api_call(
+                ua_ws.append_row,
                 [code, name, zone, pw, "Maker", "TRUE", now_str, "Y"],
                 value_input_option="RAW",
             )
@@ -1367,12 +1369,6 @@ def sync_missing_maker_accounts(default_password: str = "") -> dict:
             added.append(code)
             audit_log("SYSTEM", "SyncMakerAccount",
                       f"Added Maker account for {code} ({name})")
-
-        # Invalidate location name cache so new locations resolve immediately
-        try:
-            _loc_name_map.clear()
-        except Exception:
-            pass
 
         return {"ok": True, "added": added, "skipped": skipped}
     except Exception as e:

@@ -3538,7 +3538,10 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                          use_container_width=True,
                          key="btn_sync_loc_accounts"):
                 with st.spinner("Reading LocationMaster and adding missing accounts…"):
-                    res = sheets.sync_missing_maker_accounts()
+                    try:
+                        res = sheets.sync_missing_maker_accounts()
+                    except Exception as _e:
+                        res = {"ok": False, "msg": str(_e)}
                 if res["ok"]:
                     added = res.get("added", [])
                     skipped = res.get("skipped", 0)
