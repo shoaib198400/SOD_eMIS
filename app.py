@@ -724,7 +724,9 @@ def _dashboard_css():
         margin-top:  0 !important;
     }
 
-    /* ── Sidebar: flush logo to very top — target every wrapper layer ── */
+    /* ── Sidebar: modern spec redesign ── */
+
+    /* Zero padding on all wrapper layers */
     [data-testid="stSidebar"] > div,
     [data-testid="stSidebar"] > div > div,
     [data-testid="stSidebar"] > div > div > div,
@@ -733,101 +735,108 @@ def _dashboard_css():
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"],
     [data-testid="stSidebar"] section,
     [data-testid="stSidebar"] .block-container {
-        padding-top: 0 !important;
-        margin-top:  0 !important;
+        padding-top: 0 !important; margin-top: 0 !important;
     }
-    /* Pull the first element (logo div) hard against the top edge */
     [data-testid="stSidebarUserContent"] > div:first-child,
     [data-testid="stSidebarUserContent"] > div:first-child > div:first-child,
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
-        margin-top: -1rem !important;
-        padding-top: 0 !important;
+        margin-top: -1rem !important; padding-top: 0 !important;
     }
 
-    /* ── Sidebar container ── */
+    /* Container */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #001060 0%, #002b8f 60%, #003eb5 100%) !important;
-        min-width: 200px !important; max-width: 200px !important;
+        background: linear-gradient(180deg, #072A86 0%, #041D63 100%) !important;
+        min-width: 240px !important; max-width: 240px !important;
     }
     [data-testid="stSidebar"] > div:first-child { padding: 0 !important; }
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0 !important; padding: 0 !important; }
 
-    /* ── Sidebar nav buttons: left-align at every DOM level ── */
+    /* All sidebar text → white */
+    [data-testid="stSidebar"] * { font-size: 11px !important; color: #ffffff !important; }
+    [data-testid="stSidebar"] .stButton button { font-size: 11px !important; font-weight: 600 !important; color: #ffffff !important; }
+
+    /* Markdown containers flush */
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    [data-testid="stSidebar"] .stMarkdownContainer {
+        margin: 0 !important; padding: 0 !important; width: 100% !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] > div,
+    [data-testid="stSidebar"] .stMarkdownContainer > div {
+        margin: 0 !important; padding: 0 !important; width: 100% !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] .stMarkdownContainer p { margin: 0 !important; }
+
+    /* Nav buttons — rounded, side margins, no separator lines */
     [data-testid="stSidebar"] [data-testid="stButton"] > button {
-        width: 100% !important;
-        display: flex !important;
-        flex-direction: row !important;
-        align-items: center !important;
-        justify-content: flex-start !important;   /* horizontal alignment of children */
+        width: calc(100% - 16px) !important;
+        display: flex !important; flex-direction: row !important;
+        align-items: center !important; justify-content: flex-start !important;
         text-align: left !important;
-        background: transparent !important;
-        color: #ffffff !important;
-        border: none !important; border-radius: 0 !important;
-        border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-        padding: 9px 16px !important;
-        font-size: 12px !important; font-weight: 500 !important;
+        background: transparent !important; color: #ffffff !important;
+        border: none !important; border-radius: 8px !important;
+        margin: 2px 8px !important; padding: 9px 14px !important;
+        font-size: 11px !important; font-weight: 500 !important;
         white-space: nowrap !important; overflow: hidden !important;
         text-overflow: ellipsis !important;
         box-shadow: none !important; outline: none !important;
+        transition: background 0.15s ease, transform 0.12s ease !important;
     }
-    /* Inner wrapper div — must fill width and not re-centre */
     [data-testid="stSidebar"] [data-testid="stButton"] > button > div {
-        width: 100% !important;
-        display: flex !important;
-        justify-content: flex-start !important;
-        text-align: left !important;
+        width: 100% !important; display: flex !important;
+        justify-content: flex-start !important; text-align: left !important;
     }
-    /* The actual <p> tag holding button text */
     [data-testid="stSidebar"] [data-testid="stButton"] > button p,
     [data-testid="stSidebar"] [data-testid="stButton"] > button span,
     [data-testid="stSidebar"] [data-testid="stButton"] > button div {
-        text-align: left !important;
-        width: 100% !important;
-        display: block !important;
-        color: #ffffff !important;
-        font-size: 11px !important;
+        text-align: left !important; width: 100% !important;
+        display: block !important; color: #ffffff !important; font-size: 11px !important;
     }
     [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
-        background: rgba(255,255,255,0.11) !important; color: white !important;
+        background: rgba(255,255,255,0.08) !important; color: white !important;
+        transform: translateX(2px) !important;
     }
     [data-testid="stSidebar"] [data-testid="stButton"] > button:focus,
     [data-testid="stSidebar"] [data-testid="stButton"] > button:active,
     [data-testid="stSidebar"] [data-testid="stButton"] > button:focus-visible {
-        background: rgba(255,255,255,0.11) !important;
+        background: rgba(255,255,255,0.08) !important;
         box-shadow: none !important; outline: none !important;
     }
 
-    /* Sidebar collapse control */
-    [data-testid="collapsedControl"] button {
-        background: #002b8f !important; color: white !important; border: none !important;
-    }
-
-    /* ── Sidebar: red left border highlights the active nav item ── */
+    /* Active / disabled → blue gradient pill */
     [data-testid="stSidebar"] [data-testid="stButton"] > button:disabled {
-        background: rgba(255,255,255,0.15) !important;
-        color: white !important;
-        border-left: 4px solid #CC0000 !important;
-        border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+        background: linear-gradient(135deg, #1E63FF 0%, #2D8CFF 100%) !important;
+        color: white !important; border: none !important; border-radius: 8px !important;
+        box-shadow: 0 4px 12px rgba(30,99,255,0.35) !important;
         opacity: 1 !important; font-weight: 700 !important; cursor: default !important;
+        transform: none !important;
     }
 
-    /* ── Sidebar: force ALL buttons (incl. secondary kind) transparent — beats _base_css ── */
+    /* Force all button kinds in sidebar to the same nav style */
     [data-testid="stSidebar"] .stButton button[kind="secondary"],
     [data-testid="stSidebar"] button[data-testid="baseButton-secondary"],
     [data-testid="stSidebar"] .stButton button {
-        background: transparent !important;
-        color: #ffffff !important;
-        border: none !important;
-        border-radius: 0 !important;
-        border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-        box-shadow: none !important;
-        font-size: 12px !important;
+        background: transparent !important; color: #ffffff !important;
+        border: none !important; border-radius: 8px !important;
+        box-shadow: none !important; font-size: 11px !important;
+        margin: 2px 8px !important; width: calc(100% - 16px) !important;
     }
     [data-testid="stSidebar"] .stButton button:hover,
     [data-testid="stSidebar"] .stButton button[kind="secondary"]:hover,
     [data-testid="stSidebar"] button[data-testid="baseButton-secondary"]:hover {
-        background: rgba(255,255,255,0.11) !important;
-        color: white !important;
+        background: rgba(255,255,255,0.08) !important; color: white !important;
+    }
+
+    /* Sidebar collapse control */
+    [data-testid="collapsedControl"] button {
+        background: #041D63 !important; color: white !important; border: none !important;
+    }
+
+    /* Thin custom scrollbar */
+    [data-testid="stSidebar"]::-webkit-scrollbar { width: 3px !important; }
+    [data-testid="stSidebar"]::-webkit-scrollbar-track { background: transparent !important; }
+    [data-testid="stSidebar"]::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.22) !important; border-radius: 2px !important;
     }
 
     /* ── Primary action buttons: HPCL red gradient ── */
@@ -880,14 +889,6 @@ def _dashboard_css():
         transition: all 0.15s ease !important;
     }
 
-    /* ── Sidebar active-section: disabled button styled as highlighted ── */
-    [data-testid="stSidebar"] [data-testid="stButton"] > button:disabled {
-        background: rgba(255,255,255,0.18) !important;
-        color: white !important;
-        border-left: 3px solid rgba(255,255,255,0.85) !important;
-        border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-        opacity: 1 !important; font-weight: 700 !important; cursor: default !important;
-    }
 
     /* ── Selectbox labels ── */
     .stSelectbox label {
@@ -2900,19 +2901,30 @@ def show_dashboard():
             f'<img src="{sl}" style="max-width:100%;height:100%;'
             f'object-fit:contain;display:block;">'
         ) if sl else ""
+        # ── Logo in white rounded card ──────────────────────────────────────────
         st.markdown(f"""
-        <div style="width:100%;height:110px;overflow:hidden;padding:4px 4px 0;
-                    display:flex;align-items:center;justify-content:center;">
-          {logo_html}
-        </div>
-        <div style="padding:8px 18px 10px;border-bottom:2px solid #c62828;">
-          <div style="color:#ff4d4d;font-size:11px;font-weight:700;
-                      letter-spacing:1.5px;text-transform:uppercase;">MIS SECTIONS</div>
-          <div style="color:#ff9999;font-size:10px;margin-top:2px;">
-            Click a section to enter data
+        <div style="padding:12px 14px 8px;">
+          <div style="background:white;border-radius:14px;padding:6px 10px;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
+                      display:flex;align-items:center;justify-content:center;min-height:62px;">
+            {logo_html}
           </div>
         </div>
-        <div style="height:2px;"></div>
+        """, unsafe_allow_html=True)
+
+        # ── Dashboard home button (blue active when on main dashboard view) ──────
+        _on_dash = st.session_state.get("selected_section") is None
+        if st.button("🏠  Dashboard", key="btn_dash_home",
+                     use_container_width=True, disabled=_on_dash):
+            st.session_state.selected_section = None
+            st.rerun()
+
+        # ── MIS SECTIONS heading ────────────────────────────────────────────────
+        st.markdown("""
+        <div style="padding:10px 16px 4px;">
+          <div style="color:#C8D7FF;font-size:9px;font-weight:700;
+                      letter-spacing:2px;text-transform:uppercase;">MIS SECTIONS</div>
+        </div>
         """, unsafe_allow_html=True)
 
         for num, name in SECTIONS:
@@ -2937,14 +2949,15 @@ def show_dashboard():
                 st.rerun()
 
         st.markdown(
-            '<div style="border-top:1px solid rgba(255,255,255,0.10);margin-top:8px;'
-            'padding:12px 14px 6px;">'
-            '<div style="color:#ff6b6b;font-size:11px;font-weight:700;margin-bottom:6px;">'
+            '<div style="border-top:1px solid rgba(255,255,255,0.10);margin:8px 8px 0;'
+            'padding:10px 8px 6px;">'
+            '<div style="color:#C8D7FF;font-size:9px;font-weight:700;'
+            'letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;">'
             '&#128222; Need Help?</div>'
-            '<div style="color:rgba(255,255,255,0.65);font-size:10px;margin-bottom:3px;">'
+            '<div style="color:rgba(200,215,255,0.70);font-size:9px;margin-bottom:3px;">'
             'Email Support:</div>'
             '<a href="mailto:shoaibrehman@hpcl.in" '
-            'style="color:#60a5fa;font-size:10.5px;font-weight:600;text-decoration:none;">'
+            'style="color:#8AABFF;font-size:9.5px;font-weight:600;text-decoration:none;">'
             '&#128231; shoaibrehman@hpcl.in</a>'
             '</div>',
             unsafe_allow_html=True,
@@ -3120,16 +3133,18 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
         logo_html = (f'<img src="{sl}" style="max-width:100%;height:100%;'
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
-        <div style="width:100%;height:110px;overflow:hidden;padding:4px 4px 0;
-                    display:flex;align-items:center;justify-content:center;">
-          {logo_html}
+        <div style="padding:12px 14px 8px;">
+          <div style="background:white;border-radius:14px;padding:6px 10px;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
+                      display:flex;align-items:center;justify-content:center;min-height:62px;">
+            {logo_html}
+          </div>
         </div>
-        <div style="padding:8px 18px 10px;border-bottom:2px solid #c62828;">
-          <div style="color:#ff4d4d;font-size:11px;font-weight:700;
-                      letter-spacing:1.5px;text-transform:uppercase;">{title}</div>
-          <div style="color:#ff9999;font-size:10px;margin-top:2px;">{subtitle}</div>
+        <div style="padding:4px 16px 8px;">
+          <div style="color:#C8D7FF;font-size:9px;font-weight:700;
+                      letter-spacing:2px;text-transform:uppercase;">{title}</div>
+          <div style="color:#8AABFF;font-size:9px;margin-top:2px;">{subtitle}</div>
         </div>
-        <div style="height:2px;"></div>
         """, unsafe_allow_html=True)
 
         if user.get("role") == "Admin":
