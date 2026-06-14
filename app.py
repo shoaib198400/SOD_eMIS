@@ -539,7 +539,7 @@ def _base_css():
 
 def _login_css(bg_b64: str = ""):
     bg_css = (
-        f'url("{bg_b64}") center center / 100% 100% no-repeat fixed'
+        f'url("{bg_b64}") center center / cover no-repeat fixed'
         if bg_b64 else
         "linear-gradient(160deg,#001F5E 0%,#003087 100%)"
     )
@@ -555,6 +555,21 @@ def _login_css(bg_b64: str = ""):
         overflow: hidden !important;
         height: 100vh !important;
         margin: 0 !important; padding: 0 !important;
+    }}
+
+    /* ── Dark gradient veil on right 40% — prevents background image text
+       from bleeding into the login card area at any viewport width ── */
+    html::after {{
+        content: '' !important;
+        position: fixed !important;
+        top: 0 !important; bottom: 0 !important; right: 0 !important;
+        width: 40% !important;
+        background: linear-gradient(to right,
+            transparent 0%,
+            rgba(0,6,35,0.80) 30%,
+            rgba(0,6,35,0.92) 100%) !important;
+        z-index: 100 !important;
+        pointer-events: none !important;
     }}
 
     /* ── Every Streamlit wrapper layer: transparent, no layout ── */
