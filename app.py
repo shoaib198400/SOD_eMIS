@@ -752,8 +752,20 @@ def _dashboard_css():
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0 !important; padding: 0 !important; }
 
     /* All sidebar text → white */
-    [data-testid="stSidebar"] * { font-size: 11px !important; color: #ffffff !important; }
-    [data-testid="stSidebar"] .stButton button { font-size: 11px !important; font-weight: 600 !important; color: #ffffff !important; }
+    /* All sidebar text → white, Segoe UI, compact */
+    [data-testid="stSidebar"] * {
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+        font-size: 11.5px !important; color: #ffffff !important;
+    }
+    [data-testid="stSidebar"] .stButton button {
+        font-size: 11.5px !important; font-weight: 500 !important; color: #ffffff !important;
+    }
+
+    /* Hide the keyboard_double collapse-arrow artifact */
+    [data-testid="collapsedControl"] span[data-testid="stExpanderToggleIcon"],
+    [data-testid="collapsedControl"] .material-symbols-rounded {
+        display: none !important;
+    }
 
     /* Markdown containers flush */
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
@@ -767,20 +779,27 @@ def _dashboard_css():
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
     [data-testid="stSidebar"] .stMarkdownContainer p { margin: 0 !important; }
 
-    /* Nav buttons — rounded, side margins, no separator lines */
+    /* Crush vertical gaps inside sidebar */
+    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+        gap: 2px !important; padding: 0 !important;
+    }
+    [data-testid="stSidebar"] .element-container { margin-bottom: 0 !important; }
+
+    /* Nav buttons — glass-card container, rounded, highlight on hover */
     [data-testid="stSidebar"] [data-testid="stButton"] > button {
         width: calc(100% - 16px) !important;
         display: flex !important; flex-direction: row !important;
         align-items: center !important; justify-content: flex-start !important;
         text-align: left !important;
-        background: transparent !important; color: #ffffff !important;
-        border: none !important; border-radius: 8px !important;
-        margin: 2px 8px !important; padding: 9px 14px !important;
-        font-size: 11px !important; font-weight: 500 !important;
+        background: rgba(255,255,255,0.06) !important; color: #ffffff !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 8px !important;
+        margin: 2px 8px !important; padding: 8px 13px !important;
+        font-size: 11.5px !important; font-weight: 500 !important;
         white-space: nowrap !important; overflow: hidden !important;
         text-overflow: ellipsis !important;
         box-shadow: none !important; outline: none !important;
-        transition: background 0.15s ease, transform 0.12s ease !important;
+        transition: background 0.15s ease, transform 0.12s ease, border-color 0.15s !important;
     }
     [data-testid="stSidebar"] [data-testid="stButton"] > button > div {
         width: 100% !important; display: flex !important;
@@ -790,24 +809,27 @@ def _dashboard_css():
     [data-testid="stSidebar"] [data-testid="stButton"] > button span,
     [data-testid="stSidebar"] [data-testid="stButton"] > button div {
         text-align: left !important; width: 100% !important;
-        display: block !important; color: #ffffff !important; font-size: 11px !important;
+        display: block !important; color: #ffffff !important; font-size: 11.5px !important;
     }
     [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
-        background: rgba(255,255,255,0.08) !important; color: white !important;
+        background: rgba(255,255,255,0.14) !important; color: white !important;
+        border-color: rgba(255,255,255,0.18) !important;
         transform: translateX(2px) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.18) !important;
     }
     [data-testid="stSidebar"] [data-testid="stButton"] > button:focus,
     [data-testid="stSidebar"] [data-testid="stButton"] > button:active,
     [data-testid="stSidebar"] [data-testid="stButton"] > button:focus-visible {
-        background: rgba(255,255,255,0.08) !important;
+        background: rgba(255,255,255,0.10) !important;
         box-shadow: none !important; outline: none !important;
     }
 
     /* Active / disabled → blue gradient pill */
     [data-testid="stSidebar"] [data-testid="stButton"] > button:disabled {
         background: linear-gradient(135deg, #1E63FF 0%, #2D8CFF 100%) !important;
-        color: white !important; border: none !important; border-radius: 8px !important;
-        box-shadow: 0 4px 12px rgba(30,99,255,0.35) !important;
+        color: white !important; border: 1px solid rgba(45,140,255,0.40) !important;
+        border-radius: 8px !important;
+        box-shadow: 0 4px 14px rgba(30,99,255,0.40) !important;
         opacity: 1 !important; font-weight: 700 !important; cursor: default !important;
         transform: none !important;
     }
@@ -816,8 +838,8 @@ def _dashboard_css():
     [data-testid="stSidebar"] .stButton button[kind="secondary"],
     [data-testid="stSidebar"] button[data-testid="baseButton-secondary"],
     [data-testid="stSidebar"] .stButton button {
-        background: transparent !important; color: #ffffff !important;
-        border: none !important; border-radius: 8px !important;
+        background: rgba(255,255,255,0.06) !important; color: #ffffff !important;
+        border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 8px !important;
         box-shadow: none !important; font-size: 11px !important;
         margin: 2px 8px !important; width: calc(100% - 16px) !important;
     }
@@ -2898,15 +2920,16 @@ def show_dashboard():
     with st.sidebar:
         sl = _assets().get("side_logo")
         logo_html = (
-            f'<img src="{sl}" style="max-width:100%;height:100%;'
+            f'<img src="{sl}" style="height:58px;width:auto;'
             f'object-fit:contain;display:block;">'
         ) if sl else ""
         # ── Logo in white rounded card ──────────────────────────────────────────
         st.markdown(f"""
-        <div style="padding:12px 14px 8px;">
-          <div style="background:white;border-radius:14px;padding:6px 10px;
+        <div style="padding:10px 12px 6px;">
+          <div style="background:white;border-radius:12px;padding:6px 8px;
                       box-shadow:0 4px 20px rgba(0,0,0,0.22);
-                      display:flex;align-items:center;justify-content:center;min-height:62px;">
+                      height:70px;overflow:hidden;
+                      display:flex;align-items:center;justify-content:center;">
             {logo_html}
           </div>
         </div>
@@ -3130,13 +3153,14 @@ def _month_selector_bar(user: dict, role_color: str):
 def _zone_sidebar(user: dict, title: str, subtitle: str):
     with st.sidebar:
         sl = _assets().get("side_logo")
-        logo_html = (f'<img src="{sl}" style="max-width:100%;height:100%;'
+        logo_html = (f'<img src="{sl}" style="height:58px;width:auto;'
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
-        <div style="padding:12px 14px 8px;">
-          <div style="background:white;border-radius:14px;padding:6px 10px;
+        <div style="padding:10px 12px 6px;">
+          <div style="background:white;border-radius:12px;padding:6px 8px;
                       box-shadow:0 4px 20px rgba(0,0,0,0.22);
-                      display:flex;align-items:center;justify-content:center;min-height:62px;">
+                      height:70px;overflow:hidden;
+                      display:flex;align-items:center;justify-content:center;">
             {logo_html}
           </div>
         </div>
