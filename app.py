@@ -499,9 +499,10 @@ def _base_css():
     }
 
     /* ── Expanders ── */
+    [data-testid="stExpander"] summary,
     .streamlit-expanderHeader {
-        font-size:15px !important; color:#001F5E !important;
-        font-weight:700 !important; padding:10px 0 !important;
+        font-size:13px !important; color:#001F5E !important;
+        font-weight:600 !important;
     }
 
     /* ── Metrics ── */
@@ -790,14 +791,15 @@ def _login_css(bg_b64: str = ""):
     .stCheckbox {{ background: transparent !important; }}
     [data-testid="InputInstructions"] {{ display: none !important; }}
 
-    /* ── Expander: suppress broken icon glyph; keep arrow SVG visible ── */
+    /* ── Expander header styling ── */
     [data-testid="stExpander"] summary {{
-        font-size: 12px !important; font-weight: 600 !important;
+        font-size: 13px !important; font-weight: 600 !important;
         color: #001F5E !important;
+        display: flex !important; align-items: center !important;
     }}
-    [data-testid="stExpander"] summary span[data-testid="stExpanderToggleIcon"],
-    [data-testid="stExpander"] summary .eyeIcon {{ font-family: inherit !important; }}
-    [data-testid="stExpander"] details summary > p {{ font-size: 12px !important; }}
+    [data-testid="stExpander"] details summary > p {{
+        font-size: 13px !important; margin: 0 !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
