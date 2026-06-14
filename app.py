@@ -539,7 +539,7 @@ def _base_css():
 
 def _login_css(bg_b64: str = ""):
     bg_css = (
-        f'url("{bg_b64}") center/cover no-repeat fixed'
+        f'url("{bg_b64}") left top / cover no-repeat fixed'
         if bg_b64 else
         "linear-gradient(160deg,#001F5E 0%,#003087 100%)"
     )
@@ -636,8 +636,12 @@ def _login_css(bg_b64: str = ""):
         box-shadow: 0 4px 18px rgba(0,31,94,0.40) !important;
     }}
 
-    /* ── Checkbox ── */
-    .stCheckbox label {{ font-size: 12px !important; color: #001F5E !important; font-weight: 500 !important; }}
+    /* ── Checkbox (Remember Me) — force visible against any theme ── */
+    .stCheckbox label, .stCheckbox label p, .stCheckbox span {{
+        font-size: 12px !important; color: #001F5E !important;
+        font-weight: 600 !important; opacity: 1 !important;
+    }}
+    .stCheckbox {{ background: transparent !important; }}
     [data-testid="InputInstructions"] {{ display: none !important; }}
 
     /* ── Expander: suppress broken icon glyph; keep arrow SVG visible ── */
