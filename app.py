@@ -470,7 +470,7 @@ def _base_css():
         font-size:28px !important; font-weight:800 !important; color:#001F5E !important;
     }
 
-    /* ── Dataframe / table ── */
+    /* ── Dataframe / table (HTML table rendering) ── */
     [data-testid="stDataFrame"] td,
     [data-testid="stDataFrame"] th {
         font-size:13px !important; padding:8px 14px !important;
@@ -488,6 +488,43 @@ def _base_css():
     [data-testid="stDataFrame"] tbody tr:hover td {
         background:#dce6f7 !important;
     }
+
+    /* ── data_editor AG Grid styling ── */
+    .ag-root-wrapper {
+        border-radius:10px !important; overflow:hidden !important;
+        border:1.5px solid #b0c8f8 !important;
+        box-shadow:0 2px 12px rgba(0,26,110,0.10) !important;
+    }
+    .ag-header {
+        background:linear-gradient(90deg,#001a6e 0%,#0033A0 100%) !important;
+        border-bottom:2px solid #4a80d0 !important;
+    }
+    .ag-header-row { background:transparent !important; }
+    .ag-header-cell {
+        background:transparent !important;
+        border-right:1px solid rgba(255,255,255,0.18) !important;
+    }
+    .ag-header-cell-text {
+        color:#ffffff !important; font-weight:700 !important;
+        font-size:11.5px !important; letter-spacing:0.3px !important;
+    }
+    .ag-header-cell-label { justify-content:center !important; }
+    .ag-header-icon, .ag-header-icon svg { color:#cfe0ff !important; fill:#cfe0ff !important; }
+    .ag-sort-indicator-icon { color:#cfe0ff !important; }
+    /* Row zebra & hover */
+    .ag-row-odd  { background:#f0f5ff !important; }
+    .ag-row-even { background:#ffffff !important; }
+    .ag-row:hover { background:#dce8ff !important; }
+    /* Center data cells */
+    .ag-cell {
+        text-align:center !important; font-size:13px !important;
+        display:flex !important; align-items:center !important;
+        justify-content:center !important;
+    }
+    /* Add row button area */
+    .ag-full-width-row { background:#f8faff !important; }
+    /* Column resize handle */
+    .ag-header-cell-resize::after { background:#7aabff !important; }
 
     /* ── Alerts ── */
     [data-testid="stAlert"] {
