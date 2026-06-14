@@ -740,14 +740,14 @@ def _dashboard_css():
     [data-testid="stSidebarUserContent"] > div:first-child,
     [data-testid="stSidebarUserContent"] > div:first-child > div:first-child,
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
-        margin-top: -1rem !important;
+        margin-top: -3rem !important;
         padding-top: 0 !important;
     }
 
     /* ── Sidebar container ── */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #001060 0%, #002b8f 60%, #003eb5 100%) !important;
-        min-width: 230px !important; max-width: 230px !important;
+        min-width: 200px !important; max-width: 200px !important;
     }
     [data-testid="stSidebar"] > div:first-child { padding: 0 !important; }
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0 !important; padding: 0 !important; }
@@ -761,11 +761,11 @@ def _dashboard_css():
         justify-content: flex-start !important;   /* horizontal alignment of children */
         text-align: left !important;
         background: transparent !important;
-        color: rgba(255,255,255,0.88) !important;
+        color: #ffffff !important;
         border: none !important; border-radius: 0 !important;
         border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-        padding: 11px 20px !important;
-        font-size: 13px !important; font-weight: 500 !important;
+        padding: 9px 16px !important;
+        font-size: 12px !important; font-weight: 500 !important;
         white-space: nowrap !important; overflow: hidden !important;
         text-overflow: ellipsis !important;
         box-shadow: none !important; outline: none !important;
@@ -813,11 +813,12 @@ def _dashboard_css():
     [data-testid="stSidebar"] button[data-testid="baseButton-secondary"],
     [data-testid="stSidebar"] .stButton button {
         background: transparent !important;
-        color: rgba(255,255,255,0.88) !important;
+        color: #ffffff !important;
         border: none !important;
         border-radius: 0 !important;
         border-bottom: 1px solid rgba(255,255,255,0.06) !important;
         box-shadow: none !important;
+        font-size: 12px !important;
     }
     [data-testid="stSidebar"] .stButton button:hover,
     [data-testid="stSidebar"] .stButton button[kind="secondary"]:hover,
@@ -2897,7 +2898,7 @@ def show_dashboard():
             f'object-fit:contain;display:block;">'
         ) if sl else ""
         st.markdown(f"""
-        <div style="width:100%;height:120px;overflow:hidden;padding:6px 8px 0;
+        <div style="width:100%;height:120px;overflow:hidden;padding:0;
                     display:flex;align-items:center;justify-content:center;">
           {logo_html}
         </div>
@@ -2994,7 +2995,7 @@ def show_dashboard():
     _dash_header(user)
 
     # ── FY + Month + Logout row ───────────────────────────────────────────────
-    fy_map = {"FY 2025-26": 2025}
+    fy_map = {"FY 2026-27": 2026}
 
     col_fy, col_mon, col_logout = st.columns([2, 3, 1])
     with col_logout:
@@ -3082,7 +3083,7 @@ def show_dashboard():
 
 def _month_selector_bar(user: dict, role_color: str):
     """Shared FY + Month + Logout bar. Returns (selected_month_value, selected_month_label)."""
-    fy_map = {"FY 2025-26": 2025}
+    fy_map = {"FY 2026-27": 2026}
 
     col_fy, col_mon, col_logout = st.columns([2, 3, 1])
     with col_logout:
@@ -3116,7 +3117,7 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
         logo_html = (f'<img src="{sl}" style="max-width:100%;height:100%;'
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
-        <div style="width:100%;height:120px;overflow:hidden;padding:6px 8px 0;
+        <div style="width:100%;height:120px;overflow:hidden;padding:0;
                     display:flex;align-items:center;justify-content:center;">
           {logo_html}
         </div>
