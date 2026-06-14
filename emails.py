@@ -79,11 +79,24 @@ def outlook_available() -> tuple:
 
 # ── HTML email builder ────────────────────────────────────────────────────────
 
+_DEFAULT_INTRO = (
+    "This is a reminder that the MIS submission for <strong>{month_year}</strong> "
+    "is <strong>pending</strong> for the following locations in your zone. "
+    "Please ensure submissions are completed at the earliest."
+)
+
 def _build_email_html(zone_name: str, month_year: str,
-                      pending_locs: list, due_date: date) -> str:
+                      pending_locs: list, due_date: date,
+                      custom_intro: str = "") -> str:
     today   = date.today()
     overdue = today > due_date
     due_str = due_date.strftime("%d %b %Y")
+
+    intro_html = (
+        custom_intro.strip()
+        if custom_intro.strip()
+        else _DEFAULT_INTRO.format(month_year=month_year)
+    )
 
     rows_html = ""
     for loc in pending_locs:
@@ -133,9 +146,7 @@ def _build_email_html(zone_name: str, month_year: str,
         Dear <strong>{zone_name} Team</strong>,
       </p>
       <p style="font-size:14px;color:#444;line-height:1.8;">
-        This is a reminder that the MIS submission for <strong>{month_year}</strong>
-        is <strong>pending</strong> for the following locations in your zone.
-        Please ensure submissions are completed at the earliest.
+        {intro_html}
       </p>
 
       {overdue_banner}
@@ -172,12 +183,34 @@ def _build_email_html(zone_name: str, month_year: str,
 </html>"""
 
 
+def build_preview_html(zone_name: str, month_year: str,
+                       pending_locs: list, due_date: date,
+                       custom_intro: str = "") -> str:
+    """Public wrapper — returns full HTML string for preview in the app."""
+    return _build_email_html(zone_name, month_year, pending_locs, due_date, custom_intro)
+
+
+def get_zone_recipients(zone_name: str) -> dict:
+    """Return {"to": ..., "cc": ..., "bcc": ...} for a zone, or empty strings."""
+    c = ZONE_EMAIL_MAP.get(zone_name, {})
+    return {
+        "to":  c.get("to", ""),
+        "cc":  c.get("cc", ""),
+        "bcc": "; ".join(BCC_EMAILS),
+    }
+
+
 # ── Single-zone sender ────────────────────────────────────────────────────────
 
 def send_zone_reminder(zone_name: str, month_year: str,
-                       pending_locs: list, due_date: date) -> dict:
+                       pending_locs: list, due_date: date,
+                       custom_intro: str = "",
+                       test_mode: bool = False,
+                       test_email: str = "") -> dict:
     """Send one reminder email for a zone through Outlook COM.
     Falls back to saving as Outlook draft if direct Send() fails.
+
+    test_mode=True overrides all recipients with test_email only.
     """
     contacts = ZONE_EMAIL_MAP.get(zone_name)
     if not contacts:
@@ -192,16 +225,23 @@ def send_zone_reminder(zone_name: str, month_year: str,
     try:
         today   = date.today()
         overdue = today > due_date
+        pfx     = "[TEST] " if test_mode else ""
         subject = (
-            f"OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
+            f"{pfx}OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
             if overdue else
-            f"Reminder — MIS Submission Pending | {zone_name} | {month_year}"
+            f"{pfx}Reminder — MIS Submission Pending | {zone_name} | {month_year}"
         )
-        html_body = _build_email_html(zone_name, month_year, pending_locs, due_date)
+        html_body = _build_email_html(zone_name, month_year, pending_locs,
+                                      due_date, custom_intro)
 
-        to_str  = contacts["to"]
-        cc_str  = contacts["cc"]
-        bcc_str = "; ".join(BCC_EMAILS)
+        if test_mode:
+            to_str  = test_email or SENDER_EMAIL
+            cc_str  = ""
+            bcc_str = ""
+        else:
+            to_str  = contacts["to"]
+            cc_str  = contacts["cc"]
+            bcc_str = "; ".join(BCC_EMAILS)
 
         pythoncom.CoInitialize()
         try:
@@ -209,8 +249,10 @@ def send_zone_reminder(zone_name: str, month_year: str,
             mail_item = outlook.CreateItem(0)   # 0 = olMailItem
 
             mail_item.To       = to_str
-            mail_item.CC       = cc_str
-            mail_item.BCC      = bcc_str
+            if cc_str:
+                mail_item.CC   = cc_str
+            if bcc_str:
+                mail_item.BCC  = bcc_str
             mail_item.Subject  = subject
             mail_item.HTMLBody = html_body
 
@@ -218,7 +260,6 @@ def send_zone_reminder(zone_name: str, month_year: str,
                 mail_item.Send()
                 return {"ok": True, "mode": "sent"}
             except Exception as send_exc:
-                # Fallback: save as Outlook draft
                 try:
                     mail_item.Save()
                     return {
@@ -239,8 +280,15 @@ def send_zone_reminder(zone_name: str, month_year: str,
 
 def send_all_reminders(month_year: str,
                        all_location_rows: list,
-                       due_date: date) -> dict:
-    """Send reminder emails for every zone that has non-submitted locations."""
+                       due_date: date,
+                       custom_intro: str = "",
+                       test_mode: bool = False,
+                       test_email: str = "") -> dict:
+    """Send reminder emails for every zone that has non-submitted locations.
+
+    test_mode=True sends a single combined email to test_email instead of
+    sending to all zone contacts.
+    """
     ok, err = email_configured()
     if not ok:
         return {"ok": False, "sent": 0, "failed": 0, "errors": [], "msg": err}
@@ -258,12 +306,39 @@ def send_all_reminders(month_year: str,
         }
 
     sent_count, failed_count, errors = 0, 0, []
-    for zone_name, locs in sorted(pending_by_zone.items()):
+    zones_to_send = sorted(pending_by_zone.items())
+
+    if test_mode:
+        # Send only the first zone's email to the test address
+        first_zone, first_locs = zones_to_send[0]
+        res = send_zone_reminder(
+            first_zone, month_year, first_locs, due_date,
+            custom_intro=custom_intro,
+            test_mode=True,
+            test_email=test_email or SENDER_EMAIL,
+        )
+        if res["ok"]:
+            sent_count = 1
+            mode = res.get("mode", "sent")
+            msg = (
+                f"[TEST] Email {mode} to {test_email or SENDER_EMAIL} "
+                f"(sample: {first_zone}, {len(first_locs)} location(s)). "
+                f"In production this would send to {len(zones_to_send)} zone(s)."
+            )
+        else:
+            failed_count = 1
+            errors = [res.get("msg", "")]
+            msg = f"[TEST] Send failed: {errors[0]}"
+        return {"ok": res["ok"], "sent": sent_count, "failed": failed_count,
+                "errors": errors, "msg": msg}
+
+    for zone_name, locs in zones_to_send:
         if zone_name not in ZONE_EMAIL_MAP:
             errors.append(f"{zone_name}: no email config")
             failed_count += 1
             continue
-        res = send_zone_reminder(zone_name, month_year, locs, due_date)
+        res = send_zone_reminder(zone_name, month_year, locs, due_date,
+                                 custom_intro=custom_intro)
         if res["ok"]:
             sent_count += 1
         else:

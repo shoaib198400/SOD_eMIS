@@ -4606,6 +4606,62 @@ def show_reports_page(user: dict):
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Styled table helper (local to this report page) ──────────────────────
+    def _rpt_table(rows_data: list, center_cols: set = None,
+                   status_col: str = None, num_color: dict = None) -> str:
+        """Render a professional HTML table in HPCL theme."""
+        if not rows_data:
+            return ""
+        center_cols = center_cols or set()
+        num_color   = num_color   or {}   # col → "green" | "red"
+        STATUS_BADGE = {
+            "Submitted":      ("#e8f5e9", "#2e7d32"),
+            "Pending Review": ("#fff8e1", "#e65100"),
+            "In Progress":    ("#e3f2fd", "#1565c0"),
+            "Not Filed":      ("#fdecea", "#c62828"),
+            "Not Started":    ("#f5f5f5", "#616161"),
+            "Rejected":       ("#fce4ec", "#b71c1c"),
+        }
+        TH = ("background:#002B8F;color:white;padding:10px 14px;font-size:12px;"
+              "font-weight:700;letter-spacing:0.3px;white-space:nowrap;"
+              "border-right:1px solid rgba(255,255,255,0.15);")
+        cols = list(rows_data[0].keys())
+        header = "".join(
+            f'<th style="{TH}text-align:{"center" if c in center_cols else "left"};">{c}</th>'
+            for c in cols
+        )
+        tbody = ""
+        for i, row in enumerate(rows_data):
+            bg = "#f7f9ff" if i % 2 == 1 else "#ffffff"
+            cells = ""
+            for c in cols:
+                val = row[c]
+                align = "center" if c in center_cols else "left"
+                td = f"padding:9px 14px;border-bottom:1px solid #e8ecf4;text-align:{align};"
+                if c == status_col:
+                    sc = STATUS_BADGE.get(str(val), ("#f5f5f5", "#555"))
+                    cells += (f'<td style="{td}">'
+                              f'<span style="background:{sc[0]};color:{sc[1]};padding:3px 10px;'
+                              f'border-radius:12px;font-size:11.5px;font-weight:700;">{val}</span>'
+                              f'</td>')
+                elif c in num_color and isinstance(val, (int, float)) and val > 0:
+                    clr = "#2e7d32" if num_color[c] == "green" else "#c62828"
+                    cells += f'<td style="{td}color:{clr};font-weight:700;">{val}</td>'
+                elif c == cols[0]:   # first col = name/zone — bold blue
+                    cells += f'<td style="{td}color:#1a237e;font-weight:600;">{val}</td>'
+                else:
+                    cells += f'<td style="{td}color:#333;">{val}</td>'
+            tbody += f'<tr style="background:{bg};">{cells}</tr>'
+        return (
+            '<div style="overflow-x:auto;border-radius:10px;'
+            'box-shadow:0 2px 8px rgba(0,43,143,0.10);margin-bottom:4px;">'
+            '<table style="width:100%;border-collapse:collapse;'
+            'font-family:Arial,sans-serif;font-size:13px;">'
+            f'<thead><tr>{header}</tr></thead>'
+            f'<tbody>{tbody}</tbody>'
+            '</table></div>'
+        )
+
     # ── Zone-wise summary table ───────────────────────────────────────────────
     if role == "Admin":
         st.markdown(
@@ -4635,8 +4691,16 @@ def show_reports_page(user: dict):
                 if overdue_flag:
                     zone_summary[z]["Overdue"] += 1
 
-        zone_df = pd.DataFrame(sorted(zone_summary.values(), key=lambda x: x["Zone"]))
-        st.dataframe(zone_df, use_container_width=True, hide_index=True)
+        zone_rows = sorted(zone_summary.values(), key=lambda x: x["Zone"])
+        st.markdown(
+            _rpt_table(
+                zone_rows,
+                center_cols={"Total", "Submitted", "Pending Review",
+                             "In Progress", "Not Filed", "Overdue"},
+                num_color={"Submitted": "green", "Overdue": "red"},
+            ),
+            unsafe_allow_html=True,
+        )
     else:
         import pandas as pd
 
@@ -4670,16 +4734,23 @@ def show_reports_page(user: dict):
         st_val = r.get("status", "NOT_STARTED")
         _, _, st_label = STATUS_META.get(st_val, ("", "#8c9db5", st_val.replace("_", " ").title()))
         loc_records.append({
-            "Location Code":  r.get("userId", ""),
-            "Location Name":  r.get("locName", ""),
-            "Zone":           r.get("zone", ""),
-            "Status":         st_label,
-            "Completion %":   int(float(r.get("completion_pct", 0))),
+            "Location Code": r.get("userId", ""),
+            "Location Name": r.get("locName", ""),
+            "Zone":          r.get("zone", ""),
+            "Status":        st_label,
+            "Done %":        int(float(r.get("completion_pct", 0))),
         })
 
     if loc_records:
-        loc_df = pd.DataFrame(loc_records)
-        st.dataframe(loc_df, use_container_width=True, hide_index=True)
+        st.markdown(
+            _rpt_table(
+                loc_records,
+                center_cols={"Location Code", "Done %"},
+                status_col="Status",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.caption(f"{len(loc_records)} location(s) shown")
     else:
         st.info("No locations match the selected filters.")
 
@@ -4799,43 +4870,121 @@ def show_reports_page(user: dict):
                     st.session_state[confirm_key] = False
                     st.rerun()
             else:
+                # ── Zones to receive emails ───────────────────────────────────
                 st.warning(
                     "You are about to send reminder emails to zone teams. "
-                    "This action cannot be undone. Verify the list below before sending."
+                    "Verify recipients, preview the email, then confirm before sending."
                 )
                 if pending_zones:
-                    st.markdown(
-                        "**Zones that will receive emails:**<br>" +
-                        "<br>".join(f"&nbsp;&nbsp;• {z}" for z in pending_zones),
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown(f"**{len(pending_zones)} zone(s) with pending locations:**")
                 else:
                     st.info("All zones have submitted. No emails to send.")
 
-                confirmed = st.checkbox(
-                    "I confirm I have reviewed the list above and want to send reminder emails "
-                    f"for **{month_year}** via Microsoft Outlook.",
-                    key=confirm_key,
+                # Recipients table
+                with st.expander("Show Email Recipients per Zone", expanded=False):
+                    rec_rows = []
+                    for z in sorted(pending_zones):
+                        rcp = _emails.get_zone_recipients(z)
+                        rec_rows.append({
+                            "Zone": z,
+                            "To (Zone Head)": rcp["to"] or "—",
+                            "CC": rcp["cc"] or "—",
+                            "BCC (HQO)": rcp["bcc"],
+                        })
+                    if rec_rows:
+                        st.markdown(
+                            _rpt_table(rec_rows, center_cols=set()),
+                            unsafe_allow_html=True,
+                        )
+
+                # ── Test Mode ─────────────────────────────────────────────────
+                st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+                test_mode = st.toggle(
+                    f"Test Mode — send only to {_emails.SENDER_EMAIL} (no actual zone emails)",
+                    key=f"rpt_test_mode_{month_year}",
+                    value=False,
                 )
+                if test_mode:
+                    st.info(
+                        f"**Test Mode ON** — One sample email (first pending zone) will be sent "
+                        f"to **{_emails.SENDER_EMAIL}** only. No zone teams will receive anything."
+                    )
+
+                # ── Edit email content ─────────────────────────────────────────
+                with st.expander("Edit Email Content (optional)", expanded=False):
+                    custom_intro = st.text_area(
+                        "Opening message in email body",
+                        key=f"rpt_custom_intro_{month_year}",
+                        height=90,
+                        placeholder=(
+                            "Leave blank to use the default message:\n"
+                            "\"This is a reminder that the MIS submission for [Month] "
+                            "is pending for the following locations in your zone. "
+                            "Please ensure submissions are completed at the earliest.\""
+                        ),
+                    )
+
+                    # Email preview
+                    if st.button("Preview Email", key="rpt_preview_btn"):
+                        sample_zone = pending_zones[0] if pending_zones else ""
+                        if sample_zone:
+                            sample_locs = [
+                                r for r in all_rows
+                                if r.get("zone") == sample_zone
+                                and r.get("status") != "SUBMITTED"
+                            ]
+                            preview_html = _emails.build_preview_html(
+                                sample_zone, month_year, sample_locs,
+                                due_date, custom_intro,
+                            )
+                            st.caption(f"Preview: email for **{sample_zone}**")
+                            import streamlit.components.v1 as components
+                            components.html(preview_html, height=580, scrolling=True)
+                        else:
+                            st.info("No pending zones — nothing to preview.")
+                else:
+                    custom_intro = st.session_state.get(
+                        f"rpt_custom_intro_{month_year}", "")
+
+                # ── Confirmation checkbox ─────────────────────────────────────
+                label = (
+                    f"I confirm — send **TEST** email to {_emails.SENDER_EMAIL} for {month_year}."
+                    if test_mode else
+                    f"I confirm I have reviewed the list above and want to send reminder emails "
+                    f"for **{month_year}** via Microsoft Outlook."
+                )
+                confirmed = st.checkbox(label, key=confirm_key)
 
                 em_col1, em_col2 = st.columns([2, 1])
                 with em_col1:
+                    btn_label  = "Send Test Email" if test_mode else "Send Reminder Emails"
                     send_clicked = pending_zones and st.button(
-                        "Send Reminder Emails", key="rpt_send_emails",
+                        btn_label, key="rpt_send_emails",
                         type="primary", use_container_width=True,
                     )
                     if send_clicked:
                         if not confirmed:
                             st.warning("Please tick the confirmation checkbox before sending.")
                         else:
-                            with st.spinner("Sending emails via Outlook…"):
-                                result = _emails.send_all_reminders(month_year, all_rows, due_date)
+                            spinner_msg = (
+                                "Sending test email via Outlook…"
+                                if test_mode else
+                                "Sending emails via Outlook…"
+                            )
+                            with st.spinner(spinner_msg):
+                                result = _emails.send_all_reminders(
+                                    month_year, all_rows, due_date,
+                                    custom_intro=custom_intro,
+                                    test_mode=test_mode,
+                                    test_email=_emails.SENDER_EMAIL,
+                                )
                             if result["ok"]:
                                 st.success(result["msg"])
                             else:
                                 st.error(result["msg"])
-                            st.session_state.pop(email_key, None)
-                            st.session_state.pop(confirm_key, None)
+                            if not test_mode:
+                                st.session_state.pop(email_key, None)
+                                st.session_state.pop(confirm_key, None)
                 with em_col2:
                     if st.button("Cancel", key="rpt_email_cancel", use_container_width=True):
                         st.session_state.pop(email_key, None)
