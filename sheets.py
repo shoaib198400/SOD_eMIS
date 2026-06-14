@@ -141,27 +141,40 @@ def _spreadsheet():
     return _client().open_by_key(st.secrets["sheets"]["spreadsheet_id"])
 
 
+@st.cache_resource
+def _ws_cache() -> dict:
+    """App-lifetime dict {tab_name: Worksheet}.
+    Avoids repeated ss.worksheet() API calls (each call re-fetches sheet list)."""
+    return {}
+
+
 def _ws(tab_name: str):
-    return _spreadsheet().worksheet(tab_name)
+    cache = _ws_cache()
+    if tab_name not in cache:
+        cache[tab_name] = _spreadsheet().worksheet(tab_name)
+    return cache[tab_name]
 
 
 def _ensure_ws(tab_name: str, headers: list = None, force_headers: bool = False):
     """Return worksheet, auto-creating with headers if missing.
     When force_headers=True, also overwrites row 1 if it differs from headers."""
-    ss = _spreadsheet()
-    try:
-        ws = ss.worksheet(tab_name)
-        if force_headers and headers:
-            existing = ws.get_all_values()
-            if not existing or existing[0] != headers:
-                ws.update("A1", [headers])
-        return ws
-    except gspread.exceptions.WorksheetNotFound:
-        cols = max(len(headers) if headers else 10, 26)
-        ws   = ss.add_worksheet(title=tab_name, rows=2000, cols=cols)
-        if headers:
-            ws.append_row(headers, value_input_option="RAW")
-        return ws
+    cache = _ws_cache()
+    if tab_name not in cache:
+        ss = _spreadsheet()
+        try:
+            cache[tab_name] = ss.worksheet(tab_name)
+        except gspread.exceptions.WorksheetNotFound:
+            cols = max(len(headers) if headers else 10, 26)
+            ws   = ss.add_worksheet(title=tab_name, rows=2000, cols=cols)
+            if headers:
+                ws.append_row(headers, value_input_option="RAW")
+            cache[tab_name] = ws
+    ws = cache[tab_name]
+    if force_headers and headers:
+        existing = ws.get_all_values()
+        if not existing or existing[0] != headers:
+            ws.update("A1", [headers])
+    return ws
 
 
 def _field_label_map() -> dict:
@@ -2888,8 +2901,9 @@ def sync_tank_master_to_sheet() -> dict:
         return {"ok": False, "rows": 0, "msg": str(exc)}
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
-    """Return list of row-dicts for user+month from an M&I tab."""
+    """Return list of row-dicts for user+month from an M&I tab (60 s cache)."""
     try:
         headers = _MI_TAB_HEADERS[tab_key]
         ws      = _ensure_ws(TABS[tab_key], headers)
@@ -2946,6 +2960,7 @@ def save_mi_data(tab_key: str, user_id: str, month_year: str, rows: list) -> dic
                     out_row.append(str(rec.get(col, "") or ""))
             ws.append_row(out_row, value_input_option="RAW")
 
+        load_mi_data.clear()  # invalidate read cache so next load fetches fresh data
         audit_log(user_id, f"SaveMI {tab_key}", f"month={month_year} rows={len(rows)}")
         return {"ok": True, "rows": len(rows)}
     except Exception as e:
