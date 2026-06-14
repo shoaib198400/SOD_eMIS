@@ -414,15 +414,53 @@ def _base_css():
         color: white !important;
     }
 
-    /* ── Input labels ── */
+    /* ── Input labels — target label itself + inner p/span Streamlit wraps ── */
     [data-testid="stNumberInput"] label,
+    [data-testid="stNumberInput"] label p,
+    [data-testid="stNumberInput"] label span,
     [data-testid="stTextInput"]   label,
+    [data-testid="stTextInput"]   label p,
+    [data-testid="stTextInput"]   label span,
     [data-testid="stSelectbox"]   label,
-    [data-testid="stTextArea"]    label {
+    [data-testid="stSelectbox"]   label p,
+    [data-testid="stSelectbox"]   label span,
+    [data-testid="stTextArea"]    label,
+    [data-testid="stTextArea"]    label p,
+    [data-testid="stTextArea"]    label span,
+    [data-testid="stDateInput"]   label,
+    [data-testid="stDateInput"]   label p,
+    [data-testid="stDateInput"]   label span {
         font-size:13px !important; font-weight:800 !important;
-        letter-spacing:0.3px !important; color:#001a6e !important;
+        letter-spacing:0.2px !important; color:#001a6e !important;
         text-transform:none !important; margin-bottom:4px !important;
     }
+
+    /* ── Checkbox — darker border so it's clearly visible ── */
+    [data-testid="stCheckbox"] > label > div:first-child {
+        border:2px solid #001a6e !important;
+        border-radius:4px !important;
+    }
+    [data-testid="stCheckbox"] > label > div:first-child:hover {
+        border-color:#0033A0 !important;
+        box-shadow:0 0 0 2px rgba(0,51,160,0.18) !important;
+    }
+
+    /* ── File uploader — fix overlapping "uploadUpload" text ── */
+    [data-testid="stFileUploader"] section {
+        background: #f0f5ff !important; border: 2px dashed #0033A0 !important;
+        border-radius: 10px !important; padding: 16px !important;
+    }
+    [data-testid="stFileUploader"] section > button {
+        background: #001a6e !important; color: white !important;
+        border-radius: 8px !important; font-weight: 700 !important;
+        border: none !important;
+    }
+    [data-testid="stFileUploader"] section > button > div { display:none !important; }
+    [data-testid="stFileUploader"] section > button::after {
+        content: "Browse Files" !important;
+        color: white !important; font-weight: 700 !important;
+    }
+    [data-testid="stFileUploader"] section > span { display:none !important; }
 
     /* ── Input boxes ── */
     .stTextInput > div > div > input,
@@ -1872,7 +1910,15 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
             )
 
     with col_next:
-        if section_num < 10:
+        if section_num == 5:
+            # After S5 M&I, go to S5A (M&I MIS detail) not S6
+            if st.button("S5A: M&I MIS  ➡", key="btn_next", use_container_width=True):
+                navigate_to = "mi_mis"
+        elif section_num == 10:
+            # After S10 (last section), offer Back to Dashboard
+            if st.button("🏠 Back to Dashboard", key="btn_next", use_container_width=True):
+                navigate_to = "dashboard"
+        elif section_num < 10:
             next_label = SECTION_NAMES.get(section_num + 1, "").split("—")[-1].strip()[:14]
             if st.button(f"S{section_num + 1}: {next_label}  ➡",
                          key="btn_next", use_container_width=True):
@@ -1883,8 +1929,13 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         with st.spinner("Saving…"):
             _do_save(user["userId"], month_year, section_num, fields, is_locked)
             _save_detail_tables(detail_dfs, user, month_year, is_locked)
-        st.session_state.pop(f"draft_loaded_{mc}_s{navigate_to}", None)
-        st.session_state.selected_section = navigate_to
+        if navigate_to == "dashboard":
+            st.session_state.selected_section = None
+        elif navigate_to == "mi_mis":
+            st.session_state.selected_section = "mi_mis"
+        else:
+            st.session_state.pop(f"draft_loaded_{mc}_s{navigate_to}", None)
+            st.session_state.selected_section = navigate_to
         st.rerun()
     elif save_clicked:
         with st.spinner("Saving…"):
@@ -4785,6 +4836,20 @@ _MI_ROW_DIV = (
 )
 
 
+def _mi_summary_table(rows: list, columns: list):
+    """Render a compact blue-header summary table of collected S5A row data."""
+    if not rows:
+        return
+    import pandas as pd
+    df = pd.DataFrame(rows, columns=columns)
+    st.markdown(
+        '<div style="font-size:12px;font-weight:700;color:#001a6e;'
+        'margin:10px 0 4px;letter-spacing:0.3px;">📊 Summary — rows entered so far</div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def _na_checkbox(label: str, key: str) -> bool:
     """Render an amber-highlighted banner + checkbox for 'Not Applicable' M&I sections."""
     st.markdown(
@@ -4841,8 +4906,8 @@ def _mi_tab_outage(uid: str, month_year: str, tank_opts: list):
                 st.session_state[f"{pfx}_status"]  = status_raw if status_raw in STATUS_OPTS else STATUS_OPTS[0]
         else:
             st.session_state[sk_na]   = False
-            st.session_state[sk_rows] = []
-            st.session_state[sk_ctr]  = 0
+            st.session_state[sk_rows] = [0]  # start with one blank row
+            st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
     na_val = _na_checkbox("Not Applicable — No tank under outage this month", sk_na)
@@ -4911,6 +4976,21 @@ def _mi_tab_outage(uid: str, month_year: str, tank_opts: list):
         if to_delete is not None:
             st.session_state[sk_rows] = [r for r in st.session_state[sk_rows] if r != to_delete]
             st.rerun()
+
+        # ── Summary preview table ──
+        _tbl = []
+        for rid in st.session_state.get(sk_rows, []):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            _tbl.append({
+                "Tank": st.session_state.get(f"{pfx}_tank",""),
+                "Plan Start": _mi_fmt_date(st.session_state.get(f"{pfx}_p_start")),
+                "Plan End":   _mi_fmt_date(st.session_state.get(f"{pfx}_p_end")),
+                "Actual Start": _mi_fmt_date(st.session_state.get(f"{pfx}_a_start")),
+                "Actual End":   _mi_fmt_date(st.session_state.get(f"{pfx}_a_end")),
+                "Outage For": st.session_state.get(f"{pfx}_reason",""),
+                "Status":     st.session_state.get(f"{pfx}_status",""),
+            })
+        _mi_summary_table(_tbl, ["Tank","Plan Start","Plan End","Actual Start","Actual End","Outage For","Status"])
 
         if st.button("➕ Add Row", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
@@ -5001,8 +5081,8 @@ def _mi_tab_repair(uid: str, month_year: str, tank_opts: list):
                 st.session_state[f"{pfx}_etc"]    = _mi_parse_date(row.get("etc_date"))
         else:
             st.session_state[sk_na]   = False
-            st.session_state[sk_rows] = []
-            st.session_state[sk_ctr]  = 0
+            st.session_state[sk_rows] = [0]
+            st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
     na_val = _na_checkbox("Not Applicable — No major repair this month", sk_na)
@@ -5060,6 +5140,19 @@ def _mi_tab_repair(uid: str, month_year: str, tank_opts: list):
         if to_delete is not None:
             st.session_state[sk_rows] = [r for r in st.session_state[sk_rows] if r != to_delete]
             st.rerun()
+
+        # Summary preview
+        _tbl = []
+        for rid in st.session_state.get(sk_rows, []):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            _tbl.append({
+                "Tank": st.session_state.get(f"{pfx}_tank",""),
+                "Nature of Repair": st.session_state.get(f"{pfx}_nature",""),
+                "Rev/Capex": st.session_state.get(f"{pfx}_rc",""),
+                "ETC Date": _mi_fmt_date(st.session_state.get(f"{pfx}_etc")),
+                "Status": st.session_state.get(f"{pfx}_status",""),
+            })
+        _mi_summary_table(_tbl, ["Tank","Nature of Repair","Rev/Capex","ETC Date","Status"])
 
         if st.button("➕ Add Row", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
@@ -5454,8 +5547,8 @@ def _mi_tab_tech_audit(uid: str, month_year: str):
                 st.session_state[f"{pfx}_ref"]      = row.get("ref_no", "")
         else:
             st.session_state[sk_na]   = False
-            st.session_state[sk_rows] = []
-            st.session_state[sk_ctr]  = 0
+            st.session_state[sk_rows] = [0]
+            st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
     na_val = _na_checkbox("Not Applicable — No technical audit this month", sk_na)
@@ -5493,6 +5586,18 @@ def _mi_tab_tech_audit(uid: str, month_year: str):
         if to_delete is not None:
             st.session_state[sk_rows] = [r for r in st.session_state[sk_rows] if r != to_delete]
             st.rerun()
+
+        # Summary preview
+        _tbl = []
+        for rid in st.session_state.get(sk_rows, []):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            _tbl.append({
+                "Audit Date": _mi_fmt_date(st.session_state.get(f"{pfx}_date")),
+                "Recommendations": st.session_state.get(f"{pfx}_no_reco", ""),
+                "Pending": st.session_state.get(f"{pfx}_no_pend", ""),
+                "Ref No.": st.session_state.get(f"{pfx}_ref", ""),
+            })
+        _mi_summary_table(_tbl, ["Audit Date", "Recommendations", "Pending", "Ref No."])
 
         if st.button("➕ Add Audit", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
@@ -5568,8 +5673,8 @@ def _mi_tab_equip(uid: str, month_year: str):
                 st.session_state[f"{pfx}_resoln"]  = row.get("resolution_action", "")
         else:
             st.session_state[sk_na]   = False
-            st.session_state[sk_rows] = []
-            st.session_state[sk_ctr]  = 0
+            st.session_state[sk_rows] = [0]
+            st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
     na_val = _na_checkbox("Not Applicable — No equipment breakdown this month", sk_na)
@@ -5626,6 +5731,18 @@ def _mi_tab_equip(uid: str, month_year: str):
         if to_delete is not None:
             st.session_state[sk_rows] = [r for r in st.session_state[sk_rows] if r != to_delete]
             st.rerun()
+
+        # Summary preview
+        _tbl = []
+        for rid in st.session_state.get(sk_rows, []):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            _tbl.append({
+                "Equipment": st.session_state.get(f"{pfx}_eqname",""),
+                "Start Date": _mi_fmt_date(st.session_state.get(f"{pfx}_sdate")),
+                "Proposed End": _mi_fmt_date(st.session_state.get(f"{pfx}_propd")),
+                "Actual End": _mi_fmt_date(st.session_state.get(f"{pfx}_actend")),
+            })
+        _mi_summary_table(_tbl, ["Equipment","Start Date","Proposed End","Actual End"])
 
         if st.button("➕ Add Breakdown", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
@@ -5877,8 +5994,8 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
                 st.session_state[f"{pfx}_status_other"] = row.get("tank_status_other", "")
         else:
             st.session_state[sk_na]   = False
-            st.session_state[sk_rows] = []
-            st.session_state[sk_ctr]  = 0
+            st.session_state[sk_rows] = [0]
+            st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
     na_val = _na_checkbox("Not Applicable — No tanks at this location", sk_na)
@@ -5983,6 +6100,19 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
             st.session_state[sk_rows] = [r for r in st.session_state[sk_rows]
                                           if r != to_delete]
             st.rerun()
+
+        # Summary preview
+        _tbl = []
+        for rid in st.session_state.get(sk_rows, []):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            _tbl.append({
+                "Tank No.": st.session_state.get(f"{pfx}_tank", ""),
+                "Status": st.session_state.get(f"{pfx}_status", ""),
+                "Cleaning Due": _mi_fmt_date(st.session_state.get(f"{pfx}_cleaning_due_date")),
+                "Inspection Due": _mi_fmt_date(st.session_state.get(f"{pfx}_inspection_due_date")),
+                "Painting Due": _mi_fmt_date(st.session_state.get(f"{pfx}_painting_due_date")),
+            })
+        _mi_summary_table(_tbl, ["Tank No.", "Status", "Cleaning Due", "Inspection Due", "Painting Due"])
 
         if st.button("➕ Add Tank Row", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
