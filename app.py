@@ -741,13 +741,27 @@ def _dashboard_css():
     [data-testid="stSidebarUserContent"] > div:first-child,
     [data-testid="stSidebarUserContent"] > div:first-child > div:first-child,
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
-        margin-top: -1rem !important; padding-top: 0 !important;
+        margin-top: -2rem !important; padding-top: 0 !important;
     }
 
     /* Container */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #072A86 0%, #041D63 100%) !important;
         min-width: 240px !important; max-width: 240px !important;
+        padding: 0 !important;
+    }
+    /* Strip white from every inner wrapper layer (light-theme default bleeds through) */
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebar"] > div > div,
+    [data-testid="stSidebar"] > div > div > div,
+    [data-testid="stSidebarContent"],
+    [data-testid="stSidebarUserContent"],
+    [data-testid="stSidebar"] section,
+    [data-testid="stSidebar"] .block-container {
+        background: transparent !important;
+        background-color: transparent !important;
+        padding-top: 0 !important;
+        margin-top: 0 !important;
     }
     [data-testid="stSidebar"] > div:first-child { padding: 0 !important; }
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0 !important; padding: 0 !important; }
@@ -768,14 +782,16 @@ def _dashboard_css():
         display: none !important;
     }
 
-    /* Markdown containers flush */
+    /* Markdown containers flush + transparent so blue gradient shows through */
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
     [data-testid="stSidebar"] .stMarkdownContainer {
         margin: 0 !important; padding: 0 !important; width: 100% !important;
+        background: transparent !important; background-color: transparent !important;
     }
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] > div,
     [data-testid="stSidebar"] .stMarkdownContainer > div {
         margin: 0 !important; padding: 0 !important; width: 100% !important;
+        background: transparent !important; background-color: transparent !important;
     }
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
     [data-testid="stSidebar"] .stMarkdownContainer p { margin: 0 !important; }
@@ -784,7 +800,10 @@ def _dashboard_css():
     [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
         gap: 2px !important; padding: 0 !important;
     }
-    [data-testid="stSidebar"] .element-container { margin-bottom: 0 !important; }
+    [data-testid="stSidebar"] .element-container {
+        margin-bottom: 0 !important;
+        background: transparent !important; background-color: transparent !important;
+    }
 
     /* Nav buttons — glass-card container, rounded, highlight on hover */
     [data-testid="stSidebar"] [data-testid="stButton"] > button {
@@ -2930,9 +2949,9 @@ def show_dashboard():
         # Full-width banner flush to top, no card/padding — sits on blue sidebar background
         if spb:
             st.markdown(
-                f'<div style="margin:0;padding:0;line-height:0;">'
-                f'<img src="{spb}" style="width:100%;display:block;'
-                f'object-fit:cover;border-radius:0;margin:0;padding:0;"></div>',
+                f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                f'<img src="{spb}" style="width:100%;height:auto;display:block;'
+                f'border-radius:0;margin:0;padding:0;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -3156,9 +3175,9 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
         spb = _assets().get("side_panel_banner")
         if spb:
             st.markdown(
-                f'<div style="margin:0;padding:0;line-height:0;">'
-                f'<img src="{spb}" style="width:100%;display:block;'
-                f'object-fit:cover;border-radius:0;margin:0;padding:0;"></div>',
+                f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                f'<img src="{spb}" style="width:100%;height:auto;display:block;'
+                f'border-radius:0;margin:0;padding:0;"></div>',
                 unsafe_allow_html=True,
             )
         st.markdown(f"""
