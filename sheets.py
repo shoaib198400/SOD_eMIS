@@ -273,31 +273,65 @@ def audit_log(loc_code: str, action: str, details: str = ""):
 
 @st.cache_data(ttl=3600)
 def _loc_name_map() -> dict:
-    """Return {location_code_upper: location_name} from LocationMaster sheet."""
+    """Return {location_code_upper: (location_name, loc_type)} from LocationMaster.
+    loc_type column (col 3) values: HPCL | TOP | HMEL.
+    If column absent, loc_type is derived from the location name."""
     try:
         ws   = _ws(TABS["LOCATION_MASTER"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         m    = {}
         for row in rows[1:]:
             if len(row) < 2:
                 continue
             code = str(row[0]).strip()
             name = str(row[1]).strip()
-            if code:
-                m[code.upper()] = name
+            if not code:
+                continue
+            # Column C (index 2) = loc_type if present
+            raw_type = str(row[2]).strip().upper() if len(row) > 2 else ""
+            if raw_type in ("TOP", "HMEL", "HPCL"):
+                ltype = raw_type
+            else:
+                # Derive from name
+                nu = name.upper()
+                cu = code.upper()
+                if "HMEL" in nu or "HMEL" in cu:
+                    ltype = "HMEL"
+                elif "TOP" in nu or "JAMNAGAR" in nu or "TOP" in cu:
+                    ltype = "TOP"
+                else:
+                    ltype = "HPCL"
+            m[code.upper()] = (name, ltype)
         return m
     except Exception:
         return {}
 
 
-def _resolve_loc_name(loc_code: str, stored_name: str) -> str:
-    """Return the proper depot name. Falls back to stored_name if master lookup fails."""
+def _resolve_loc_info(loc_code: str, stored_name: str) -> tuple:
+    """Return (loc_name, loc_type) for a location code."""
     code_up = loc_code.strip().upper()
-    # If stored_name is blank or identical to the code, look up from master
-    if not stored_name.strip() or stored_name.strip().upper() == code_up:
-        master = _loc_name_map()
-        return master.get(code_up, stored_name.strip() or loc_code.strip())
-    return stored_name.strip()
+    master  = _loc_name_map()
+    if code_up in master:
+        name, ltype = master[code_up]
+        # Use stored_name if it looks valid; otherwise use master name
+        final_name = stored_name.strip() if (
+            stored_name.strip() and stored_name.strip().upper() != code_up
+        ) else name
+        return final_name, ltype
+    # Not in master: derive loc_type from name/code
+    nu, cu = stored_name.upper(), code_up
+    if "HMEL" in nu or "HMEL" in cu:
+        ltype = "HMEL"
+    elif "TOP" in nu or "JAMNAGAR" in nu or "TOP" in cu:
+        ltype = "TOP"
+    else:
+        ltype = "HPCL"
+    return stored_name.strip() or loc_code.strip(), ltype
+
+
+def _resolve_loc_name(loc_code: str, stored_name: str) -> str:
+    """Backward-compat wrapper — returns loc_name only."""
+    return _resolve_loc_info(loc_code, stored_name)[0]
 
 
 # ── Authentication ────────────────────────────────────────────────────────────
@@ -339,10 +373,12 @@ def check_login(location_code: str, password: str) -> dict:
 
             audit_log(location_code, "Login", f"Successful login as {role.strip() or 'Maker'}")
 
+            _lname, _ltype = _resolve_loc_info(loc_code_cell, loc_name)
             return {
                 "ok":          True,
                 "userId":      loc_code_cell.strip(),
-                "locName":     _resolve_loc_name(loc_code_cell, loc_name),
+                "locName":     _lname,
+                "locType":     _ltype,   # HPCL | TOP | HMEL
                 "zone":        zone.strip(),
                 "role":        role.strip() or "Maker",
                 "isFirstLogin": is_first_raw.strip().upper() == "TRUE",

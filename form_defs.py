@@ -226,3 +226,64 @@ SECTION_NAMES: dict[int, str] = {
     9:  "S9 — Transportation",
     10: "S10 — Others",
 }
+
+# ── Location-type field applicability ─────────────────────────────────────────
+# Fields marked N in TOP Data.xlsx for TOP/Jamnagar locations
+TOP_EXCLUDED_FIELDS: frozenset = frozenset({
+    # S1 — Solar (no solar plant at TOPs)
+    "f9", "f10", "f11",
+    # S1 — Electricity (not applicable at TOPs)
+    "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21",
+    # S1 — Inventory
+    "f24", "f26",
+    # S1 — Manpower
+    "f30", "f31", "f32", "f33", "f141",
+    # S2 — Finance & Planning (entire section N/A)
+    "f35", "f36", "f37", "f38", "f39", "f40", "f41", "f42", "f43",
+    # S5 — M&I summary (entire section N/A; S5A also skipped)
+    "f54", "f55", "f56", "f57", "f58",
+    # S6 — HSE (partial)
+    "f59", "f60", "f61", "f65", "f67", "f68", "f69", "f71",
+    "f72", "f73", "f74", "f75", "f76",
+    # S7 — TAS (partial)
+    "f77", "f78", "f83", "f88", "f89", "f90", "f91", "f92", "f93",
+    "f96", "f97", "f98", "f99", "f100", "f101", "f102", "f103", "f104",
+})
+
+# Fields marked N in TOP Data.xlsx for HMEL locations
+HMEL_EXCLUDED_FIELDS: frozenset = frozenset({
+    # S1 — Solar
+    "f9", "f10", "f11",
+    # S1 — Inventory
+    "f24", "f26",
+    # S2 — Finance & Planning (entire section N/A)
+    "f35", "f36", "f37", "f38", "f39", "f40", "f41", "f42", "f43",
+    # S5 — M&I summary (entire section N/A; S5A also skipped)
+    "f54", "f55", "f56", "f57", "f58",
+    # S6 — HSE (partial)
+    "f59", "f67", "f68", "f69", "f71",
+    "f72", "f73", "f74", "f75", "f76",
+    # S7 — TAS (partial)
+    "f77", "f78", "f83", "f88", "f89", "f90", "f91", "f92", "f93",
+    "f96", "f97", "f98", "f99", "f100", "f101", "f102", "f103", "f104",
+})
+
+# Sections entirely N/A for a loc_type — auto-completed, not shown to user
+TOP_SKIP_SECTIONS: frozenset = frozenset({2, 5})   # S2 F&P, S5 M&I
+HMEL_SKIP_SECTIONS: frozenset = frozenset({2, 5})  # same
+
+def get_excluded_fields(loc_type: str) -> frozenset:
+    """Return set of field keys not applicable for this location type."""
+    if loc_type == "TOP":
+        return TOP_EXCLUDED_FIELDS
+    if loc_type == "HMEL":
+        return HMEL_EXCLUDED_FIELDS
+    return frozenset()  # HPCL — all fields applicable
+
+def get_skip_sections(loc_type: str) -> frozenset:
+    """Return section numbers to skip entirely for this location type."""
+    if loc_type == "TOP":
+        return TOP_SKIP_SECTIONS
+    if loc_type == "HMEL":
+        return HMEL_SKIP_SECTIONS
+    return frozenset()

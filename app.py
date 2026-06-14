@@ -37,7 +37,7 @@ st.set_page_config(
 )
 
 HPCL_BLUE = "#001F5E"
-HPCL_RED  = "#CC0000"
+HPCL_RED  = "#E53935"
 HPCL_GOLD = "#C6A64A"
 
 SECTIONS = [
@@ -379,39 +379,50 @@ def _base_css():
     .stButton button[kind="primary"],
     button[data-testid="baseButton-primary"],
     .stFormSubmitButton button {
-        background: linear-gradient(135deg, #CC0000 0%, #990000 100%) !important;
-        color: white !important;
+        background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
+        color: #ffffff !important;
         border: none !important;
         border-radius: 10px !important;
         font-size: 15px !important;
         font-weight: 700 !important;
         padding: 10px 22px !important;
         letter-spacing: 0.3px !important;
-        box-shadow: 0 4px 14px rgba(204,0,0,0.30) !important;
+        box-shadow: 0 4px 14px rgba(198,40,40,0.28) !important;
         transition: all 0.2s ease !important;
+    }
+    .stButton button[kind="primary"] *,
+    button[data-testid="baseButton-primary"] *,
+    .stFormSubmitButton button * {
+        color: #ffffff !important;
     }
     .stButton button[kind="primary"]:hover,
     button[data-testid="baseButton-primary"]:hover,
     .stFormSubmitButton button:hover {
-        background: linear-gradient(135deg, #E31837 0%, #B30000 100%) !important;
-        box-shadow: 0 6px 20px rgba(204,0,0,0.42) !important;
+        background: linear-gradient(135deg, #EF5350 0%, #D32F2F 100%) !important;
+        box-shadow: 0 6px 20px rgba(198,40,40,0.38) !important;
         transform: translateY(-1px) !important;
     }
 
     /* ── SECONDARY buttons (Back, Cancel, etc.) ── */
     .stButton button[kind="secondary"],
     button[data-testid="baseButton-secondary"] {
-        background: white !important;
-        color: #001F5E !important;
-        border: 1.5px solid #001F5E !important;
+        background: #1565C0 !important;
+        color: #ffffff !important;
+        border: none !important;
         border-radius: 10px !important;
         font-weight: 600 !important;
         padding: 9px 18px !important;
+        box-shadow: 0 2px 8px rgba(21,101,192,0.25) !important;
+    }
+    .stButton button[kind="secondary"] *,
+    button[data-testid="baseButton-secondary"] * {
+        color: #ffffff !important;
     }
     .stButton button[kind="secondary"]:hover,
     button[data-testid="baseButton-secondary"]:hover {
-        background: #001F5E !important;
-        color: white !important;
+        background: #1976D2 !important;
+        color: #ffffff !important;
+        box-shadow: 0 4px 14px rgba(21,101,192,0.38) !important;
     }
 
     /* ── Input labels — target label itself + inner p/span Streamlit wraps ── */
@@ -603,7 +614,7 @@ def _base_css():
         background:#dce6f7 !important; border-radius:6px !important; height:10px !important;
     }
     .stProgress > div > div > div {
-        background: linear-gradient(90deg, #CC0000, #001F5E) !important;
+        background: linear-gradient(90deg, #E53935, #1565C0) !important;
         border-radius:6px !important;
     }
 
@@ -655,7 +666,7 @@ def _base_css():
             pd.querySelectorAll('button').forEach(function(btn) {
                 var txt = (btn.innerText || btn.textContent || '').trim();
                 if (txt.includes('Logout')) {
-                    btn.style.setProperty('background', '#dc3545', 'important');
+                    btn.style.setProperty('background', '#E53935', 'important');
                     btn.style.setProperty('color', 'white', 'important');
                     btn.style.setProperty('border-radius', '24px', 'important');
                     btn.style.setProperty('border', '2px solid #dc3545', 'important');
@@ -717,7 +728,7 @@ def _login_css(bg_b64: str = ""):
         max-width: 400px !important;
         min-width: 270px !important;
         background: #ffffff !important;
-        border-top: 5px solid #CC0000 !important;
+        border-top: 5px solid #E53935 !important;
         border-radius: 14px !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
@@ -753,8 +764,8 @@ def _login_css(bg_b64: str = ""):
         font-weight: 500 !important;
     }}
     [data-testid="stForm"] input:focus {{
-        border-color: #CC0000 !important;
-        box-shadow: 0 0 0 3px rgba(204,0,0,0.12) !important;
+        border-color: #E53935 !important;
+        box-shadow: 0 0 0 3px rgba(229,57,53,0.12) !important;
         background: #fff8f8 !important;
     }}
     [data-testid="stForm"] input::placeholder {{
@@ -1007,17 +1018,20 @@ def _dashboard_css():
     .stButton button[kind="primary"],
     button[data-testid="baseButton-primary"],
     .stFormSubmitButton > button {
-        background: linear-gradient(135deg, #CC0000 0%, #990000 100%) !important;
-        color: white !important; border: none !important; border-radius: 10px !important;
+        background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
+        color: #ffffff !important; border: none !important; border-radius: 10px !important;
         font-weight: 700 !important; letter-spacing: 0.3px !important;
-        box-shadow: 0 4px 14px rgba(204,0,0,0.28) !important;
+        box-shadow: 0 4px 14px rgba(198,40,40,0.28) !important;
         transition: all 0.2s ease !important;
     }
+    .stButton button[kind="primary"] *,
+    button[data-testid="baseButton-primary"] *,
+    .stFormSubmitButton > button * { color: #ffffff !important; }
     .stButton button[kind="primary"]:hover,
     button[data-testid="baseButton-primary"]:hover,
     .stFormSubmitButton > button:hover {
-        background: linear-gradient(135deg, #E31837 0%, #B30000 100%) !important;
-        box-shadow: 0 6px 20px rgba(204,0,0,0.40) !important;
+        background: linear-gradient(135deg, #EF5350 0%, #D32F2F 100%) !important;
+        box-shadow: 0 6px 20px rgba(198,40,40,0.38) !important;
         transform: translateY(-1px) !important;
     }
 
@@ -1198,7 +1212,7 @@ def show_login():
       </div>
       <div style="font-size:22px;font-weight:800;color:#001F5E;
                   margin-bottom:5px;letter-spacing:0.3px;">Sign In</div>
-      <div style="width:42px;height:3px;background:linear-gradient(90deg,#CC0000,#E31837);
+      <div style="width:42px;height:3px;background:linear-gradient(90deg,#E53935,#EF5350);
                   border-radius:2px;margin:0 auto 9px;"></div>
       <div style="font-size:11px;color:#003087;opacity:0.75;
                   font-weight:500;letter-spacing:0.4px;margin-bottom:2px;">
@@ -1225,7 +1239,7 @@ def show_login():
         with c_fgt:
             st.markdown(
                 '<div style="text-align:right;padding-top:6px;">'
-                '<span style="font-size:12px;color:#CC0000;font-weight:700;'
+                '<span style="font-size:12px;color:#E53935;font-weight:700;'
                 'cursor:pointer;">Forgot Password?</span></div>',
                 unsafe_allow_html=True,
             )
@@ -1848,7 +1862,7 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
                 if st.button(lbl, key=f"sid_{num}", use_container_width=True):
                     st.session_state.selected_section = num
                     st.rerun()
-            if num == 5:
+            if num == 5 and user.get("locType", "HPCL") == "HPCL":
                 if st.button("↳ S5A  M&I MIS", key="btn_mi_mis_sec", use_container_width=True,
                              help="Maintenance & Inspection detailed MIS entry"):
                     st.session_state.selected_section = "mi_mis"
@@ -1886,8 +1900,22 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Location-type field filtering ─────────────────────────────────────────
+    from form_defs import get_excluded_fields, get_skip_sections
+    loc_type     = user.get("locType", "HPCL")
+    excl_fields  = get_excluded_fields(loc_type)
+    skip_secs    = get_skip_sections(loc_type)
+
+    if section_num in skip_secs:
+        st.info(
+            f"This section is **Not Applicable** for {loc_type} locations "
+            f"and is automatically marked complete.",
+            icon="ℹ️",
+        )
+        return
+
     # ── Compute auto-calc field values ────────────────────────────────────────
-    fields = SECTION_FIELDS.get(section_num, [])
+    fields = [f for f in SECTION_FIELDS.get(section_num, []) if f["key"] not in excl_fields]
     # Include all sections' field values so cross-section auto-calc refs (e.g. f61 = f60/f3) work
     _all_sec_fields = [f for sec in SECTION_FIELDS.values() for f in sec]
     all_vals = {f["key"]: st.session_state.get(_sk(month_year, f["key"])) for f in _all_sec_fields}
@@ -1972,8 +2000,8 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
             )
 
     with col_next:
-        if section_num == 5:
-            # After S5 M&I, go to S5A (M&I MIS detail) not S6
+        if section_num == 5 and user.get("locType", "HPCL") == "HPCL":
+            # After S5 M&I (HPCL only), go to S5A (M&I MIS detail)
             if st.button("S5A: M&I MIS  ➡", key="btn_next", use_container_width=True):
                 navigate_to = "mi_mis"
         elif section_num == 10:
@@ -2536,34 +2564,44 @@ def _deadline_banner(dl: dict, month_label: str):
 
 
 def _status_card(user: dict, month_label: str, data: dict):
+    from form_defs import get_skip_sections
     status    = data["status"]
     pct       = min(max(float(data.get("completion_pct", 0)), 0), 100)
     locked    = data.get("is_locked", False)
     secs_done = set(data.get("secs_done", []))
+    skip_secs = get_skip_sections(user.get("locType", "HPCL"))
     icon, color, label = STATUS_META.get(status, ("⚪", "#8c9db5", status))
 
     # Section pill builder — circular icon + gradient background
     def _sec_cell(num: int, name: str) -> str:
-        done = num in secs_done
-        if done:
+        if num in skip_secs:
+            grad  = "linear-gradient(135deg,#f1f5f9,#e2e8f0)"
+            bd    = "#cbd5e1"
+            fg    = "#64748b"
+            ic_bg = "#94a3b8"
+            ic    = "N/A"
+            ic_fs = "7px"
+        elif num in secs_done:
             grad  = "linear-gradient(135deg,#dcfce7,#f0fdf4)"
             bd    = "#86efac"
             fg    = "#166534"
             ic_bg = "#22c55e"
             ic    = "✔"
+            ic_fs = "9px"
         else:
             grad  = "linear-gradient(135deg,#fff1f2,#fff5f5)"
             bd    = "#fecaca"
             fg    = "#991b1b"
             ic_bg = "#ef4444"
             ic    = "✕"
+            ic_fs = "9px"
         return (
             f'<td style="padding:3px 4px;width:50%;">'
             f'<div style="display:flex;align-items:center;gap:6px;padding:6px 9px;'
             f'background:{grad};border:1px solid {bd};border-radius:8px;">'
             f'<span style="display:inline-flex;align-items:center;justify-content:center;'
             f'width:17px;height:17px;border-radius:50%;background:{ic_bg};'
-            f'color:white;font-size:9px;font-weight:800;flex-shrink:0;">{ic}</span>'
+            f'color:white;font-size:{ic_fs};font-weight:800;flex-shrink:0;">{ic}</span>'
             f'<span style="font-size:11.5px;font-weight:700;color:#001060;'
             f'white-space:nowrap;">S{num}</span>'
             f'<span style="font-size:10.5px;color:{fg};font-weight:500;'
@@ -2576,7 +2614,7 @@ def _status_card(user: dict, month_label: str, data: dict):
         for r in range(5)
     )
 
-    incomplete = [f"S{n}" for n, _ in SECTIONS if n not in secs_done]
+    incomplete = [f"S{n}" for n, _ in SECTIONS if n not in secs_done and n not in skip_secs]
     hint = ""
     if incomplete:
         hint = (
@@ -3190,7 +3228,7 @@ def show_dashboard():
             if st.button(f"S{num}  {name}", key=f"sid_{num}", use_container_width=True):
                 st.session_state.selected_section = num
                 st.rerun()
-            if num == 5:
+            if num == 5 and user.get("locType", "HPCL") == "HPCL":
                 if st.button("↳ S5A  M&I MIS", key="btn_mi_mis_dash", use_container_width=True,
                              help="Maintenance & Inspection detailed MIS entry"):
                     st.session_state.selected_section = "mi_mis"
