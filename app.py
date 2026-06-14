@@ -26,7 +26,7 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 
 import sheets
-from form_defs import SECTION_FIELDS, SECTION_NAMES
+from form_defs import SECTION_FIELDS, SECTION_NAMES, S5_FIELDS
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -1419,8 +1419,9 @@ def _save_detail_tables(detail_dfs: dict, user: dict, month_year: str, is_locked
 def _inject_field_enhancements(fields: list):
     """
     Inject JS (via components iframe→parent) that:
-      • Attaches a focus-tooltip above the active input showing full validation rules
-      • Red border by default; blue ring on focus; green border once value is entered
+      • Shows a floating validation-rule tooltip on HOVER or FOCUS for every
+        field type: number/int inputs, textareas, AND selectboxes
+      • Positions tooltip above the widget container (not the raw input element)
     """
     import json
     import streamlit.components.v1 as components
@@ -1459,11 +1460,15 @@ def _inject_field_enhancements(fields: list):
   }}
   var TIP=pd.getElementById('_mis_tip');
 
+  /* ── Get label text from whichever widget container holds el ── */
   function getLabel(el){{
-    var c=el.closest('[data-testid="stNumberInput"],[data-testid="stTextArea"]');
+    var c=el.closest(
+      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
+    );
     return c?(c.querySelector('label')||{{}}).innerText||'':'';
   }}
 
+  /* ── Show tooltip; always position relative to the widget container ── */
   function showTip(el){{
     var lb=getLabel(el).trim(), txt=T[lb];
     if(!txt)return;
@@ -1474,23 +1479,59 @@ def _inject_field_enhancements(fields: list):
         return '<br><span style="opacity:.85">&#183; '+x+'</span>';
       }}).join('');
     TIP.style.display='block';
-    var r=el.getBoundingClientRect(), h=TIP.offsetHeight||56;
+    /* Use container bounds so tooltip lines up with the full widget width */
+    var posEl=el.closest(
+      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
+    )||el;
+    var r=posEl.getBoundingClientRect(), h=TIP.offsetHeight||56;
     TIP.style.left=Math.max(8,r.left)+'px';
-    TIP.style.top=(r.top-h-12)+'px';
+    TIP.style.top=(r.top+pw.scrollY-h-12)+'px';
   }}
   function hideTip(){{ TIP.style.display='none'; }}
 
-  /* ── Attach tooltip-only handlers (borders handled by CSS) ── */
+  /* ── Attach hover + focus handlers for all three widget types ── */
   function setup(){{
+
+    /* Number / int inputs — focus & hover */
     pd.querySelectorAll('[data-testid="stNumberInput"] input').forEach(function(el){{
       if(el.dataset.mis)return; el.dataset.mis='1';
       el.addEventListener('focus',function(){{ showTip(el); }});
       el.addEventListener('blur', function(){{ hideTip(); }});
+      var ni=el.closest('[data-testid="stNumberInput"]');
+      if(ni&&!ni.dataset.misHov){{
+        ni.dataset.misHov='1';
+        ni.addEventListener('mouseenter',function(){{ showTip(el); }});
+        ni.addEventListener('mouseleave',function(){{ hideTip(); }});
+      }}
     }});
+
+    /* Text areas — focus & hover */
     pd.querySelectorAll('[data-testid="stTextArea"] textarea').forEach(function(ta){{
       if(ta.dataset.mis)return; ta.dataset.mis='1';
       ta.addEventListener('focus',function(){{ showTip(ta); }});
       ta.addEventListener('blur', function(){{ hideTip(); }});
+      var wa=ta.closest('[data-testid="stTextArea"]');
+      if(wa&&!wa.dataset.misHov){{
+        wa.dataset.misHov='1';
+        wa.addEventListener('mouseenter',function(){{ showTip(ta); }});
+        wa.addEventListener('mouseleave',function(){{ hideTip(); }});
+      }}
+    }});
+
+    /* Selectboxes — hover on container + focus on inner combobox input */
+    pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
+      if(sb.dataset.mis)return; sb.dataset.mis='1';
+      /* Always re-query inner element so re-renders are handled */
+      function tipEl(){{
+        return sb.querySelector('[role="combobox"]')||sb.querySelector('input')||sb;
+      }}
+      sb.addEventListener('mouseenter',function(){{ showTip(tipEl()); }});
+      sb.addEventListener('mouseleave',function(){{ hideTip(); }});
+      var inp=tipEl();
+      if(inp&&inp!==sb){{
+        inp.addEventListener('focus',function(){{ showTip(inp); }});
+        inp.addEventListener('blur', function(){{ hideTip(); }});
+      }}
     }});
   }}
 
@@ -6090,6 +6131,9 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
         _mi_tab_ext_pipeline(uid, month_year)
     with tabs2[4]:
         _mi_tab_tank_status(uid, month_year, tank_list, zone, loc_name)
+
+    # Inject hover/focus tooltips for S5 standard fields (M&I Index, PM %, etc.)
+    _inject_field_enhancements(S5_FIELDS)
 
     # ── Generate M&I MIS Report button ───────────────────────────────────
     st.markdown(
