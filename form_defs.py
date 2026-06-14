@@ -55,6 +55,8 @@ S1_FIELDS = [
     {"no":32,"key":"f32", "label":"Security Guards (Nos.)",                               "type":"int",      "req":True,  "min":0, "max":50,    "dec":0,  "opts":None,                         "hint":"As per Wages paid",                           "sub":"Manpower",                        "auto":None},
     {"no":33,"key":"f33", "label":"Electricians (Nos.)",                                  "type":"int",      "req":True,  "min":0, "max":20,    "dec":0,  "opts":None,                         "hint":"Electricians + Helpers deployed",             "sub":"Manpower",                        "auto":None},
     {"no":34,"key":"f34", "label":"Contract Labour (Nos.)",                               "type":"int",      "req":True,  "min":0, "max":150,   "dec":0,  "opts":None,                         "hint":"Enter Contract Workers deployed",             "sub":"Manpower",                        "auto":None},
+    # Administrative
+    {"no":141,"key":"f141","label":"E-diary observations recorded",                        "type":"int",      "req":True,  "min":1, "max":None,  "dec":0,  "opts":None,                         "hint":"Enter count of E-diary observations recorded","sub":"Administrative",                  "auto":None},
 ]
 
 S2_FIELDS = [

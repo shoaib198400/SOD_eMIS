@@ -29,6 +29,7 @@ SECTIONS = [
         "Stock Loss product-wise (KL and % vs Target)",
         "AIM Holds (Nos.), Day-End Report signed (Y/N), Auto-Reconciliation (%)",
         "Manpower: Management, Non-Mgmt, Contract Engineers, GATs, TATs, Security, Housekeeping",
+        "E-diary observations recorded (integer, minimum 1) - count of E-diary observations for the month",
     ]),
     (2, "Finance & Planning (F&P)", [
         "VRU Available & Functioning (Yes / No / NA)",

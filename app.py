@@ -226,22 +226,47 @@ def _load_draft_to_session(user_id: str, month_year: str, section_num: int):
 
 
 def _field_help(field: dict) -> str:
-    """Build comprehensive hover-tooltip text from field validation rules."""
-    parts = []
-    if field.get("req") and not field.get("auto"):
-        parts.append("Required")
+    """Build tooltip text in the official Data Rules format for hover display."""
+    if field.get("auto"):
+        return f"Auto-calculated  ·  {field.get('hint','')}"
+
+    rule_parts = []
+    rule_parts.append("required" if field.get("req") else "optional")
+
     t = field["type"]
-    if   t == "int":      parts.append("Integer (whole number)")
-    elif t == "number":   parts.append(f"Decimal — up to {field.get('dec', 2)} decimal places")
-    elif t == "select":   parts.append("Select one option from the list")
-    elif t == "textarea": parts.append("Free text — max 750 characters")
-    if field.get("min") is not None:
-        parts.append(f"Min value: {field['min']}")
-    if field.get("max") is not None:
-        parts.append(f"Max value: {field['max']}")
-    if field.get("hint"):
-        parts.append(field["hint"])
-    return "  ·  ".join(parts)
+    if t == "int":
+        rule_parts.append("integer")
+        mn = field.get("min")
+        mx = field.get("max")
+        if mn is not None and mn > 0:
+            rule_parts.append(f"min={mn} (positive)")
+        elif mn is not None:
+            rule_parts.append(f"min={mn}")
+        if mx is not None:
+            rule_parts.append(f"max={mx}")
+    elif t == "number":
+        dec = field.get("dec", 2)
+        rule_parts.append("number")
+        mn = field.get("min")
+        mx = field.get("max")
+        if mn is not None and mn > 0:
+            rule_parts.append("only positive numbers")
+        elif mn is not None:
+            rule_parts.append(f"min={mn}")
+        if mx is not None:
+            rule_parts.append(f"max={mx}")
+        rule_parts.append(f"upto {dec} decimals")
+    elif t == "select":
+        opts = field.get("opts") or []
+        rule_parts.append(f"select: {' / '.join(opts)}")
+    elif t == "textarea":
+        rule_parts.append("text; max 750 characters")
+
+    rule_str = "; ".join(rule_parts)
+    hint = field.get("hint", "")
+    if hint:
+        return f"{rule_str}  ·  {hint}"
+    return rule_str
 
 
 def _render_field(field: dict, sk: str, disabled: bool, all_vals: dict):
@@ -1483,39 +1508,48 @@ def _inject_field_enhancements(fields: list):
   }}
 
   /* ── Wire up hover + focus for all three widget types ── */
+  /* Mark INNER elements so containers are not permanently skipped when
+     label text is not yet in DOM at first MutationObserver fire.      */
   function setup(){{
 
-    /* number / int inputs */
-    pd.querySelectorAll('[data-testid="stNumberInput"]').forEach(function(ni){{
-      if(ni.dataset.mis)return; ni.dataset.mis='1';
-      var txt=T[labelKey(ni)]; if(!txt)return;
-      var el=ni.querySelector('input');
-      ni.addEventListener('mouseenter',function(){{ showTip(txt,ni); }});
-      ni.addEventListener('mouseleave',function(){{ hideTip(); }});
-      if(el){{
-        el.addEventListener('focus',function(){{ showTip(txt,ni); }});
-        el.addEventListener('blur', function(){{ hideTip(); }});
+    /* number / int inputs — target inner <input>, dynamic label lookup */
+    pd.querySelectorAll('[data-testid="stNumberInput"] input').forEach(function(el){{
+      if(el.dataset.mis)return; el.dataset.mis='1';
+      var ni=el.closest('[data-testid="stNumberInput"]');
+      el.addEventListener('focus',function(){{
+        var txt=T[labelKey(ni)]; if(!txt)return; showTip(txt,ni);
+      }});
+      el.addEventListener('blur',function(){{ hideTip(); }});
+      if(ni&&!ni.dataset.misHov){{ ni.dataset.misHov='1';
+        ni.addEventListener('mouseenter',function(){{
+          var txt=T[labelKey(ni)]; if(!txt)return; showTip(txt,ni);
+        }});
+        ni.addEventListener('mouseleave',function(){{ hideTip(); }});
       }}
     }});
 
-    /* text areas */
-    pd.querySelectorAll('[data-testid="stTextArea"]').forEach(function(wa){{
-      if(wa.dataset.mis)return; wa.dataset.mis='1';
-      var txt=T[labelKey(wa)]; if(!txt)return;
-      var ta=wa.querySelector('textarea');
-      wa.addEventListener('mouseenter',function(){{ showTip(txt,wa); }});
-      wa.addEventListener('mouseleave',function(){{ hideTip(); }});
-      if(ta){{
-        ta.addEventListener('focus',function(){{ showTip(txt,wa); }});
-        ta.addEventListener('blur', function(){{ hideTip(); }});
+    /* text areas — target inner <textarea>, dynamic label lookup */
+    pd.querySelectorAll('[data-testid="stTextArea"] textarea').forEach(function(ta){{
+      if(ta.dataset.mis)return; ta.dataset.mis='1';
+      var wa=ta.closest('[data-testid="stTextArea"]');
+      ta.addEventListener('focus',function(){{
+        var txt=T[labelKey(wa)]; if(!txt)return; showTip(txt,wa);
+      }});
+      ta.addEventListener('blur',function(){{ hideTip(); }});
+      if(wa&&!wa.dataset.misHov){{ wa.dataset.misHov='1';
+        wa.addEventListener('mouseenter',function(){{
+          var txt=T[labelKey(wa)]; if(!txt)return; showTip(txt,wa);
+        }});
+        wa.addEventListener('mouseleave',function(){{ hideTip(); }});
       }}
     }});
 
-    /* selectboxes */
+    /* selectboxes — mark container, dynamic label lookup at interaction time */
     pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
       if(sb.dataset.mis)return; sb.dataset.mis='1';
-      var txt=T[labelKey(sb)]; if(!txt)return;
-      sb.addEventListener('mouseenter',function(){{ showTip(txt,sb); }});
+      sb.addEventListener('mouseenter',function(){{
+        var txt=T[labelKey(sb)]; if(!txt)return; showTip(txt,sb);
+      }});
       sb.addEventListener('mouseleave',function(){{ hideTip(); }});
     }});
   }}
