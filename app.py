@@ -1424,7 +1424,7 @@ def show_change_password():
 
     st.markdown("""
     <div class="login-footer">
-      <span>© 2025 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
+      <span>© 2026 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Supply Operations & Distribution &nbsp;·&nbsp; Authorised Users Only</span>
     </div>""", unsafe_allow_html=True)
 
@@ -2032,7 +2032,7 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Supply Operations &amp; Distribution</span>
     </div>
     """, unsafe_allow_html=True)
@@ -2440,7 +2440,7 @@ def show_review(user: dict, month_year: str, month_label: str):
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Supply Operations &amp; Distribution</span>
     </div>
     """, unsafe_allow_html=True)
@@ -3375,7 +3375,7 @@ def show_dashboard():
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;
                 font-size:11px;color:#aaa;">
-      <span>© 2025 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
+      <span>© 2026 Hindustan Petroleum Corporation Limited. All rights reserved.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Supply Operations & Distribution &nbsp;·&nbsp; Authorised Users Only</span>
     </div>
     """, unsafe_allow_html=True)
@@ -4229,7 +4229,7 @@ def show_analytics_page(user: dict):
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Analytics Dashboard</span>
     </div>""", unsafe_allow_html=True)
 
@@ -4342,7 +4342,7 @@ def show_zone_dashboard(user: dict):
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Zone View</span>
     </div>""", unsafe_allow_html=True)
 
@@ -4485,7 +4485,7 @@ def show_hqo_dashboard(user: dict):
     st.markdown(f"""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; {footer_label}</span>
     </div>""", unsafe_allow_html=True)
 
@@ -4997,7 +4997,7 @@ def show_reports_page(user: dict):
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; MIS Reports</span>
     </div>""", unsafe_allow_html=True)
 
@@ -6670,7 +6670,7 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
     st.markdown("""
     <div style="margin-top:16px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
-      <span>&#169; 2025 Hindustan Petroleum Corporation Limited.</span>
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; M&amp;I MIS</span>
     </div>""", unsafe_allow_html=True)
 
