@@ -2935,8 +2935,10 @@ def show_dashboard():
         # ── Logo in white rounded card ──────────────────────────────────────────
         st.markdown(f"""
         <div style="padding:10px 12px 6px;">
-          <div style="background:white;border-radius:12px;padding:6px 8px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
+          <div style="background:linear-gradient(135deg,#001060 0%,#0033a0 100%);
+                      border-radius:12px;padding:6px 8px;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.35);
+                      border:1px solid rgba(255,255,255,0.18);
                       height:70px;overflow:hidden;
                       display:flex;align-items:center;justify-content:center;">
             {logo_html}
@@ -3166,8 +3168,10 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
         <div style="padding:10px 12px 6px;">
-          <div style="background:white;border-radius:12px;padding:6px 8px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
+          <div style="background:linear-gradient(135deg,#001060 0%,#0033a0 100%);
+                      border-radius:12px;padding:6px 8px;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.35);
+                      border:1px solid rgba(255,255,255,0.18);
                       height:70px;overflow:hidden;
                       display:flex;align-items:center;justify-content:center;">
             {logo_html}
