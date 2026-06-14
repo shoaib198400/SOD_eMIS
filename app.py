@@ -626,13 +626,10 @@ def _base_css():
     [data-testid="stFileUploader"] label { font-size:14px !important; font-weight:600 !important; }
     [data-testid="stFileUploader"] p    { font-size:14px !important; }
 
-    /* ── Tabs ── */
+    /* ── Tabs — base (overridden per-page in _dashboard_css) ── */
     .stTabs [data-baseweb="tab"] {
         font-size:14px !important; font-weight:600 !important;
         padding: 8px 18px !important;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #CC0000 !important; border-bottom: 3px solid #CC0000 !important;
     }
 
     /* ── Auto-calc field boxes ── */
@@ -1101,9 +1098,15 @@ def _dashboard_css():
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 8px !important; font-weight:600 !important; font-size:14px !important;
+        color: #001F5E !important;
     }
-    .stTabs [aria-selected="true"] {
-        background: #001F5E !important; color: white !important;
+    .stTabs [aria-selected="true"],
+    .stTabs [aria-selected="true"] *,
+    .stTabs [aria-selected="true"] p,
+    .stTabs [aria-selected="true"] span,
+    .stTabs [aria-selected="true"] div {
+        background: #001F5E !important; color: #ffffff !important;
+        border-bottom: none !important;
     }
 
     /* ── DataFrame / st.table professional styling ── */
