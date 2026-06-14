@@ -4911,10 +4911,14 @@ def show_reports_page(user: dict):
                     )
 
                 # ── Edit email content ─────────────────────────────────────────
+                _intro_key = f"rpt_custom_intro_{month_year}"
+                # Read current value from session state (persists whether expander is open or not)
+                custom_intro = st.session_state.get(_intro_key, "")
+
                 with st.expander("Edit Email Content (optional)", expanded=False):
                     custom_intro = st.text_area(
                         "Opening message in email body",
-                        key=f"rpt_custom_intro_{month_year}",
+                        key=_intro_key,
                         height=90,
                         placeholder=(
                             "Leave blank to use the default message:\n"
@@ -4942,9 +4946,6 @@ def show_reports_page(user: dict):
                             components.html(preview_html, height=580, scrolling=True)
                         else:
                             st.info("No pending zones — nothing to preview.")
-                else:
-                    custom_intro = st.session_state.get(
-                        f"rpt_custom_intro_{month_year}", "")
 
                 # ── Confirmation checkbox ─────────────────────────────────────
                 label = (
