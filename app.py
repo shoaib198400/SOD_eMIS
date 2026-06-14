@@ -4767,17 +4767,12 @@ def show_reports_page(user: dict):
                 f'<div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:6px;">'
                 f'&#9993;&nbsp; Email Setup Required</div>'
                 f'<div style="font-size:13px;color:#78350f;line-height:1.7;">'
-                f'SMTP credentials not found. Add the following to '
-                f'<strong>Streamlit Cloud → Settings → Secrets</strong>:<br><br>'
+                f'SMTP credentials not configured. Go to <strong>Streamlit Cloud → '
+                f'Settings → Secrets</strong> and add:<br><br>'
                 f'<code style="background:#fef3c7;padding:8px 12px;border-radius:6px;'
-                f'display:block;font-size:12px;white-space:pre-wrap;">'
-                f'[email]\nsmtp_host     = "smtp.gmail.com"\nsmtp_port     = 587\n'
-                f'smtp_user     = "your-gmail@gmail.com"\n'
-                f'smtp_password = "your-app-password"\n'
-                f'sender_name   = "HPCL SOD MIS"'
-                f'</code><br>'
-                f'Use a Gmail account with an <strong>App Password</strong> '
-                f'(Google Account → Security → 2-Step Verification → App Passwords).'
+                f'display:block;font-size:12px;white-space:pre-wrap;">{_email_err}</code>'
+                f'<br>Use your HPCL Outlook password as <strong>smtp_password</strong>. '
+                f'If login fails, ask HPCL IT to enable SMTP AUTH for your mailbox.'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )

@@ -54,20 +54,42 @@ ZONE_EMAIL_MAP = {
 # ── SMTP credential helper ─────────────────────────────────────────────────────
 
 def _smtp_cfg() -> dict | None:
-    """Return SMTP config dict from st.secrets, or None if not configured."""
+    """Return SMTP config dict from st.secrets, or None if not configured.
+
+    Secrets keys (under [email]):
+      smtp_host     – SMTP server (e.g. smtp.office365.com)
+      smtp_port     – default 587
+      smtp_user     – login username (usually the sending email address)
+      smtp_password – SMTP/app password
+      from_email    – optional From address; defaults to smtp_user
+      sender_name   – display name; default "HPCL SOD MIS"
+    """
     try:
         cfg = st.secrets.get("email", {})
         if cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"):
+            user = str(cfg["smtp_user"])
             return {
-                "host":     str(cfg["smtp_host"]),
-                "port":     int(cfg.get("smtp_port", 587)),
-                "user":     str(cfg["smtp_user"]),
-                "password": str(cfg["smtp_password"]),
-                "name":     str(cfg.get("sender_name", "HPCL SOD MIS")),
+                "host":       str(cfg["smtp_host"]),
+                "port":       int(cfg.get("smtp_port", 587)),
+                "user":       user,
+                "password":   str(cfg["smtp_password"]),
+                "from_email": str(cfg.get("from_email", user)),
+                "name":       str(cfg.get("sender_name", "HPCL SOD MIS")),
             }
     except Exception:
         pass
     return None
+
+
+_O365_TEMPLATE = (
+    '[email]\n'
+    'smtp_host     = "smtp.office365.com"\n'
+    'smtp_port     = 587\n'
+    'smtp_user     = "shoaibrehman@hpcl.in"\n'
+    'smtp_password = "your-hpcl-password"\n'
+    'from_email    = "shoaibrehman@hpcl.in"\n'
+    'sender_name   = "HPCL SOD MIS"'
+)
 
 
 def email_configured() -> tuple:
@@ -75,16 +97,7 @@ def email_configured() -> tuple:
     cfg = _smtp_cfg()
     if cfg:
         return True, ""
-    return False, (
-        "Email credentials not configured in Streamlit secrets.\n\n"
-        "Add the following to your secrets (Settings → Secrets on Streamlit Cloud):\n\n"
-        "[email]\n"
-        'smtp_host     = "smtp.gmail.com"\n'
-        "smtp_port     = 587\n"
-        'smtp_user     = "your-gmail@gmail.com"\n'
-        'smtp_password = "your-app-password"\n'
-        'sender_name   = "HPCL SOD MIS"'
-    )
+    return False, _O365_TEMPLATE
 
 
 # kept for backward-compat with any existing callers
@@ -216,10 +229,10 @@ def send_zone_reminder(zone_name: str, month_year: str,
 
         msg = MIMEMultipart("alternative")
         msg["Subject"]  = subject
-        msg["From"]     = f"{cfg['name']} <{cfg['user']}>"
+        msg["From"]     = f"{cfg['name']} <{cfg['from_email']}>"
         msg["To"]       = "; ".join(to_list)
         msg["CC"]       = "; ".join(cc_list)
-        msg["Reply-To"] = SENDER_EMAIL
+        msg["Reply-To"] = cfg["from_email"]
 
         msg.attach(MIMEText(
             _build_email_html(zone_name, month_year, pending_locs, due_date),
@@ -232,7 +245,7 @@ def send_zone_reminder(zone_name: str, month_year: str,
             server.ehlo()
             server.starttls(context=ctx)
             server.login(cfg["user"], cfg["password"])
-            server.sendmail(cfg["user"], all_rcpt, msg.as_string())
+            server.sendmail(cfg["from_email"], all_rcpt, msg.as_string())
 
         return {"ok": True}
 
