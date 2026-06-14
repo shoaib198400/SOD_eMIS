@@ -1641,21 +1641,24 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        sl = _assets().get("side_logo")
-        logo_html = (
-            f'<img src="{sl}" style="width:100%;height:100%;'
-            f'object-fit:cover;display:block;">'
-        ) if sl else ""
-        st.markdown(f"""
-        <div style="width:100%;aspect-ratio:1/1;overflow:hidden;
-                    display:flex;align-items:center;justify-content:center;">
-          {logo_html}
+        spb = _assets().get("side_panel_banner")
+        if spb:
+            st.markdown(
+                f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                f'<img src="{spb}" style="width:100%;height:auto;display:block;'
+                f'border-radius:0;margin:0;padding:0;"></div>',
+                unsafe_allow_html=True,
+            )
+
+        if st.button("🏠  Back to Dashboard", key="sid_dash", use_container_width=True):
+            st.session_state.selected_section = None
+            st.rerun()
+
+        st.markdown("""
+        <div style="padding:10px 16px 4px;">
+          <div style="color:#C8D7FF;font-size:9px;font-weight:700;
+                      letter-spacing:2px;text-transform:uppercase;">MIS SECTIONS</div>
         </div>
-        <div style="padding:10px 18px 12px;border-bottom:2px solid #c62828;">
-          <div style="color:#ff4d4d;font-size:11px;font-weight:700;
-                      letter-spacing:1.5px;text-transform:uppercase;">MIS SECTIONS</div>
-        </div>
-        <div style="height:4px;"></div>
         """, unsafe_allow_html=True)
 
         for num, name in SECTIONS:
@@ -1671,11 +1674,6 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
                              help="Maintenance & Inspection detailed MIS entry"):
                     st.session_state.selected_section = "mi_mis"
                     st.rerun()
-
-        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-        if st.button("← Back to Dashboard", key="sid_dash", use_container_width=True):
-            st.session_state.selected_section = None
-            st.rerun()
 
     # ── Page header ───────────────────────────────────────────────────────────
     _dash_header(user)
@@ -5987,27 +5985,28 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
     uid  = user.get("userId", "")
 
     with st.sidebar:
-        sl       = _assets().get("side_logo")
-        logo_html = (
-            f'<img src="{sl}" style="width:100%;height:100%;object-fit:cover;display:block;">'
-        ) if sl else ""
-        st.markdown(f"""
-        <div style="width:100%;aspect-ratio:1/1;overflow:hidden;
-                    display:flex;align-items:center;justify-content:center;">
-          {logo_html}
-        </div>
-        <div style="padding:10px 18px 12px;border-bottom:2px solid #c62828;">
-          <div style="color:#ff4d4d;font-size:11px;font-weight:700;
-                      letter-spacing:1.5px;text-transform:uppercase;">M&amp;I MIS</div>
-          <div style="color:#ff9999;font-size:10px;margin-top:3px;">
+        spb = _assets().get("side_panel_banner")
+        if spb:
+            st.markdown(
+                f'<div style="margin:0;padding:0;line-height:0;width:100%;overflow:hidden;">'
+                f'<img src="{spb}" style="width:100%;height:auto;display:block;'
+                f'border-radius:0;margin:0;padding:0;"></div>',
+                unsafe_allow_html=True,
+            )
+
+        if st.button("🏠  Back to Dashboard", key="mi_back", use_container_width=True):
+            st.session_state.selected_section = None
+            st.rerun()
+
+        st.markdown("""
+        <div style="padding:10px 16px 4px;">
+          <div style="color:#C8D7FF;font-size:9px;font-weight:700;
+                      letter-spacing:2px;text-transform:uppercase;">M&amp;I MIS</div>
+          <div style="color:#8AABFF;font-size:10px;margin-top:2px;">
             Maintenance &amp; Inspection Data
           </div>
         </div>
-        <div style="height:6px;"></div>
         """, unsafe_allow_html=True)
-        if st.button("⬅ Back to Dashboard", key="mi_back", use_container_width=True):
-            st.session_state.selected_section = None
-            st.rerun()
 
     _dash_header(user)
 
