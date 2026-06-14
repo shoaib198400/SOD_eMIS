@@ -2196,9 +2196,8 @@ def show_review(user: dict, month_year: str, month_label: str):
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 def _dash_header(user: dict):
-    # SOD logo (1:1 square) displayed in the centre of the header bar
-    tb       = _assets().get("side_logo")
-    tb_html  = (f'<img src="{tb}" style="height:68px;width:68px;'
+    tb       = _assets().get("title_banner")
+    tb_html  = (f'<img src="{tb}" style="height:60px;width:auto;'
                 f'object-fit:contain;display:block;">' if tb else "")
 
     # ── Single unified banner: title LEFT · logo CENTRE · badge RIGHT ────────
@@ -2926,19 +2925,16 @@ def show_dashboard():
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        # HPCL corporate banner (2.76:1 wide) shown in sidebar white card
-        sl = _assets().get("title_banner")
+        sl = _assets().get("side_logo")
         logo_html = (
-            f'<img src="{sl}" style="height:46px;width:auto;max-width:100%;'
+            f'<img src="{sl}" style="height:58px;width:auto;'
             f'object-fit:contain;display:block;">'
         ) if sl else ""
         # ── Logo in white rounded card ──────────────────────────────────────────
         st.markdown(f"""
         <div style="padding:10px 12px 6px;">
-          <div style="background:linear-gradient(135deg,#001060 0%,#0033a0 100%);
-                      border-radius:12px;padding:6px 8px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.35);
-                      border:1px solid rgba(255,255,255,0.18);
+          <div style="background:white;border-radius:12px;padding:6px 8px;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
                       height:70px;overflow:hidden;
                       display:flex;align-items:center;justify-content:center;">
             {logo_html}
@@ -3163,15 +3159,13 @@ def _month_selector_bar(user: dict, role_color: str):
 
 def _zone_sidebar(user: dict, title: str, subtitle: str):
     with st.sidebar:
-        sl = _assets().get("title_banner")
-        logo_html = (f'<img src="{sl}" style="height:46px;width:auto;max-width:100%;'
+        sl = _assets().get("side_logo")
+        logo_html = (f'<img src="{sl}" style="height:58px;width:auto;'
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
         <div style="padding:10px 12px 6px;">
-          <div style="background:linear-gradient(135deg,#001060 0%,#0033a0 100%);
-                      border-radius:12px;padding:6px 8px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.35);
-                      border:1px solid rgba(255,255,255,0.18);
+          <div style="background:white;border-radius:12px;padding:6px 8px;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.22);
                       height:70px;overflow:hidden;
                       display:flex;align-items:center;justify-content:center;">
             {logo_html}
