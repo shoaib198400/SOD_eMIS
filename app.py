@@ -415,11 +415,13 @@ def _base_css():
     }
 
     /* ── Input labels ── */
-    .stTextInput label, .stNumberInput label,
-    .stSelectbox label, .stTextArea label {
-        font-size:13px !important; font-weight:700 !important;
-        letter-spacing:0.5px !important; color:#333 !important;
-        text-transform:uppercase !important; margin-bottom:4px !important;
+    [data-testid="stNumberInput"] label,
+    [data-testid="stTextInput"]   label,
+    [data-testid="stSelectbox"]   label,
+    [data-testid="stTextArea"]    label {
+        font-size:13px !important; font-weight:800 !important;
+        letter-spacing:0.3px !important; color:#001a6e !important;
+        text-transform:none !important; margin-bottom:4px !important;
     }
 
     /* ── Input boxes ── */
@@ -1463,9 +1465,9 @@ def _inject_field_enhancements(fields: list):
 <script>
 (function(){{
   var T={tj};
-  var pd=window.parent.document;
+  var pw=window.parent, pd=pw.document;
 
-  /* ── Create tooltip element once ── */
+  /* ── Create tooltip element once in parent doc ── */
   if(!pd.getElementById('_mis_tip')){{
     var cs=pd.createElement('style');
     cs.textContent=
@@ -1483,10 +1485,18 @@ def _inject_field_enhancements(fields: list):
   }}
   var TIP=pd.getElementById('_mis_tip');
 
-  /* ── Show tooltip above a container element ── */
-  /* NOTE: tooltip is position:fixed — use viewport coords from
-     getBoundingClientRect() directly; do NOT add scrollY.          */
-  function showTip(txt, refEl){{
+  /* ── Get label text by traversing UP from the inner element ── */
+  function getLabel(el){{
+    var c=el.closest(
+      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
+    );
+    return c?(c.querySelector('label')||{{}}).innerText||'':'';
+  }}
+
+  /* ── Show tooltip above whichever container holds el ── */
+  /* position:fixed → use viewport rect directly, NO scrollY offset  */
+  function showTip(el){{
+    var lb=getLabel(el).trim(), txt=T[lb];
     if(!txt)return;
     var pts=txt.split('  ·  ');
     TIP.innerHTML=
@@ -1495,71 +1505,68 @@ def _inject_field_enhancements(fields: list):
         return '<br><span style="opacity:.85">&#183; '+x+'</span>';
       }}).join('');
     TIP.style.display='block';
-    var r=refEl.getBoundingClientRect(), h=TIP.offsetHeight||56;
+    var posEl=el.closest(
+      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
+    )||el;
+    var r=posEl.getBoundingClientRect(), h=TIP.offsetHeight||56;
     TIP.style.left=Math.max(8,r.left)+'px';
     TIP.style.top=(r.top-h-12)+'px';
   }}
   function hideTip(){{ TIP.style.display='none'; }}
 
-  /* ── Extract label text from a widget container ── */
-  function labelKey(c){{
-    var lbl=c.querySelector('label');
-    return lbl?lbl.innerText.trim():'';
-  }}
-
-  /* ── Wire up hover + focus for all three widget types ── */
-  /* Mark INNER elements so containers are not permanently skipped when
-     label text is not yet in DOM at first MutationObserver fire.      */
+  /* ── Attach handlers; mark INNER elements to survive Streamlit re-renders ── */
   function setup(){{
 
-    /* number / int inputs — target inner <input>, dynamic label lookup */
+    /* Number / int inputs */
     pd.querySelectorAll('[data-testid="stNumberInput"] input').forEach(function(el){{
       if(el.dataset.mis)return; el.dataset.mis='1';
+      el.addEventListener('focus',function(){{ showTip(el); }});
+      el.addEventListener('blur', function(){{ hideTip(); }});
       var ni=el.closest('[data-testid="stNumberInput"]');
-      el.addEventListener('focus',function(){{
-        var txt=T[labelKey(ni)]; if(!txt)return; showTip(txt,ni);
-      }});
-      el.addEventListener('blur',function(){{ hideTip(); }});
       if(ni&&!ni.dataset.misHov){{ ni.dataset.misHov='1';
-        ni.addEventListener('mouseenter',function(){{
-          var txt=T[labelKey(ni)]; if(!txt)return; showTip(txt,ni);
-        }});
+        ni.addEventListener('mouseenter',function(){{ showTip(el); }});
         ni.addEventListener('mouseleave',function(){{ hideTip(); }});
       }}
     }});
 
-    /* text areas — target inner <textarea>, dynamic label lookup */
+    /* Text areas */
     pd.querySelectorAll('[data-testid="stTextArea"] textarea').forEach(function(ta){{
       if(ta.dataset.mis)return; ta.dataset.mis='1';
+      ta.addEventListener('focus',function(){{ showTip(ta); }});
+      ta.addEventListener('blur', function(){{ hideTip(); }});
       var wa=ta.closest('[data-testid="stTextArea"]');
-      ta.addEventListener('focus',function(){{
-        var txt=T[labelKey(wa)]; if(!txt)return; showTip(txt,wa);
-      }});
-      ta.addEventListener('blur',function(){{ hideTip(); }});
       if(wa&&!wa.dataset.misHov){{ wa.dataset.misHov='1';
-        wa.addEventListener('mouseenter',function(){{
-          var txt=T[labelKey(wa)]; if(!txt)return; showTip(txt,wa);
-        }});
+        wa.addEventListener('mouseenter',function(){{ showTip(ta); }});
         wa.addEventListener('mouseleave',function(){{ hideTip(); }});
       }}
     }});
 
-    /* selectboxes — mark container, dynamic label lookup at interaction time */
+    /* Selectboxes — use combobox input so getLabel() traversal works */
     pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
       if(sb.dataset.mis)return; sb.dataset.mis='1';
-      sb.addEventListener('mouseenter',function(){{
-        var txt=T[labelKey(sb)]; if(!txt)return; showTip(txt,sb);
-      }});
+      function tipEl(){{
+        return sb.querySelector('[role="combobox"]')||sb.querySelector('input')||sb;
+      }}
+      sb.addEventListener('mouseenter',function(){{ showTip(tipEl()); }});
       sb.addEventListener('mouseleave',function(){{ hideTip(); }});
+      var inp=tipEl();
+      if(inp&&inp!==sb){{
+        inp.addEventListener('focus',function(){{ showTip(inp); }});
+        inp.addEventListener('blur', function(){{ hideTip(); }});
+      }}
     }});
   }}
 
+  /* Run immediately, then watch for Streamlit re-renders (debounced) */
   setup();
-  var obs=new MutationObserver(setup);
-  obs.observe(pd.body,{{childList:true,subtree:true}});
-  /* store ref so next injection can disconnect the old observer */
-  if(window.parent._misObs)window.parent._misObs.disconnect();
-  window.parent._misObs=obs;
+  if(pw._misObs)pw._misObs.disconnect();
+  pw._misObs=new MutationObserver(function(){{
+    if(!pw._misPending){{
+      pw._misPending=true;
+      requestAnimationFrame(function(){{ pw._misPending=false; setup(); }});
+    }}
+  }});
+  pw._misObs.observe(pd.body,{{childList:true,subtree:true}});
 }})();
 </script>
 """, height=0)
@@ -1590,15 +1597,16 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
     .auto-val   { font-size: 22px; font-weight: 800; color: #001a6e; line-height: 1; }
     .auto-hint  { font-size: 10.5px; color: #5577bb; margin-top: 4px; }
 
-    /* ── HPCL blue labels on every field type ── */
+    /* ── HPCL blue bold labels on every field type ── */
     [data-testid="stNumberInput"] label,
     [data-testid="stTextInput"]   label,
     [data-testid="stSelectbox"]   label,
     [data-testid="stTextArea"]    label {
-        color: #0033A0 !important;
-        font-weight: 700 !important;
+        color: #001a6e !important;
+        font-weight: 800 !important;
         font-size: 13px !important;
         letter-spacing: 0.1px !important;
+        text-transform: none !important;
     }
 
     /* ── Number inputs & textareas: red by default, green when filled, blue on focus ── */
