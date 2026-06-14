@@ -342,12 +342,12 @@ def _base_css():
     section.main { padding:0 !important; }
     section.main > .block-container { padding:0 !important; max-width:100% !important; }
 
-    /* ── Global text sizing ── */
-    body, p, span, div, li { font-size:15px !important; line-height:1.6 !important; }
+    /* ── Global text sizing (~25% smaller than original) ── */
+    body, p, span, div, li { font-size:12px !important; line-height:1.55 !important; }
 
     /* ── Sidebar text ── */
-    [data-testid="stSidebar"] * { font-size:14px !important; }
-    [data-testid="stSidebar"] .stButton button { font-size:14px !important; font-weight:600 !important; }
+    [data-testid="stSidebar"] * { font-size:11px !important; color:#ffffff !important; }
+    [data-testid="stSidebar"] .stButton button { font-size:11px !important; font-weight:600 !important; color:#ffffff !important; }
 
     /* ── PRIMARY buttons (Login, Save, Submit, etc.) ── */
     .stButton button[kind="primary"],
@@ -740,7 +740,7 @@ def _dashboard_css():
     [data-testid="stSidebarUserContent"] > div:first-child,
     [data-testid="stSidebarUserContent"] > div:first-child > div:first-child,
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
-        margin-top: -3rem !important;
+        margin-top: -1rem !important;
         padding-top: 0 !important;
     }
 
@@ -779,10 +779,13 @@ def _dashboard_css():
     }
     /* The actual <p> tag holding button text */
     [data-testid="stSidebar"] [data-testid="stButton"] > button p,
-    [data-testid="stSidebar"] [data-testid="stButton"] > button span {
+    [data-testid="stSidebar"] [data-testid="stButton"] > button span,
+    [data-testid="stSidebar"] [data-testid="stButton"] > button div {
         text-align: left !important;
         width: 100% !important;
         display: block !important;
+        color: #ffffff !important;
+        font-size: 11px !important;
     }
     [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
         background: rgba(255,255,255,0.11) !important; color: white !important;
@@ -2177,31 +2180,31 @@ def _dash_header(user: dict):
     if tb:
         st.markdown(f"""
         <div style="background:linear-gradient(135deg,#001060 0%,#002b8f 60%,#003eb5 100%);
-                    border-radius:16px;padding:12px 24px;
-                    box-shadow:0 2px 12px rgba(0,43,143,0.20);margin-bottom:10px;
+                    border-radius:12px;padding:8px 18px;
+                    box-shadow:0 2px 10px rgba(0,43,143,0.20);margin-bottom:8px;
                     display:flex;justify-content:center;align-items:center;
-                    min-height:110px;">
-          <img src="{tb}" style="height:90px;width:auto;display:block;object-fit:contain;">
+                    min-height:76px;">
+          <img src="{tb}" style="height:64px;width:auto;display:block;object-fit:contain;">
         </div>""", unsafe_allow_html=True)
 
     # ── Row 2: Portal title + user badge — separate card below ───────────────
     st.markdown(f"""
-    <div style="background:white;padding:14px 24px;border-radius:16px;
-                box-shadow:0 2px 12px rgba(0,43,143,0.10);margin-bottom:16px;
+    <div style="background:white;padding:10px 18px;border-radius:12px;
+                box-shadow:0 2px 10px rgba(0,43,143,0.10);margin-bottom:10px;
                 display:flex;align-items:center;justify-content:space-between;
-                min-height:60px;">
+                min-height:44px;">
       <div>
-        <div style="font-size:20px;font-weight:700;color:#002b8f;
+        <div style="font-size:15px;font-weight:700;color:#002b8f;
                     line-height:1.2;letter-spacing:-0.2px;">
           HPCL SOD — MIS Entry Portal
         </div>
-        <div style="font-size:12px;color:#667085;margin-top:4px;">
+        <div style="font-size:10px;color:#667085;margin-top:2px;">
           Supply, Operations &amp; Distribution
         </div>
       </div>
       <span style="flex-shrink:0;background:{role_color};color:white;
-                    padding:8px 22px;border-radius:20px;
-                    font-size:13px;font-weight:600;white-space:nowrap;">
+                    padding:5px 16px;border-radius:20px;
+                    font-size:11px;font-weight:600;white-space:nowrap;">
         {user['locName']} &nbsp;|&nbsp; {user['role']}
       </span>
     </div>""", unsafe_allow_html=True)
@@ -2247,19 +2250,19 @@ def _deadline_banner(dl: dict, month_label: str):
         pill_lbl = f"{days}d left"
 
     st.markdown(f"""
-    <div style="background:{grad};border-radius:12px;padding:13px 20px;
-                margin-bottom:14px;display:flex;align-items:center;
-                justify-content:space-between;box-shadow:0 3px 12px rgba(0,0,0,0.15);">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:20px;">{ic}</span>
+    <div style="background:{grad};border-radius:10px;padding:9px 16px;
+                margin-bottom:10px;display:flex;align-items:center;
+                justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:15px;">{ic}</span>
         <div>
-          <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.8);
+          <div style="font-size:9px;font-weight:700;color:rgba(255,255,255,0.8);
                       text-transform:uppercase;letter-spacing:0.7px;">{title}</div>
-          <div style="font-size:13px;font-weight:600;color:{txt};">{msg}</div>
+          <div style="font-size:11px;font-weight:600;color:{txt};">{msg}</div>
         </div>
       </div>
-      <span style="background:{pill_bg};color:{pill_txt};padding:4px 14px;
-                   border-radius:20px;font-size:12px;font-weight:700;
+      <span style="background:{pill_bg};color:{pill_txt};padding:3px 10px;
+                   border-radius:20px;font-size:10px;font-weight:700;
                    white-space:nowrap;border:1px solid rgba(255,255,255,0.30);">
         {pill_lbl}
       </span>
@@ -2327,34 +2330,34 @@ def _status_card(user: dict, month_label: str, data: dict):
     bar_color = "#22c55e" if pct_int == 100 else ("#f59e0b" if pct_int >= 50 else "#ef4444")
 
     sc_html = (
-        f'<div style="background:white;border-radius:16px;overflow:hidden;'
-        f'box-shadow:0 2px 14px rgba(0,43,143,0.09);margin-bottom:14px;">'
+        f'<div style="background:white;border-radius:12px;overflow:hidden;'
+        f'box-shadow:0 2px 10px rgba(0,43,143,0.09);margin-bottom:10px;">'
         f'<div style="background:linear-gradient(135deg,#001060 0%,#002b8f 60%,#003eb5 100%);'
-        f'padding:14px 22px 12px;">'
+        f'padding:10px 18px 8px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div>'
-        f'<div style="font-size:18px;font-weight:700;color:white;line-height:1.25;">'
+        f'<div style="font-size:14px;font-weight:700;color:white;line-height:1.25;">'
         f'{user["locName"]}</div>'
-        f'<div style="font-size:11.5px;color:rgba(255,255,255,0.72);margin-top:3px;">'
+        f'<div style="font-size:10px;color:rgba(255,255,255,0.72);margin-top:2px;">'
         f'Zone: {user["zone"]} &nbsp;&middot;&nbsp; {month_label}</div>'
         f'</div>'
         f'<span style="background:rgba(255,255,255,0.18);color:white;'
-        f'border:1px solid rgba(255,255,255,0.35);padding:5px 15px;border-radius:20px;'
-        f'font-size:12px;font-weight:600;white-space:nowrap;">{icon} {label}</span>'
+        f'border:1px solid rgba(255,255,255,0.35);padding:3px 12px;border-radius:20px;'
+        f'font-size:10px;font-weight:600;white-space:nowrap;">{icon} {label}</span>'
         f'</div></div>'
-        f'<div style="padding:16px 22px 18px;">'
-        f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
-        f'<div style="font-size:11.5px;color:#667085;font-weight:600;'
+        f'<div style="padding:12px 18px 14px;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">'
+        f'<div style="font-size:9px;color:#667085;font-weight:600;'
         f'text-transform:uppercase;letter-spacing:0.4px;">Completion Progress{lock_badge}</div>'
-        f'<div style="font-size:26px;font-weight:800;color:#002b8f;line-height:1;">'
-        f'{pct_int}<span style="font-size:14px;font-weight:600;color:#667085;">%</span></div>'
+        f'<div style="font-size:20px;font-weight:800;color:#002b8f;line-height:1;">'
+        f'{pct_int}<span style="font-size:11px;font-weight:600;color:#667085;">%</span></div>'
         f'</div>'
-        f'<div style="background:#e8edf8;border-radius:6px;height:9px;margin-bottom:16px;overflow:hidden;">'
+        f'<div style="background:#e8edf8;border-radius:5px;height:7px;margin-bottom:12px;overflow:hidden;">'
         f'<div style="background:linear-gradient(90deg,{bar_color},{bar_color}cc);'
-        f'width:{pct_int}%;height:9px;border-radius:6px;"></div>'
+        f'width:{pct_int}%;height:7px;border-radius:5px;"></div>'
         f'</div>'
-        f'<div style="font-size:11px;color:#667085;font-weight:700;'
-        f'text-transform:uppercase;letter-spacing:0.4px;margin-bottom:7px;">Section Completion</div>'
+        f'<div style="font-size:9px;color:#667085;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px;">Section Completion</div>'
         f'<table style="width:100%;border-collapse:separate;border-spacing:0 3px;">'
         f'{rows_html}</table>'
         f'{hint}'
@@ -2898,7 +2901,7 @@ def show_dashboard():
             f'object-fit:contain;display:block;">'
         ) if sl else ""
         st.markdown(f"""
-        <div style="width:100%;height:120px;overflow:hidden;padding:0;
+        <div style="width:100%;height:110px;overflow:hidden;padding:4px 4px 0;
                     display:flex;align-items:center;justify-content:center;">
           {logo_html}
         </div>
@@ -3046,17 +3049,17 @@ def show_dashboard():
          f"{len(data.get('secs_done',[]))}/10"),
     ]
     _kpi_cells = "".join(
-        f'<div style="background:white;border-radius:12px;padding:10px 16px;'
-        f'box-shadow:0 1px 6px rgba(0,31,94,0.08);text-align:center;flex:1;min-width:0;">'
-        f'<div style="font-size:10px;color:#8899aa;font-weight:700;text-transform:uppercase;'
-        f'letter-spacing:0.4px;margin-bottom:3px;">{lbl}</div>'
-        f'<div style="font-size:15px;font-weight:700;color:#001F5E;white-space:nowrap;'
+        f'<div style="background:white;border-radius:10px;padding:7px 12px;'
+        f'box-shadow:0 1px 5px rgba(0,31,94,0.08);text-align:center;flex:1;min-width:0;">'
+        f'<div style="font-size:8px;color:#8899aa;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:0.4px;margin-bottom:2px;">{lbl}</div>'
+        f'<div style="font-size:12px;font-weight:700;color:#001F5E;white-space:nowrap;'
         f'overflow:hidden;text-overflow:ellipsis;">{val}</div>'
         f'</div>'
         for lbl, val in _kpi
     )
     st.markdown(
-        f'<div style="display:flex;gap:10px;margin-bottom:14px;">{_kpi_cells}</div>',
+        f'<div style="display:flex;gap:8px;margin-bottom:10px;">{_kpi_cells}</div>',
         unsafe_allow_html=True,
     )
 
@@ -3117,7 +3120,7 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
         logo_html = (f'<img src="{sl}" style="max-width:100%;height:100%;'
                      f'object-fit:contain;display:block;">') if sl else ""
         st.markdown(f"""
-        <div style="width:100%;height:120px;overflow:hidden;padding:0;
+        <div style="width:100%;height:110px;overflow:hidden;padding:4px 4px 0;
                     display:flex;align-items:center;justify-content:center;">
           {logo_html}
         </div>
