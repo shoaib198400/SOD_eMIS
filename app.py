@@ -198,7 +198,15 @@ def _load_draft_to_session(user_id: str, month_year: str, section_num: int):
     month_clean = month_year.replace("-", "_")
     flag = f"draft_loaded_{month_clean}_s{section_num}"
     if st.session_state.get(flag):
-        return
+        # If flag is set but all fields are empty, the values were lost — force reload
+        _has_any = any(
+            st.session_state.get(_sk(month_year, f["key"])) not in (None, "")
+            for f in SECTION_FIELDS.get(section_num, [])
+            if not f.get("auto")
+        )
+        if _has_any:
+            return
+        st.session_state.pop(flag, None)
     draft = sheets.load_draft(user_id, month_year)
     for f in SECTION_FIELDS.get(section_num, []):
         if f.get("auto"):
@@ -6737,25 +6745,19 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
             'Tank Master</div></div>',
             unsafe_allow_html=True,
         )
-        _sb_tm_key = f"_sb_tm_{uid}"
-        if st.button("⬇️ Download Tank Master", key=f"sb_tm_dl_{uid}",
-                     use_container_width=True, help="Download your location's Tank Master register"):
-            with st.spinner("Preparing…"):
-                try:
-                    st.session_state[_sb_tm_key] = sheets.get_full_tank_master_excel(
-                        location_code=uid)
-                except Exception as _ex:
-                    st.error(f"Error: {_ex}")
-                    st.session_state[_sb_tm_key] = None
-        if st.session_state.get(_sb_tm_key):
+        try:
+            _tm_bytes = sheets.get_full_tank_master_excel(location_code=uid)
             st.download_button(
-                label="⬇️ Save Tank Master.xlsx",
-                data=st.session_state[_sb_tm_key],
+                label="⬇️ Download Tank Master",
+                data=_tm_bytes,
                 file_name=f"TankMaster_{uid}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
                 key=f"sb_dl_tm_{uid}",
+                help="Download your location's Tank Master register as Excel",
             )
+        except Exception as _ex:
+            st.error(f"Tank Master unavailable: {_ex}")
 
     _dash_header(user)
 

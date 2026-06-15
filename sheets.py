@@ -3038,6 +3038,38 @@ def sync_tank_master_to_sheet() -> dict:
         return {"ok": False, "rows": 0, "msg": str(exc)}
 
 
+_TM_DATE_COLS = {
+    "Last Tank Cleaning Date", "Tank Cleaning Due Date",
+    "Last Comprehensive Inspection Date", "Inspection Due Date",
+    "Last Painted Date",
+    "Cleaning Completed Date", "Cleaning Due Date (Current)",
+    "Inspection Date (Current)", "Inspection Due Date (Current)",
+    "Painting Date (Current)", "Painting Due Date (Current)",
+}
+
+
+def _normalize_tm_date(val: str) -> str:
+    """Convert DD.MM.YY or DD.MM.YYYY → DD/MM/YYYY; leave other values unchanged."""
+    import re as _re
+    if not val or not isinstance(val, str):
+        return val
+    v = val.strip()
+    m = _re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(\d{2})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/20{y}"
+    m = _re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(\d{4})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/{y}"
+    m = _re.fullmatch(r'(\d{1,2})/(\d{1,2})/(\d{4})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/{y}"
+    return val
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def get_full_tank_master_excel(
     location_code: str | None = None,
     zone: str | None = None,
@@ -3074,6 +3106,9 @@ def get_full_tank_master_excel(
     elif zone:
         data = [r for r in data if (r + [""] * (zone_idx + 1))[zone_idx].strip() == zone]
 
+    # Identify which column indices are date columns
+    date_col_indices = {ci for ci, h in enumerate(hdr) if h in _TM_DATE_COLS}
+
     wb  = Workbook()
     ws1 = wb.active
     ws1.title = "Tank Master"
@@ -3092,6 +3127,8 @@ def get_full_tank_master_excel(
     for ri, row in enumerate(data, 2):
         row_p = (row + [""] * n_cols)[:n_cols]
         for ci, val in enumerate(row_p, 1):
+            if (ci - 1) in date_col_indices:
+                val = _normalize_tm_date(val)
             c = ws1.cell(row=ri, column=ci, value=val)
             c.font = NM; c.alignment = LFT
 
