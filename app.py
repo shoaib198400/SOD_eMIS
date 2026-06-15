@@ -6771,15 +6771,22 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
             unsafe_allow_html=True,
         )
         try:
+            import base64 as _b64mod
             _tm_bytes = sheets.get_full_tank_master_excel(location_code=uid)
-            st.download_button(
-                label="⬇️ Download Tank Master",
-                data=_tm_bytes,
-                file_name=f"TankMaster_{uid}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key=f"sb_dl_tm_{uid}",
-                help="Download your location's Tank Master register as Excel",
+            _tm_b64   = _b64mod.b64encode(_tm_bytes).decode()
+            _tm_fname = f"TankMaster_{uid}.xlsx"
+            _tm_mime  = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            st.markdown(
+                f'<a href="data:{_tm_mime};base64,{_tm_b64}" download="{_tm_fname}"'
+                f' style="display:flex;align-items:center;justify-content:flex-start;'
+                f'width:calc(100% - 16px);margin:2px 8px;padding:8px 13px;'
+                f'background:rgba(255,255,255,0.06);color:#ffffff;'
+                f'border:1px solid rgba(255,255,255,0.08);border-radius:8px;'
+                f'font-size:11.5px;font-weight:500;text-decoration:none;'
+                f'box-sizing:border-box;cursor:pointer;'
+                f'transition:background 0.15s ease;">'
+                f'&#11015;&#65039;&nbsp; Download Tank Master</a>',
+                unsafe_allow_html=True,
             )
         except Exception as _ex:
             st.error(f"Tank Master unavailable: {_ex}")
