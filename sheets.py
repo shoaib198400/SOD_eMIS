@@ -1867,7 +1867,7 @@ def generate_mis_template(
          {}),
 
         ("MI_EQUIP_BREAKDOWN", "S5A-7 Equip. Breakdown",
-         ["Equipment Name", "Equipment (Other)", "Equipment Details",
+         ["Equipment Name", "Equipment Other", "Equipment Details",
           "Start Date", "Issue", "Proposed Date", "Actual End Date",
           "Resolution Action"],
          ["Select equipment type", "Specify if 'Other'", "Details of breakdown",
@@ -1877,7 +1877,7 @@ def generate_mis_template(
          ["equipment_name", "equipment_other", "equipment_details",
           "start_date", "issue", "proposed_date", "actual_end_date",
           "resolution_action"],
-         {"equipment_name": "Pump,Compressor,Generator,Fire Fighting,Electrical,Instrumentation,Other"}),
+         {"equipment_name": "Pipeline,Pump,Fire Fighting Equipment,Fire Engine,DG Set,Other"}),
 
         ("MI_INT_PIPELINE", "S5A-8 Int. Pipeline",
          ["Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
@@ -1889,11 +1889,12 @@ def generate_mis_template(
          {}),
 
         ("MI_EXT_PIPELINE", "S5A-9 Ext. Pipeline",
-         ["Pipeline Details", "Length (m)", "Product", "Size (inch)",
+         ["Pipeline Details", "Length Metres", "Product", "Size Inch",
           "Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
           "Last LRUT Date", "Other Testing"],
-         ["Describe pipeline segment", "Length in metres", "Product carried",
-          "Diameter in inches", "DD/MM/YYYY", "DD/MM/YYYY", "DD/MM/YYYY",
+         ["Describe pipeline segment (route / from-to)", "Length in metres",
+          "Product carried e.g. MS HSD ATF",
+          "Nominal bore in inches", "DD/MM/YYYY", "DD/MM/YYYY", "DD/MM/YYYY",
           "DD/MM/YYYY", "Describe any other testing"],
          ["pipeline_details", "length_metres", "product", "size_inch",
           "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
@@ -1901,12 +1902,12 @@ def generate_mis_template(
          {}),
 
         ("MI_TANK_STATUS", "S5A-10 Tank Status",
-         ["Tank No.", "Cleaning Completed", "Cleaning Due",
-          "Extension Taken", "eFN No.",
-          "Inspection Date", "Inspection Due",
-          "Painting Date", "Painting Due",
-          "Tank Status", "Status (if Others)"],
-         ["Select tank number",
+         ["Tank No", "Cleaning Completed Date", "Cleaning Due Date",
+          "Extension Taken", "Extension EFN No",
+          "Inspection Date", "Inspection Due Date",
+          "Painting Date", "Painting Due Date",
+          "Tank Status", "Tank Status Other"],
+         ["Select tank number from Tank Master",
           "DD/MM/YYYY", "DD/MM/YYYY",
           "Yes / No / NA", "Required if Extension = Yes",
           "DD/MM/YYYY", "DD/MM/YYYY",
@@ -3035,6 +3036,145 @@ def sync_tank_master_to_sheet() -> dict:
                 "msg": f"Tank Master synced: {len(data_rows)} rows written to Google Sheet."}
     except Exception as exc:
         return {"ok": False, "rows": 0, "msg": str(exc)}
+
+
+def get_full_tank_master_excel(
+    location_code: str | None = None,
+    zone: str | None = None,
+) -> bytes:
+    """Return xlsx bytes for Tank Master filtered by location_code, zone, or all rows."""
+    import io as _io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    try:
+        ws_sheet = _ws(TABS["TANK_MASTER"])
+        all_rows = _api_call(ws_sheet.get_all_values)
+    except Exception as exc:
+        raise ValueError(f"Cannot read Tank Master: {exc}") from exc
+
+    if len(all_rows) < 2:
+        raise ValueError("Tank Master sheet has no data rows.")
+
+    hdr  = all_rows[0]
+    data = all_rows[1:]
+
+    try:
+        loc_idx = hdr.index("Location Code")
+    except ValueError:
+        loc_idx = 2
+    try:
+        zone_idx = hdr.index("Zone")
+    except ValueError:
+        zone_idx = 1
+
+    if location_code:
+        data = [r for r in data if (r + [""] * (loc_idx + 1))[loc_idx].strip() == location_code]
+    elif zone:
+        data = [r for r in data if (r + [""] * (zone_idx + 1))[zone_idx].strip() == zone]
+
+    wb  = Workbook()
+    ws1 = wb.active
+    ws1.title = "Tank Master"
+
+    BLUE = PatternFill("solid", fgColor="0033A0")
+    W    = Font(bold=True, color="FFFFFF", size=10)
+    NM   = Font(size=10)
+    CTR  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LFT  = Alignment(horizontal="left",   vertical="center", wrap_text=False)
+
+    n_cols = len(hdr)
+    for ci, h in enumerate(hdr, 1):
+        c = ws1.cell(row=1, column=ci, value=h)
+        c.font = W; c.fill = BLUE; c.alignment = CTR
+
+    for ri, row in enumerate(data, 2):
+        row_p = (row + [""] * n_cols)[:n_cols]
+        for ci, val in enumerate(row_p, 1):
+            c = ws1.cell(row=ri, column=ci, value=val)
+            c.font = NM; c.alignment = LFT
+
+    for ci, h in enumerate(hdr, 1):
+        ws1.column_dimensions[get_column_letter(ci)].width = min(len(str(h)) + 4, 35)
+
+    ws1.freeze_panes = "A2"
+    ws1.row_dimensions[1].height = 30
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def get_approved_mis_excel(
+    zone: str | None = None,
+    month_year: str | None = None,
+) -> bytes:
+    """Return xlsx bytes from MIS_SUBMITTED optionally filtered by zone and/or month."""
+    import io as _io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    try:
+        ws_sheet = _ws(TABS["MIS_SUBMITTED"])
+        all_rows = _api_call(ws_sheet.get_all_values)
+    except Exception as exc:
+        raise ValueError(f"Cannot read MIS_SUBMITTED: {exc}") from exc
+
+    if len(all_rows) < 2:
+        raise ValueError("No approved MIS submissions found.")
+
+    hdr  = all_rows[0]
+    data = all_rows[1:]
+
+    try:
+        zone_idx = hdr.index("Zone")
+    except ValueError:
+        zone_idx = 2
+    try:
+        mon_idx = hdr.index("Month-Year")
+    except ValueError:
+        mon_idx = 3
+
+    if zone:
+        data = [r for r in data if (r + [""] * (zone_idx + 1))[zone_idx].strip() == zone]
+    if month_year:
+        data = [r for r in data if (r + [""] * (mon_idx + 1))[mon_idx].strip() == month_year]
+
+    if not data:
+        raise ValueError("No approved MIS records found for the selected filters.")
+
+    wb  = Workbook()
+    ws1 = wb.active
+    ws1.title = "Approved MIS"
+
+    BLUE = PatternFill("solid", fgColor="0033A0")
+    W    = Font(bold=True, color="FFFFFF", size=10)
+    NM   = Font(size=10)
+    CTR  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LFT  = Alignment(horizontal="left",   vertical="center", wrap_text=False)
+
+    n_cols = len(hdr)
+    for ci, h in enumerate(hdr, 1):
+        c = ws1.cell(row=1, column=ci, value=h)
+        c.font = W; c.fill = BLUE; c.alignment = CTR
+
+    for ri, row in enumerate(data, 2):
+        row_p = (row + [""] * n_cols)[:n_cols]
+        for ci, val in enumerate(row_p, 1):
+            c = ws1.cell(row=ri, column=ci, value=val)
+            c.font = NM; c.alignment = LFT
+
+    for ci, h in enumerate(hdr, 1):
+        ws1.column_dimensions[get_column_letter(ci)].width = min(len(str(h)) + 4, 40)
+
+    ws1.freeze_panes = "A2"
+    ws1.row_dimensions[1].height = 30
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 @st.cache_data(ttl=300, show_spinner=False)

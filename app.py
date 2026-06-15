@@ -1192,6 +1192,11 @@ def _dashboard_css():
 # ── Login page ────────────────────────────────────────────────────────────────
 
 def show_login():
+    # Guard: if user already authenticated (e.g. mid-rerun after successful login),
+    # skip rendering the login UI entirely to prevent a 1-frame flash.
+    if st.session_state.get("user") and st.session_state.get("page", "login") != "login":
+        return
+
     assets = _assets()
     _login_css(assets.get("login_bg") or "")
 
@@ -3006,8 +3011,18 @@ def _quick_links(user: dict, month_year: str, data: dict):
                         st.success(_prev["msg"])
                 else:
                     # ── New file: process it ─────────────────────────────
-                    with st.spinner("Reading and validating template…"):
-                        parsed = sheets.parse_mis_upload(up_file.read())
+                    _prog = st.progress(0, text="📂 Reading uploaded file…")
+                    try:
+                        _file_bytes = up_file.read()
+                        _prog.progress(20, text="🔍 Parsing MIS fields…")
+                        parsed = sheets.parse_mis_upload(_file_bytes)
+                        _prog.progress(60, text="💾 Saving to Google Sheets…")
+                    except Exception as _up_ex:
+                        _prog.empty()
+                        st.error(f"Upload failed: {_up_ex}")
+                        parsed = {"fields": {}, "errors": [str(_up_ex)],
+                                  "railway_claims": [], "irr_details": [],
+                                  "legal_cases": [], "mi_tabs": {}}
 
                     if parsed["errors"]:
                         for err in parsed["errors"]:
@@ -3072,21 +3087,23 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                     secs_complete.append(sn)
 
                         # ── Persist to Google Sheets ─────────────────────
-                        # Exclude auto fields so we don't overwrite existing
-                        # auto-calc values in the draft with empty strings.
+                        # Only send non-empty values so blank session-state
+                        # keys don't overwrite previously saved GSheets data.
                         all_vals = {
-                            f["key"]: st.session_state.get(f"draft_{mc}_{f['key']}", "")
+                            f["key"]: st.session_state.get(f"draft_{mc}_{f['key']}")
                             for _sf in SECTION_FIELDS.values() for f in _sf
                             if not f.get("auto")
+                            and st.session_state.get(f"draft_{mc}_{f['key']}") not in (None, "")
                         }
-                        with st.spinner("Saving to Google Sheets…"):
-                            save_res = sheets.save_draft(
-                                user["userId"], month_year,
-                                field_data=all_vals,
-                                sections_complete=secs_complete,
-                            )
+                        save_res = sheets.save_draft(
+                            user["userId"], month_year,
+                            field_data=all_vals,
+                            sections_complete=secs_complete,
+                        )
+                        _prog.progress(90, text="✅ Finalising…")
 
                         if not save_res.get("ok"):
+                            _prog.empty()
                             st.error(
                                 f"Save failed: {save_res.get('msg', 'Unknown error')}. "
                                 "Please try again."
@@ -3148,6 +3165,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
                             if overwritten:
                                 parts.append(f"{len(overwritten)} field(s) updated from template")
                             msg = "✅ Upload complete — " + "  ·  ".join(parts) + "."
+                            _prog.progress(100, text="✅ Upload complete!")
 
                             # Store result then rerun once
                             st.session_state[_up_done_key] = _file_id
@@ -4339,6 +4357,56 @@ def show_zone_dashboard(user: dict):
                 unsafe_allow_html=True,
             )
 
+    # ── Zone-level downloads ──────────────────────────────────────────────────
+    st.markdown(
+        '<div style="border-top:1px solid #dde3ed;margin-top:20px;padding-top:14px;">'
+        '<div style="font-size:14px;font-weight:700;color:#002b8f;margin-bottom:10px;">'
+        '&#11015;&#65039; Downloads</div></div>',
+        unsafe_allow_html=True,
+    )
+    _z_tm_key  = f"_z_tm_{user['userId']}_{month_year}"
+    _z_mis_key = f"_z_mis_{user['userId']}_{month_year}"
+    _zone_slug = user.get("zone", "Zone").replace(" ", "_")
+    _zdc1, _zdc2 = st.columns(2)
+    with _zdc1:
+        if st.button("📊 Zone Tank Master", key=f"btn_z_tm_{month_year}",
+                     use_container_width=True):
+            with st.spinner("Preparing Zone Tank Master…"):
+                try:
+                    st.session_state[_z_tm_key] = sheets.get_full_tank_master_excel(
+                        zone=user["zone"])
+                except Exception as _ex:
+                    st.error(f"Error: {_ex}")
+                    st.session_state[_z_tm_key] = None
+        if st.session_state.get(_z_tm_key):
+            st.download_button(
+                label="⬇️ Download Zone Tank Master",
+                data=st.session_state[_z_tm_key],
+                file_name=f"TankMaster_{_zone_slug}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"dl_z_tm_{month_year}",
+            )
+    with _zdc2:
+        if st.button("📄 Zone Approved MIS", key=f"btn_z_mis_{month_year}",
+                     use_container_width=True):
+            with st.spinner("Preparing Zone Approved MIS…"):
+                try:
+                    st.session_state[_z_mis_key] = sheets.get_approved_mis_excel(
+                        zone=user["zone"], month_year=month_year)
+                except Exception as _ex:
+                    st.error(f"Error: {_ex}")
+                    st.session_state[_z_mis_key] = None
+        if st.session_state.get(_z_mis_key):
+            st.download_button(
+                label="⬇️ Download Zone Approved MIS",
+                data=st.session_state[_z_mis_key],
+                file_name=f"ApprovedMIS_{_zone_slug}_{month_year.replace('-', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"dl_z_mis_{month_year}",
+            )
+
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
@@ -4480,6 +4548,57 @@ def show_hqo_dashboard(user: dict):
                             st.rerun()
                         else:
                             st.error(res["msg"])
+
+    # ── HQO-level downloads ───────────────────────────────────────────────────
+    st.markdown(
+        '<div style="border-top:1px solid #dde3ed;margin-top:20px;padding-top:14px;">'
+        '<div style="font-size:14px;font-weight:700;color:#002b8f;margin-bottom:10px;">'
+        '&#11015;&#65039; Downloads</div></div>',
+        unsafe_allow_html=True,
+    )
+    _dl_zone_filter = None if sel_zone == "All Zones" else sel_zone
+    _hqo_zone_slug  = sel_zone.replace(" ", "_")
+    _h_tm_key  = f"_h_tm_{month_year}_{sel_zone}"
+    _h_mis_key = f"_h_mis_{month_year}_{sel_zone}"
+    _hdc1, _hdc2 = st.columns(2)
+    with _hdc1:
+        if st.button("📊 Download Tank Master", key=f"btn_h_tm_{month_year}_{sel_zone}",
+                     use_container_width=True):
+            with st.spinner("Preparing Tank Master…"):
+                try:
+                    st.session_state[_h_tm_key] = sheets.get_full_tank_master_excel(
+                        zone=_dl_zone_filter)
+                except Exception as _ex:
+                    st.error(f"Error: {_ex}")
+                    st.session_state[_h_tm_key] = None
+        if st.session_state.get(_h_tm_key):
+            st.download_button(
+                label=f"⬇️ Download Tank Master ({sel_zone})",
+                data=st.session_state[_h_tm_key],
+                file_name=f"TankMaster_{_hqo_zone_slug}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"dl_h_tm_{month_year}_{sel_zone}",
+            )
+    with _hdc2:
+        if st.button("📄 Download Approved MIS", key=f"btn_h_mis_{month_year}_{sel_zone}",
+                     use_container_width=True):
+            with st.spinner("Preparing Approved MIS…"):
+                try:
+                    st.session_state[_h_mis_key] = sheets.get_approved_mis_excel(
+                        zone=_dl_zone_filter, month_year=month_year)
+                except Exception as _ex:
+                    st.error(f"Error: {_ex}")
+                    st.session_state[_h_mis_key] = None
+        if st.session_state.get(_h_mis_key):
+            st.download_button(
+                label=f"⬇️ Download Approved MIS ({sel_zone})",
+                data=st.session_state[_h_mis_key],
+                file_name=f"ApprovedMIS_{_hqo_zone_slug}_{month_year.replace('-', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"dl_h_mis_{month_year}_{sel_zone}",
+            )
 
     footer_label = "HQO View" if is_viewer else "HQO Admin View"
     st.markdown(f"""
@@ -5847,6 +5966,8 @@ def _mi_tab_tech_audit(uid: str, month_year: str):
             st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
+    st.info("📋 UPDATE DETAILS FOR LAST AUDIT CONDUCTED AT LOCATION")
+
     na_val = _na_checkbox("Not Applicable — No technical audit this month", sk_na)
 
     if not na_val:
@@ -5875,8 +5996,9 @@ def _mi_tab_tech_audit(uid: str, month_year: str):
                 st.text_input("No. Pending *", key=f"{pfx}_no_pend",
                               help="Number of audit recommendations still pending closure")
             with c4:
-                st.text_input("Ref. No. *", key=f"{pfx}_ref", max_chars=256,
-                              help="Technical audit reference/report number")
+                st.text_input("Audit Ref No. as per Audit Portal *", key=f"{pfx}_ref",
+                              max_chars=256,
+                              help="Audit reference/report number as recorded in the Audit Portal")
             st.markdown("</div>", unsafe_allow_html=True)
 
         if to_delete is not None:
@@ -5891,9 +6013,9 @@ def _mi_tab_tech_audit(uid: str, month_year: str):
                 "Audit Date": _mi_fmt_date(st.session_state.get(f"{pfx}_date")),
                 "Recommendations": st.session_state.get(f"{pfx}_no_reco", ""),
                 "Pending": st.session_state.get(f"{pfx}_no_pend", ""),
-                "Ref No.": st.session_state.get(f"{pfx}_ref", ""),
+                "Audit Ref No.": st.session_state.get(f"{pfx}_ref", ""),
             })
-        _mi_summary_table(_tbl, ["Audit Date", "Recommendations", "Pending", "Ref No."])
+        _mi_summary_table(_tbl, ["Audit Date", "Recommendations", "Pending", "Audit Ref No."])
 
         if st.button("➕ Add Audit", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
@@ -6161,85 +6283,156 @@ def _mi_tab_int_pipeline(uid: str, month_year: str):
 def _mi_tab_ext_pipeline(uid: str, month_year: str):
     T         = "ep"
     sk_na     = f"mi_{T}_{uid}_{month_year}_na"
+    sk_rows   = f"mi_{T}_{uid}_{month_year}_rows"
+    sk_ctr    = f"mi_{T}_{uid}_{month_year}_ctr"
     sk_loaded = f"mi_{T}_{uid}_{month_year}_loaded"
-    pfx       = f"mi_{T}_{uid}_{month_year}"
 
     DATE_FIELDS = ["last_ut_date", "last_hydrotest_date", "last_dcvg_date", "last_lrut_date"]
 
     if not st.session_state.get(sk_loaded):
         saved = sheets.load_mi_data("MI_EXT_PIPELINE", uid, month_year)
         if saved and saved[0].get("na_flag") == "Y":
-            st.session_state[sk_na] = True
+            st.session_state[sk_na]   = True
+            st.session_state[sk_rows] = []
+            st.session_state[sk_ctr]  = 0
         elif saved:
-            row = saved[0]
-            st.session_state[sk_na] = False
-            st.session_state[f"{pfx}_pipeline_details"] = row.get("pipeline_details", "")
-            st.session_state[f"{pfx}_length_metres"]    = row.get("length_metres", "")
-            st.session_state[f"{pfx}_product"]          = row.get("product", "")
-            st.session_state[f"{pfx}_size_inch"]        = row.get("size_inch", "")
-            for fld in DATE_FIELDS:
-                st.session_state[f"{pfx}_{fld}"] = _mi_parse_date(row.get(fld))
-            st.session_state[f"{pfx}_other_testing"] = row.get("other_testing", "")
+            ids = list(range(len(saved)))
+            st.session_state[sk_na]   = False
+            st.session_state[sk_rows] = ids
+            st.session_state[sk_ctr]  = len(saved)
+            for rid, row in zip(ids, saved):
+                pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+                st.session_state[f"{pfx}_pipeline_details"] = row.get("pipeline_details", "")
+                st.session_state[f"{pfx}_length_metres"]    = row.get("length_metres", "")
+                st.session_state[f"{pfx}_product"]          = row.get("product", "")
+                st.session_state[f"{pfx}_size_inch"]        = row.get("size_inch", "")
+                for fld in DATE_FIELDS:
+                    st.session_state[f"{pfx}_{fld}"] = _mi_parse_date(row.get(fld))
+                st.session_state[f"{pfx}_other_testing"] = row.get("other_testing", "")
         else:
-            st.session_state[sk_na] = False
+            st.session_state[sk_na]   = False
+            st.session_state[sk_rows] = [0]
+            st.session_state[sk_ctr]  = 1
         st.session_state[sk_loaded] = True
 
     na_val = _na_checkbox("Not Applicable — No external pipeline at this location", sk_na)
 
     if not na_val:
-        st.text_area("Pipeline Details *", key=f"{pfx}_pipeline_details", max_chars=256)
+        st.caption("Add one row per external pipeline segment / product.")
+        row_ids   = st.session_state.get(sk_rows, [])
+        to_delete = None
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.text_input("Length (metres) *", key=f"{pfx}_length_metres",
-                          help="Numeric value in metres")
-        with c2:
-            st.text_input("Product *", key=f"{pfx}_product",
-                          help="e.g. MS, HSD, ATF")
-        with c3:
-            st.text_input("Size (inch) *", key=f"{pfx}_size_inch",
-                          help="Pipeline diameter in inches")
+        for i, rid in enumerate(row_ids):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            st.markdown(_MI_ROW_DIV, unsafe_allow_html=True)
+            hc, dc = st.columns([11, 1])
+            with hc:
+                st.markdown(f"**Pipeline {i + 1}**")
+            with dc:
+                if st.button("🗑", key=f"{pfx}_del", help="Remove this pipeline row"):
+                    to_delete = rid
 
-        c4, c5, c6, c7 = st.columns(4)
-        with c4:
-            st.date_input("Last UT Date *", key=f"{pfx}_last_ut_date",
-                          value=st.session_state.get(f"{pfx}_last_ut_date"), format="DD/MM/YYYY")
-        with c5:
-            st.date_input("Last Hydrotest Date *", key=f"{pfx}_last_hydrotest_date",
-                          value=st.session_state.get(f"{pfx}_last_hydrotest_date"), format="DD/MM/YYYY")
-        with c6:
-            st.date_input("Last DCVG Date *", key=f"{pfx}_last_dcvg_date",
-                          value=st.session_state.get(f"{pfx}_last_dcvg_date"), format="DD/MM/YYYY")
-        with c7:
-            st.date_input("Last LRUT Date *", key=f"{pfx}_last_lrut_date",
-                          value=st.session_state.get(f"{pfx}_last_lrut_date"), format="DD/MM/YYYY")
-        st.text_area("Other Testing Details", key=f"{pfx}_other_testing", max_chars=256)
+            st.text_area("Pipeline Details *", key=f"{pfx}_pipeline_details", max_chars=256,
+                         help="Describe the pipeline segment (route, from-to, purpose)")
 
-    if st.button("💾 Save External Pipeline Data", key=f"mi_{T}_save_{uid}_{month_year}", type="primary"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.text_input("Length (metres) *", key=f"{pfx}_length_metres",
+                              help="Total length of this pipeline segment in metres")
+            with c2:
+                st.text_input("Product *", key=f"{pfx}_product",
+                              help="Product carried — e.g. MS, HSD, ATF, SKO")
+            with c3:
+                st.text_input("Size (inch) *", key=f"{pfx}_size_inch",
+                              help="Pipeline nominal bore in inches")
+
+            c4, c5, c6, c7 = st.columns(4)
+            with c4:
+                st.date_input("Last UT Date *", key=f"{pfx}_last_ut_date",
+                              value=st.session_state.get(f"{pfx}_last_ut_date"),
+                              format="DD/MM/YYYY",
+                              help="Date of last Ultrasonic Thickness testing")
+            with c5:
+                st.date_input("Last Hydrotest Date *", key=f"{pfx}_last_hydrotest_date",
+                              value=st.session_state.get(f"{pfx}_last_hydrotest_date"),
+                              format="DD/MM/YYYY",
+                              help="Date of last hydrostatic pressure test")
+            with c6:
+                st.date_input("Last DCVG Date *", key=f"{pfx}_last_dcvg_date",
+                              value=st.session_state.get(f"{pfx}_last_dcvg_date"),
+                              format="DD/MM/YYYY",
+                              help="Date of last DC Voltage Gradient survey")
+            with c7:
+                st.date_input("Last LRUT Date *", key=f"{pfx}_last_lrut_date",
+                              value=st.session_state.get(f"{pfx}_last_lrut_date"),
+                              format="DD/MM/YYYY",
+                              help="Date of last Long Range Ultrasonic Testing")
+            st.text_area("Other Testing Details", key=f"{pfx}_other_testing", max_chars=256,
+                         help="Any other inspection / testing method used for this segment")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        if to_delete is not None:
+            st.session_state[sk_rows] = [r for r in st.session_state[sk_rows] if r != to_delete]
+            st.rerun()
+
+        # Summary table
+        _tbl = []
+        for rid in st.session_state.get(sk_rows, []):
+            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+            _tbl.append({
+                "Pipeline Details": (st.session_state.get(f"{pfx}_pipeline_details") or "")[:40],
+                "Product": st.session_state.get(f"{pfx}_product", ""),
+                "Length (m)": st.session_state.get(f"{pfx}_length_metres", ""),
+                "Size (in)": st.session_state.get(f"{pfx}_size_inch", ""),
+                "Last UT": _mi_fmt_date(st.session_state.get(f"{pfx}_last_ut_date")),
+            })
+        _mi_summary_table(_tbl, ["Pipeline Details", "Product", "Length (m)", "Size (in)", "Last UT"])
+
+        if st.button("➕ Add Pipeline Segment", key=f"mi_{T}_add_{uid}_{month_year}"):
+            new_id = st.session_state.get(sk_ctr, 0)
+            st.session_state.setdefault(sk_rows, []).append(new_id)
+            st.session_state[sk_ctr] = new_id + 1
+            st.rerun()
+
+    if st.button("💾 Save External Pipeline Data", key=f"mi_{T}_save_{uid}_{month_year}",
+                 type="primary"):
         if na_val:
-            rec = {"na_flag": "Y", "pipeline_details": "NA", "length_metres": "NA",
-                   "product": "NA", "size_inch": "NA", "last_ut_date": "NA",
-                   "last_hydrotest_date": "NA", "last_dcvg_date": "NA",
-                   "last_lrut_date": "NA", "other_testing": "NA"}
+            rows_to_save = [{"na_flag": "Y", "pipeline_details": "NA", "length_metres": "NA",
+                             "product": "NA", "size_inch": "NA", "last_ut_date": "NA",
+                             "last_hydrotest_date": "NA", "last_dcvg_date": "NA",
+                             "last_lrut_date": "NA", "other_testing": "NA"}]
         else:
-            pd_ = (st.session_state.get(f"{pfx}_pipeline_details") or "").strip()
-            lm  = (st.session_state.get(f"{pfx}_length_metres") or "").strip()
-            prd = (st.session_state.get(f"{pfx}_product") or "").strip()
-            sz  = (st.session_state.get(f"{pfx}_size_inch") or "").strip()
-            dates = {fld: _mi_fmt_date(st.session_state.get(f"{pfx}_{fld}")) for fld in DATE_FIELDS}
-            missing_d = [fld.replace("_", " ").title() for fld, v in dates.items() if not v]
-            if not all([pd_, lm, prd, sz]) or missing_d:
+            rows_to_save = []
+            errors = []
+            for i, rid in enumerate(st.session_state.get(sk_rows, [])):
+                pfx  = f"mi_{T}_{uid}_{month_year}_{rid}"
+                pd_  = (st.session_state.get(f"{pfx}_pipeline_details") or "").strip()
+                lm   = (st.session_state.get(f"{pfx}_length_metres") or "").strip()
+                prd  = (st.session_state.get(f"{pfx}_product") or "").strip()
+                sz   = (st.session_state.get(f"{pfx}_size_inch") or "").strip()
+                dates = {fld: _mi_fmt_date(st.session_state.get(f"{pfx}_{fld}")) for fld in DATE_FIELDS}
+                missing_d = [fld.replace("_"," ").title() for fld, v in dates.items() if not v]
                 if not all([pd_, lm, prd, sz]):
-                    st.error("Pipeline details, length, product and size are required.")
-                if missing_d:
-                    st.error("Required dates missing: " + ", ".join(missing_d))
+                    errors.append(f"Pipeline {i+1}: Details, length, product and size are required.")
+                elif missing_d:
+                    errors.append(f"Pipeline {i+1}: Dates missing — {', '.join(missing_d)}")
+                else:
+                    rows_to_save.append({
+                        "row_no": str(i + 1), "na_flag": "N",
+                        "pipeline_details": pd_, "length_metres": lm,
+                        "product": prd, "size_inch": sz, **dates,
+                        "other_testing": (st.session_state.get(f"{pfx}_other_testing") or "").strip(),
+                    })
+            if errors:
+                for e in errors:
+                    st.error(e)
                 return
-            rec = {"na_flag": "N", "pipeline_details": pd_, "length_metres": lm,
-                   "product": prd, "size_inch": sz, **dates,
-                   "other_testing": (st.session_state.get(f"{pfx}_other_testing") or "").strip()}
-        res = sheets.save_mi_data("MI_EXT_PIPELINE", uid, month_year, [rec])
+            if not rows_to_save:
+                st.warning("Add at least one pipeline segment, or mark as Not Applicable.")
+                return
+        res = sheets.save_mi_data("MI_EXT_PIPELINE", uid, month_year, rows_to_save)
         if res.get("ok"):
-            st.success("✅ External Pipeline data saved.")
+            st.success(f"✅ Saved {res['rows']} external pipeline record(s).")
             st.session_state.pop(sk_loaded, None)
         else:
             st.error(f"Save failed: {res.get('msg', '')}")
@@ -6300,14 +6493,37 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
         row_ids   = st.session_state.get(sk_rows, [])
         to_delete = None
 
+        # ── Bulk-delete toolbar (checkbox per row) ─────────────────────────
+        _sel_key = f"mi_{T}_{uid}_{month_year}_sel"
+        selected_rids = st.session_state.get(_sel_key, set())
+        if selected_rids:
+            _bdc1, _bdc2 = st.columns([3, 1])
+            with _bdc1:
+                st.caption(f"{len(selected_rids)} row(s) selected")
+            with _bdc2:
+                if st.button("🗑 Delete Selected", key=f"mi_{T}_bulk_del_{uid}_{month_year}",
+                             type="secondary", use_container_width=True):
+                    st.session_state[sk_rows] = [r for r in row_ids if r not in selected_rids]
+                    st.session_state[_sel_key] = set()
+                    st.rerun()
+
         for i, rid in enumerate(row_ids):
             pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
             st.markdown(_MI_ROW_DIV, unsafe_allow_html=True)
-            hc, dc = st.columns([11, 1])
+            chk_col, hc, dc = st.columns([1, 10, 1])
+            with chk_col:
+                is_sel = st.checkbox("", key=f"{pfx}_chk", value=(rid in selected_rids),
+                                     label_visibility="collapsed",
+                                     help="Select to bulk-delete")
+                if is_sel:
+                    selected_rids.add(rid)
+                else:
+                    selected_rids.discard(rid)
+                st.session_state[_sel_key] = selected_rids
             with hc:
                 st.markdown(f"**Tank {i + 1}**")
             with dc:
-                if st.button("🗑", key=f"{pfx}_del", help="Remove row"):
+                if st.button("🗑", key=f"{pfx}_del", help="Remove this row"):
                     to_delete = rid
 
             # Tank selection
@@ -6513,6 +6729,34 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
         </div>
         """, unsafe_allow_html=True)
 
+        # ── Tank Master download in sidebar ───────────────────────────────
+        st.markdown(
+            '<div style="padding:6px 16px 2px;">'
+            '<div style="color:#C8D7FF;font-size:9px;font-weight:700;'
+            'letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">'
+            'Tank Master</div></div>',
+            unsafe_allow_html=True,
+        )
+        _sb_tm_key = f"_sb_tm_{uid}"
+        if st.button("⬇️ Download Tank Master", key=f"sb_tm_dl_{uid}",
+                     use_container_width=True, help="Download your location's Tank Master register"):
+            with st.spinner("Preparing…"):
+                try:
+                    st.session_state[_sb_tm_key] = sheets.get_full_tank_master_excel(
+                        location_code=uid)
+                except Exception as _ex:
+                    st.error(f"Error: {_ex}")
+                    st.session_state[_sb_tm_key] = None
+        if st.session_state.get(_sb_tm_key):
+            st.download_button(
+                label="⬇️ Save Tank Master.xlsx",
+                data=st.session_state[_sb_tm_key],
+                file_name=f"TankMaster_{uid}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"sb_dl_tm_{uid}",
+            )
+
     _dash_header(user)
 
     st.markdown(
@@ -6582,6 +6826,8 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
         '</div>',
         unsafe_allow_html=True,
     )
+
+    # Tank Master download is available in the sidebar (⬇️ Download Tank Master button).
 
     # ── Row 1 tabs ────────────────────────────────────────────────────────
     r1_labels = [

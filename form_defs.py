@@ -60,7 +60,6 @@ S1_FIELDS = [
 ]
 
 S2_FIELDS = [
-    {"no":35,"key":"f35", "label":"VRU Available & Functioning",                          "type":"select",   "req":True,  "min":None,"max":None,"dec":None,"opts":["Yes","No","NA"],                 "hint":"Select appropriate option",                   "sub":"Finance & Planning",              "auto":None},
     {"no":36,"key":"f36", "label":"No. of Approved NPCB Projects",                       "type":"int",      "req":True,  "min":0, "max":None,  "dec":0,  "opts":None,                         "hint":"Whole numbers, max 2 digits",                 "sub":"Finance & Planning",              "auto":None},
     {"no":37,"key":"f37", "label":"Cumulative Value of Approved Projects (in Lacs)",     "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Value in Lacs",                         "sub":"Finance & Planning",              "auto":None},
     {"no":38,"key":"f38", "label":"CAPEX (Lakhs)",                                        "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capex done in Lakhs",                   "sub":"Finance & Planning",              "auto":None},
@@ -88,7 +87,7 @@ S4_FIELDS = [
 ]
 
 S5_FIELDS = [
-    {"no":54,"key":"f54", "label":"M&I Index",                                              "type":"number",   "req":True,  "min":0, "max":100,   "dec":2,  "opts":None, "hint":"Enter M&I Index value",                "sub":"M&I Data", "auto":None},
+    {"no":54,"key":"f54", "label":"M&I Index (internal-half yearly)",                       "type":"number",   "req":False, "min":0, "max":100,   "dec":2,  "opts":None, "hint":"Half-yearly index (Apr-Sep / Oct-Mar). Enter value 0-100 or leave blank if not due this month — system allows submission with blank for months where this was already filled earlier in the half-year.",  "sub":"M&I Data", "auto":None},
     {"no":55,"key":"f55", "label":"PM Percentage",                                          "type":"number",   "req":True,  "min":0, "max":100,   "dec":2,  "opts":None, "hint":"Enter PM %",                           "sub":"M&I Data", "auto":None},
     {"no":56,"key":"f56", "label":"Breakdown Equipment Details",                            "type":"textarea", "req":False, "min":None,"max":None,"dec":None,"opts":None, "hint":"Enter details (max 750 chars)",         "sub":"M&I Data", "auto":None},
     {"no":57,"key":"f57", "label":"Tank Cleaned (Tank#, Product, Capacity & Date)",        "type":"textarea", "req":False, "min":None,"max":None,"dec":None,"opts":None, "hint":"Enter details (max 750 chars)",         "sub":"M&I Data", "auto":None},
