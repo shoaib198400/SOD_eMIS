@@ -1806,6 +1806,16 @@ def generate_mis_template(
     # ── S5A: all 10 M&I MIS subsection sheets ────────────────────────────
     # Each entry: (tab_key, sheet_name, headers, hints, keys, dropdowns)
     # dropdowns: dict of key → "opt1,opt2,..." for list-validation columns
+
+    # Build hidden TankList sheet so tank_no columns get a location-specific dropdown
+    _loc_tanks = get_tank_master().get(user_id, [])
+    _loc_tanks_all = _loc_tanks + ["Other Tanks"]
+    ws_tl = wb.create_sheet("TankList")
+    ws_tl.sheet_state = "hidden"
+    for _ti, _tn in enumerate(_loc_tanks_all, 1):
+        ws_tl.cell(row=_ti, column=1, value=_tn)
+    _n_tanks = len(_loc_tanks_all)
+
     _MI_TAB_DEFS = [
         ("MI_TANK_OUTAGE", "S5A-1 Tank Outage",
          ["Tank No.", "Other Tank Desc.", "Planned Start", "Planned End",
@@ -2015,6 +2025,15 @@ def generate_mis_template(
                     error='Enter date as DD/MM/YYYY (e.g. 25/06/2025) or "NA" if not applicable.',
                     showInputMessage=True, promptTitle=hdr[:32],
                     prompt=f"DD/MM/YYYY (e.g. 25/06/2025) or NA")
+            elif key == "tank_no" and _n_tanks > 0:
+                dv = DataValidation(
+                    type="list",
+                    formula1=f"TankList!$A$1:$A${_n_tanks}",
+                    allow_blank=True, showErrorMessage=True,
+                    errorStyle="warning",
+                    error="Select a tank number from your location's Tank Master list, or 'Other Tanks'",
+                    showInputMessage=True, promptTitle="Tank No.",
+                    prompt="Select tank from Tank Master list for this location")
             elif key in dropdowns:
                 dv = DataValidation(
                     type="list", formula1=f'"{dropdowns[key]}"',

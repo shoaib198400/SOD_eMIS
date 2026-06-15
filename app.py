@@ -6646,18 +6646,46 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
                                           if r != to_delete]
             st.rerun()
 
-        # Summary preview
-        _tbl = []
-        for rid in st.session_state.get(sk_rows, []):
-            pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
-            _tbl.append({
-                "Tank No.": st.session_state.get(f"{pfx}_tank", ""),
-                "Status": st.session_state.get(f"{pfx}_status", ""),
-                "Cleaning Due": _mi_fmt_date(st.session_state.get(f"{pfx}_cleaning_due_date")),
-                "Inspection Due": _mi_fmt_date(st.session_state.get(f"{pfx}_inspection_due_date")),
-                "Painting Due": _mi_fmt_date(st.session_state.get(f"{pfx}_painting_due_date")),
-            })
-        _mi_summary_table(_tbl, ["Tank No.", "Status", "Cleaning Due", "Inspection Due", "Painting Due"])
+        # Summary preview with per-row delete
+        _row_ids_snap = list(st.session_state.get(sk_rows, []))
+        if _row_ids_snap:
+            st.markdown(
+                '<div style="font-size:12px;font-weight:700;color:#001a6e;'
+                'margin:10px 0 4px;letter-spacing:0.3px;">&#128202; Summary — tanks entered so far</div>',
+                unsafe_allow_html=True,
+            )
+            _hc = st.columns([2, 2, 2, 2, 2, 1])
+            for _hi, _hl in enumerate(["Tank No.", "Status", "Cleaning Due",
+                                        "Inspection Due", "Painting Due", ""]):
+                _hc[_hi].markdown(
+                    f'<div style="font-size:10px;font-weight:700;color:#fff;'
+                    f'background:#002b8f;padding:4px 6px;border-radius:4px;">{_hl}</div>',
+                    unsafe_allow_html=True)
+            _del_from_summary = None
+            for _sr_idx, _rid in enumerate(_row_ids_snap):
+                _pfx = f"mi_{T}_{uid}_{month_year}_{_rid}"
+                _rc  = st.columns([2, 2, 2, 2, 2, 1])
+                _bg  = "#f0f4ff" if _sr_idx % 2 == 0 else "#ffffff"
+                _vals = [
+                    st.session_state.get(f"{_pfx}_tank", ""),
+                    st.session_state.get(f"{_pfx}_status", ""),
+                    _mi_fmt_date(st.session_state.get(f"{_pfx}_cleaning_due_date")) or "—",
+                    _mi_fmt_date(st.session_state.get(f"{_pfx}_inspection_due_date")) or "—",
+                    _mi_fmt_date(st.session_state.get(f"{_pfx}_painting_due_date")) or "—",
+                ]
+                for _ci, _v in enumerate(_vals):
+                    _rc[_ci].markdown(
+                        f'<div style="font-size:11px;padding:4px 6px;background:{_bg};'
+                        f'border-radius:3px;">{_v}</div>',
+                        unsafe_allow_html=True)
+                with _rc[5]:
+                    if st.button("🗑", key=f"mi_{T}_sdel_{uid}_{month_year}_{_rid}",
+                                 help="Delete this tank row"):
+                        _del_from_summary = _rid
+            if _del_from_summary is not None:
+                st.session_state[sk_rows] = [r for r in st.session_state[sk_rows]
+                                              if r != _del_from_summary]
+                st.rerun()
 
         if st.button("➕ Add Tank Row", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
