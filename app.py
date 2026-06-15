@@ -1012,6 +1012,31 @@ def _dashboard_css():
         background: rgba(255,255,255,0.08) !important; color: white !important;
     }
 
+    /* Download button in sidebar — match the nav button style */
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] > button {
+        width: calc(100% - 16px) !important;
+        display: flex !important; flex-direction: row !important;
+        align-items: center !important; justify-content: flex-start !important;
+        text-align: left !important;
+        background: rgba(255,255,255,0.06) !important; color: #ffffff !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 8px !important;
+        margin: 2px 8px !important; padding: 8px 13px !important;
+        font-size: 11.5px !important; font-weight: 500 !important;
+        box-shadow: none !important; outline: none !important;
+        transition: background 0.15s ease, border-color 0.15s !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] > button * {
+        color: #ffffff !important; font-size: 11.5px !important;
+        text-align: left !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stDownloadButton"] > button:hover {
+        background: rgba(255,255,255,0.14) !important; color: white !important;
+        border-color: rgba(255,255,255,0.18) !important;
+        transform: translateX(2px) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.18) !important;
+    }
+
     /* Sidebar collapse control */
     [data-testid="collapsedControl"] button {
         background: #041D63 !important; color: white !important; border: none !important;
