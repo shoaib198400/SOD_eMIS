@@ -2954,7 +2954,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
 
     if role == "Maker":
         # Build template bytes (cached in session to avoid regenerating on every rerun)
-        cache_key = f"_xlsx_{user['userId']}_{month_year}"
+        cache_key = f"_xlsx_v3_{user['userId']}_{month_year}"
         if cache_key not in st.session_state:
             with st.spinner("Building template…"):
                 try:

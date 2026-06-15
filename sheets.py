@@ -1807,14 +1807,18 @@ def generate_mis_template(
     # Each entry: (tab_key, sheet_name, headers, hints, keys, dropdowns)
     # dropdowns: dict of key → "opt1,opt2,..." for list-validation columns
 
-    # Build hidden TankList sheet so tank_no columns get a location-specific dropdown
-    _loc_tanks = get_tank_master().get(user_id, [])
+    # Build tank dropdown for tank_no columns — inline list (reliable) with
+    # hidden-sheet fallback for locations that have more than ~30 tanks.
+    _loc_tanks    = get_tank_master().get(user_id, [])
     _loc_tanks_all = _loc_tanks + ["Other Tanks"]
+    _tank_inline  = ",".join(_loc_tanks_all)          # e.g. "T-001,T-002,Other Tanks"
+    _use_inline   = len(_tank_inline) <= 250           # Excel list-validation limit
+    _n_tanks      = len(_loc_tanks_all)
+    # Hidden TankList sheet — used when inline exceeds 250 chars
     ws_tl = wb.create_sheet("TankList")
     ws_tl.sheet_state = "hidden"
     for _ti, _tn in enumerate(_loc_tanks_all, 1):
         ws_tl.cell(row=_ti, column=1, value=_tn)
-    _n_tanks = len(_loc_tanks_all)
 
     _MI_TAB_DEFS = [
         ("MI_TANK_OUTAGE", "S5A-1 Tank Outage",
@@ -2025,10 +2029,11 @@ def generate_mis_template(
                     error='Enter date as DD/MM/YYYY (e.g. 25/06/2025) or "NA" if not applicable.',
                     showInputMessage=True, promptTitle=hdr[:32],
                     prompt=f"DD/MM/YYYY (e.g. 25/06/2025) or NA")
-            elif key == "tank_no" and _n_tanks > 0:
+            elif key == "tank_no":
+                _f1 = (f'"{_tank_inline}"' if _use_inline
+                       else f"'TankList'!$A$1:$A${_n_tanks}")
                 dv = DataValidation(
-                    type="list",
-                    formula1=f"TankList!$A$1:$A${_n_tanks}",
+                    type="list", formula1=_f1,
                     allow_blank=True, showErrorMessage=True,
                     errorStyle="warning",
                     error="Select a tank number from your location's Tank Master list, or 'Other Tanks'",
