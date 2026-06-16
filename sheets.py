@@ -2490,8 +2490,9 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
           "revenue_capex","ar_code","current_status","etc_date"]),
         ("S5A-3 VRU",            "MI_VRU",
          ["vru_operational","date_not_operating","action_taken","etc_date",
-          "ms_vol_recovered_kl","inlet_mfm_start","inlet_mfm_end",
-          "outlet_mfm_start","outlet_mfm_end","vapour_treated_m3",
+          "ms_vol_recovered_kl","inlet_mfm_start_m3","inlet_mfm_end_m3",
+          "outlet_mfm_start_m3","outlet_mfm_end_m3","vapour_treated_m3",
+          "voc_value_mgcc","inlet_emission_mgcc",
           "ms_gasohol_tt_vol_kl","hsd_tt_vol_kl",
           "ms_gasohol_tw_vol_kl","hsd_tw_vol_kl","vru_uptime_pct"]),
         ("S5A-4 Audit 25-26",    "MI_AUDIT_2526",
@@ -2521,6 +2522,15 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
 
     result["mi_tabs"] = {}   # {tab_key: [row_dict, ...] or "NA"}
 
+    import re as _re
+
+    def _clean_h(s: str) -> str:
+        """Normalise a header for fuzzy matching: strip dots, parens, slashes,
+        unicode superscripts, standalone 'of', then remove all non-alphanumeric."""
+        s = s.lower().replace("³", "3").replace("²", "2")
+        s = _re.sub(r'\bof\b', '', s)
+        return _re.sub(r'[^a-z0-9]', '', s)
+
     for sheet_name, tab_key, data_keys in _MI_UPLOAD_DEFS:
         if sheet_name not in wb.sheetnames:
             result["errors"].append(f"M&I sheet '{sheet_name}' not found — skipped.")
@@ -2529,21 +2539,17 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
         mi_rows = list(ws_mi.iter_rows(values_only=True))
         if len(mi_rows) < 4:
             continue  # banner + header + hint rows; data starts at row 4
-        hdr_row  = [str(v or "").strip().lower() for v in mi_rows[1]]  # row 2 = headers
-        # Build header→key map (case-insensitive match)
-        label_to_key = {dk.replace("_", " "): dk for dk in data_keys}
-        label_to_key.update({dk: dk for dk in data_keys})  # also exact key match
+        hdr_row  = [str(v or "").strip() for v in mi_rows[1]]  # row 2 = headers
+        # Build normalised-label → actual-key lookup (both key form and label form)
+        clean_to_key: dict[str, str] = {}
+        for dk in data_keys:
+            clean_to_key[_clean_h(dk)]                 = dk   # e.g. "norecommendations"
+            clean_to_key[_clean_h(dk.replace("_", " "))] = dk  # "no recommendations"
         col_map: dict[int, str] = {}
         for ci, h in enumerate(hdr_row):
-            # Try direct key match first, then label→key map
-            h_norm = h.replace(" ", "_")
-            if h_norm in data_keys:
-                col_map[ci] = h_norm
-            else:
-                for lbl, dk in label_to_key.items():
-                    if h == lbl.lower() or h == dk.lower():
-                        col_map[ci] = dk
-                        break
+            hc = _clean_h(h)
+            if hc in clean_to_key:
+                col_map[ci] = clean_to_key[hc]
 
         tab_data = []
         for raw in mi_rows[3:]:   # skip banner(0), header(1), hint(2)
