@@ -1787,23 +1787,6 @@ def _inject_field_enhancements(fields: list):
       }}
     }});
 
-    /* Update selectbox borders: green when value chosen, red when placeholder shown.
-       Baseweb CSS-in-JS gives selected-value span a class containing "singleValue"
-       and placeholder span a class containing "placeholder". */
-    pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
-      var wrapper=sb.querySelector('[data-baseweb="select"] > div:first-child');
-      if(!wrapper)return;
-      var hasSingleVal=!!sb.querySelector('[class*="singleValue"]');
-      var hasPlaceholder=!!sb.querySelector('[class*="placeholder"]');
-      /* Green: a real value is displayed (singleValue present, no placeholder) */
-      if(hasSingleVal&&!hasPlaceholder){{
-        wrapper.style.setProperty('border-color','#2e7d32','important');
-        wrapper.style.setProperty('box-shadow','0 0 0 2px rgba(46,125,50,0.1)','important');
-      }} else {{
-        wrapper.style.setProperty('border-color','#c62828','important');
-        wrapper.style.setProperty('box-shadow','none','important');
-      }}
-    }});
   }}
 
   /* Run immediately, then watch for Streamlit re-renders (debounced) */
@@ -1887,11 +1870,19 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         display: none !important;
     }
 
-    /* ── Selectbox base-web border (red default; JS upgrades to green when value present) ── */
+    /* ── Selectbox: green border (form selects always default to index 0, always have a value) ── */
     [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child {
-        border: 1.5px solid #c62828 !important;
+        border: 1.5px solid #2e7d32 !important;
+        box-shadow: 0 0 0 2px rgba(46,125,50,0.1) !important;
         border-radius: 8px !important;
         transition: border-color 0.25s ease, box-shadow 0.25s ease !important;
+    }
+
+    /* ── Selectbox value text: dark bold — target the SingleValue/Placeholder div via DOM path ── */
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child > div:first-child > div:first-child {
+        color: #0d0d1a !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
     }
 
     /* ── Hide Streamlit's "Press Enter to apply" hint — Tab/blur already commits value ── */
@@ -1914,13 +1905,6 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         font-weight: 600 !important;
         opacity: 1 !important;
     }
-    [data-testid="stSelectbox"] [aria-disabled="true"] [data-id="value"],
-    [data-testid="stSelectbox"] [aria-disabled="true"] span {
-        color: #0d0d1a !important;
-        font-weight: 700 !important;
-        opacity: 1 !important;
-    }
-
     /* ── Tooltip icon slightly larger ── */
     [data-testid="stTooltipIcon"] svg {
         width: 15px !important; height: 15px !important;
