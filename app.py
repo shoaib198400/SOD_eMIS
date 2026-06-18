@@ -41,7 +41,7 @@ HPCL_RED  = "#E53935"
 HPCL_GOLD = "#C6A64A"
 
 SECTIONS = [
-    (1,  "Operations"),      (2,  "F&P"),
+    (1,  "Operations"),      (2,  "Facilities & Planning"),
     (3,  "S&D"),             (4,  "Biofuel"),
     (5,  "M&I"),             (6,  "HSE"),
     (7,  "Operational Efficiency"), (8,  "EM Lock"),
@@ -1297,6 +1297,8 @@ def show_login():
                 st.session_state.page = (
                     "change_password" if result["isFirstLogin"] else "dashboard"
                 )
+                if not result["isFirstLogin"]:
+                    st.session_state["just_logged_in"] = True
                 st.rerun()
             else:
                 st.error(result["msg"])
@@ -1883,7 +1885,7 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         """, unsafe_allow_html=True)
 
         for num, name in SECTIONS:
-            lbl = f"▶  S{num}  {name}"
+            lbl = f"▶  S{num} - {name}"
             if num == section_num:
                 st.button(lbl, key=f"sid_{num}", disabled=True, use_container_width=True)
             else:
@@ -1964,16 +1966,27 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
             seen_subs.append(sub)
         sub_groups[sub].append(f)
 
+    def _visible(fld: dict) -> bool:
+        """Return False if the field has a show_when condition that isn't met."""
+        sw = fld.get("show_when")
+        if not sw:
+            return True
+        return all(str(all_vals.get(k) or "") == str(v) for k, v in sw.items())
+
     for sub in seen_subs:
         sfl = sub_groups[sub]
+        # Filter to only visible fields (respecting show_when conditions)
+        vis_sfl = [f for f in sfl if _visible(f)]
+        if not vis_sfl:
+            continue
         st.markdown(f'<div class="sub-header">&#128204; &nbsp; {sub}</div>',
                     unsafe_allow_html=True)
         i = 0
-        while i < len(sfl):
-            f         = sfl[i]
+        while i < len(vis_sfl):
+            f         = vis_sfl[i]
             full_w    = f["type"] == "textarea" or bool(f.get("auto"))
-            next_full = (i + 1 < len(sfl) and
-                         (sfl[i + 1]["type"] == "textarea" or bool(sfl[i + 1].get("auto"))))
+            next_full = (i + 1 < len(vis_sfl) and
+                         (vis_sfl[i + 1]["type"] == "textarea" or bool(vis_sfl[i + 1].get("auto"))))
             if full_w or next_full:
                 _render_field(f, _sk(month_year, f["key"]), is_locked, all_vals)
                 i += 1
@@ -1981,9 +1994,9 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
                 col1, col2 = st.columns(2)
                 with col1:
                     _render_field(f, _sk(month_year, f["key"]), is_locked, all_vals)
-                if i + 1 < len(sfl):
+                if i + 1 < len(vis_sfl):
                     with col2:
-                        f2 = sfl[i + 1]
+                        f2 = vis_sfl[i + 1]
                         _render_field(f2, _sk(month_year, f2["key"]), is_locked, all_vals)
                     i += 2
                 else:
@@ -2113,8 +2126,16 @@ def _render_section_readonly(sec_num: int, draft: dict):
             seen_subs.append(s)
         sub_groups[s].append(f)
 
+    def _ro_visible(fld: dict) -> bool:
+        sw = fld.get("show_when")
+        if not sw:
+            return True
+        return all(str(all_vals.get(k) or "") == str(v) for k, v in sw.items())
+
     for sub in seen_subs:
-        sfl = sub_groups[sub]
+        sfl = [f for f in sub_groups[sub] if _ro_visible(f)]
+        if not sfl:
+            continue
         st.markdown(
             f'<div class="sub-header" style="font-size:12px;padding:7px 16px;">'
             f'&#128204; &nbsp; {sub}</div>',
@@ -3018,7 +3039,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
 
     if role == "Maker":
         # Build template bytes (cached in session to avoid regenerating on every rerun)
-        cache_key = f"_xlsx_v5_{user['userId']}_{month_year}"
+        cache_key = f"_xlsx_v6_{user['userId']}_{month_year}"
         if cache_key not in st.session_state:
             with st.spinner("Building template…"):
                 try:
@@ -3299,6 +3320,45 @@ def _section_grid():
                 </div>""", unsafe_allow_html=True)
 
 
+def _inject_login_loading_overlay():
+    """Full-page overlay shown immediately after login to mask dashboard cold-load."""
+    st.markdown("""
+    <div id="ll-overlay" style="
+        position:fixed;top:0;left:0;width:100vw;height:100vh;
+        background:linear-gradient(135deg,#001a6e 0%,#002b9c 55%,#003DC0 100%);
+        z-index:99999;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;
+        transition:opacity 0.6s ease;">
+      <div style="text-align:center;">
+        <div style="color:white;font-size:28px;font-weight:800;letter-spacing:1px;
+                    text-shadow:0 2px 12px rgba(0,0,0,0.3);">&#127981; HPCL SOD e-MIS</div>
+        <div style="color:#C8D7FF;font-size:13px;margin-top:8px;letter-spacing:0.5px;">
+          Securing your session&hellip;</div>
+        <div style="margin-top:28px;">
+          <div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.25);
+                      border-top-color:white;border-radius:50%;
+                      animation:ll-spin 0.8s linear infinite;display:inline-block;"></div>
+        </div>
+        <div style="color:#8FB4FF;font-size:11px;margin-top:16px;">Loading dashboard&hellip;</div>
+      </div>
+    </div>
+    <style>
+    @keyframes ll-spin { to { transform: rotate(360deg); } }
+    </style>
+    <script>
+    (function() {
+        function fadeOut() {
+            var el = document.getElementById('ll-overlay');
+            if (!el) return;
+            el.style.opacity = '0';
+            setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 650);
+        }
+        setTimeout(fadeOut, 1400);
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+
 def show_dashboard():
     _dashboard_css()
     user = st.session_state.user
@@ -3335,7 +3395,7 @@ def show_dashboard():
         """, unsafe_allow_html=True)
 
         for num, name in SECTIONS:
-            if st.button(f"S{num}  {name}", key=f"sid_{num}", use_container_width=True):
+            if st.button(f"S{num} - {name}", key=f"sid_{num}", use_container_width=True):
                 st.session_state.selected_section = num
                 st.rerun()
             if num == 5 and user.get("locType", "HPCL") == "HPCL":
@@ -7106,6 +7166,8 @@ def main():
     elif page == "change_password":
         show_change_password()
     elif page == "dashboard":
+        if st.session_state.pop("just_logged_in", False):
+            _inject_login_loading_overlay()
         if role == "Zone":
             sec = st.session_state.get("selected_section")
             if sec == "chatbot":

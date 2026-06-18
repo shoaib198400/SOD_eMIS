@@ -16,10 +16,11 @@
 
 S1_FIELDS = [
     # Thruput
-    {"no":1, "key":"f1",  "label":"MS (MT)",                                              "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
-    {"no":2, "key":"f2",  "label":"HSD (MT)",                                             "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
-    {"no":3, "key":"f3",  "label":"Total (MT) incl. Other Products",                      "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
-    {"no":4, "key":"f4",  "label":"Thruput Target (MT)",                                  "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
+    {"no":1,   "key":"f1",   "label":"MS (MT)",                                              "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
+    {"no":2,   "key":"f2",   "label":"HSD (MT)",                                             "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
+    {"no":142, "key":"f142", "label":"ATF (MT)",                                             "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
+    {"no":3,   "key":"f3",   "label":"Total (MT) incl. Other Products",                      "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
+    {"no":4,   "key":"f4",   "label":"Thruput Target (MT)",                                  "type":"number",   "req":True,  "min":0, "max":None,  "dec":3,  "opts":None,                         "hint":"Enter Value in MT",                           "sub":"Thruput",                         "auto":None},
     # Expense / Budget
     {"no":5, "key":"f5",  "label":"MEB (Rs in Lacs)",                                     "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Value in Lakhs",                        "sub":"Expense / Budget",                "auto":None},
     {"no":6, "key":"f6",  "label":"MEB % w.r.t Budget",                                   "type":"number",   "req":True,  "min":0, "max":100,   "dec":2,  "opts":None,                         "hint":"MEB Consumed vs Approved Budget %",           "sub":"Expense / Budget",                "auto":None},
@@ -43,9 +44,19 @@ S1_FIELDS = [
     # Inventory
     {"no":22,"key":"f22", "label":"Stock Loss Productwise (KL)",                          "type":"textarea", "req":True,  "min":None,"max":None,"dec":None,"opts":None,                        "hint":"Enter product-wise stock gain/loss for the month in KL. Use +/- signs. Format: MS: -10 KL, HSD: +5 KL, SKO: 0 KL, ATF: -2 KL. NA if no stock loss applicable.", "sub":"Inventory Monitoring & Control",  "auto":None},
     {"no":23,"key":"f23", "label":"Stock Loss Productwise (% vs Targets)",                "type":"textarea", "req":True,  "min":None,"max":None,"dec":None,"opts":None,                        "hint":"Enter stock loss % vs targets for each product. Format: MS: -0.03% vs 0% target, HSD: +0.05% vs 0% target. NA if not applicable.", "sub":"Inventory Monitoring & Control",  "auto":None},
-    {"no":24,"key":"f24", "label":"AIM Holds (Nos.)",                                     "type":"int",      "req":True,  "min":0, "max":None,  "dec":0,  "opts":None,                         "hint":"AIM Holds released for the month",            "sub":"Inventory Monitoring & Control",  "auto":None},
-    {"no":25,"key":"f25", "label":"Day End Report (TAS vs Gate vs SAP) – Reviewed & Signed by LIC","type":"select","req":True,"min":None,"max":None,"dec":None,"opts":["Yes","No","Non-TAS Location"],"hint":"Select appropriate option",         "sub":"Inventory Monitoring & Control",  "auto":None},
-    {"no":26,"key":"f26", "label":"Auto-Reconciliation (% of Tanks on Auto Reco)",        "type":"number",   "req":True,  "min":0, "max":100,   "dec":2,  "opts":None,                         "hint":"Auto Reco entries / Total Reco entries × 100","sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":24, "key":"f24",  "label":"AIM Holds (Nos.)",                                    "type":"int",      "req":True,  "min":0,    "max":None,  "dec":0,    "opts":None,                              "hint":"AIM Holds released for the month",                                                    "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":143,"key":"f143","label":"Reasons for AIM Hold",                                 "type":"textarea", "req":False, "min":None, "max":None,  "dec":None, "opts":None,                              "hint":"Enter reasons for AIM Holds raised this month (max 750 chars). e.g. Density mismatch in HSD — AIM hold raised on 05/06/2026. Leave blank if no AIM hold this month.", "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":144,"key":"f144","label":"Dummy Tank Qty before Month end Reco (KL)",            "type":"int",      "req":True,  "min":0,    "max":None,  "dec":0,    "opts":None,                              "hint":"Enter positive whole number — quantity in dummy tank before month-end reconciliation (KL).", "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":145,"key":"f145","label":"Unrestricted Pipeline Qty",                            "type":"select",   "req":True,  "min":None, "max":None,  "dec":None, "opts":["Yes","No","NA"],                 "hint":"Select Yes if unrestricted pipeline quantity exists at location this month.",         "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":146,"key":"f146","label":"Reasons & Unrestricted Qty (KL)",                      "type":"textarea", "req":False, "min":None, "max":None,  "dec":None, "opts":None,  "show_when":{"f145":"Yes"}, "hint":"Enter reasons and unrestricted pipeline quantity in KL (max 750 chars). Visible only when Unrestricted Pipeline Qty = Yes.", "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":147,"key":"f147","label":"Slow Moving Stock >90 Days (KL)",                      "type":"number",   "req":True,  "min":0,    "max":None,  "dec":3,    "opts":None,                              "hint":"Enter quantity in KL (>=0). Slow moving stock held for more than 90 days.",          "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":25, "key":"f25",  "label":"Day End Report (TAS vs Gate vs SAP) – Reviewed & Signed by LIC","type":"select","req":True,"min":None,"max":None,"dec":None,"opts":["Yes","No","Non-TAS Location"],"hint":"Select appropriate option",                                                      "sub":"Inventory Monitoring & Control",  "auto":None},
+    {"no":26, "key":"f26",  "label":"Auto-Reconciliation (% of Tanks on Auto Reco)",       "type":"number",   "req":True,  "min":0,    "max":100,   "dec":2,    "opts":None,                              "hint":"Auto Reco entries / Total Reco entries × 100",                                        "sub":"Inventory Monitoring & Control",  "auto":None},
+    # Open SAP Transactions
+    {"no":148,"key":"f148","label":"Open Sales Orders (Nos.)",                             "type":"int",      "req":True,  "min":0,    "max":None,  "dec":0,    "opts":None,                              "hint":"Enter count of open sales orders as per SAP at month end.",                           "sub":"Open SAP Transactions",           "auto":None},
+    {"no":149,"key":"f149","label":"Open OBD's (Nos.)",                                    "type":"int",      "req":True,  "min":0,    "max":None,  "dec":0,    "opts":None,                              "hint":"Enter count of open Outbound Deliveries (OBDs) as per SAP at month end.",             "sub":"Open SAP Transactions",           "auto":None},
+    {"no":150,"key":"f150","label":"Open DC's (Nos.)",                                     "type":"int",      "req":True,  "min":0,    "max":None,  "dec":0,    "opts":None,                              "hint":"Enter count of open Delivery Challans (DCs) as per SAP at month end.",               "sub":"Open SAP Transactions",           "auto":None},
+    {"no":151,"key":"f151","label":"Open Shortages (KL)",                                  "type":"number",   "req":True,  "min":0,    "max":None,  "dec":3,    "opts":None,                              "hint":"Enter total open shortage quantity in KL as per SAP at month end.",                   "sub":"Open SAP Transactions",           "auto":None},
     # Manpower
     {"no":27,"key":"f27", "label":"Management",                                           "type":"int",      "req":True,  "min":0, "max":25,    "dec":0,  "opts":None,                         "hint":"Enter Management Manpower",                   "sub":"Manpower",                        "auto":None},
     {"no":28,"key":"f28", "label":"Non-Management",                                       "type":"int",      "req":True,  "min":0, "max":50,    "dec":0,  "opts":None,                         "hint":"Enter Non-Management Manpower",               "sub":"Manpower",                        "auto":None},
@@ -60,14 +71,16 @@ S1_FIELDS = [
 ]
 
 S2_FIELDS = [
-    {"no":36,"key":"f36", "label":"No. of Approved NPCB Projects",                       "type":"int",      "req":True,  "min":0, "max":None,  "dec":0,  "opts":None,                         "hint":"Whole numbers, max 2 digits",                 "sub":"Finance & Planning",              "auto":None},
-    {"no":37,"key":"f37", "label":"Cumulative Value of Approved Projects (in Lacs)",     "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Value in Lacs",                         "sub":"Finance & Planning",              "auto":None},
-    {"no":38,"key":"f38", "label":"CAPEX (Lakhs)",                                        "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capex done in Lakhs",                   "sub":"Finance & Planning",              "auto":None},
-    {"no":39,"key":"f39", "label":"Capex Target as per AOP (Lakhs)",                      "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capex Targets for FY",                  "sub":"Finance & Planning",              "auto":None},
-    {"no":40,"key":"f40", "label":"CAPITALIZATION (Lakhs)",                               "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Capitalization done in the month",             "sub":"Finance & Planning",              "auto":None},
-    {"no":41,"key":"f41", "label":"Capitalization Target as per AOP (Lakhs)",             "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capitalization Targets for FY",          "sub":"Finance & Planning",              "auto":None},
-    {"no":42,"key":"f42", "label":"Scrap Value at Location (Rs in Lacs)",                 "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Expected Scrap Value",                  "sub":"Finance & Planning",              "auto":None},
-    {"no":43,"key":"f43", "label":"Physical Scrap Disposal (Rs in Lacs)",                 "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Scrap disposed value for the month",          "sub":"Finance & Planning",              "auto":None},
+    {"no":36, "key":"f36",  "label":"No. of Approved NPCB Projects",                      "type":"int",      "req":True,  "min":0, "max":None,  "dec":0,  "opts":None,                         "hint":"Whole numbers, max 2 digits",                 "sub":"Facilities & Planning",           "auto":None},
+    {"no":37, "key":"f37",  "label":"Cumulative Value of Approved Projects (in Lacs)",    "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Value in Lacs",                         "sub":"Facilities & Planning",           "auto":None},
+    {"no":38, "key":"f38",  "label":"CAPEX (Lakhs)",                                       "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capex done in Lakhs",                   "sub":"Facilities & Planning",           "auto":None},
+    {"no":39, "key":"f39",  "label":"Capex Target as per AOP (Lakhs)",                     "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capex Targets for FY",                  "sub":"Facilities & Planning",           "auto":None},
+    {"no":40, "key":"f40",  "label":"CAPITALIZATION (Lakhs)",                              "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Capitalization done in the month",             "sub":"Facilities & Planning",           "auto":None},
+    {"no":41, "key":"f41",  "label":"Capitalization Target as per AOP (Lakhs)",            "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Capitalization Targets for FY",          "sub":"Facilities & Planning",           "auto":None},
+    {"no":42, "key":"f42",  "label":"Scrap Value at Location (Rs in Lacs)",                "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter Expected Scrap Value",                  "sub":"Facilities & Planning",           "auto":None},
+    {"no":43, "key":"f43",  "label":"Physical Scrap Disposal (Rs in Lacs)",                "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Scrap disposed value for the month",          "sub":"Facilities & Planning",           "auto":None},
+    {"no":157,"key":"f157", "label":"Appropriation Done (Lakhs)",                          "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter value in Lakhs",                        "sub":"Facilities & Planning",           "auto":None},
+    {"no":158,"key":"f158", "label":"Appropriation Target (Lakhs)",                        "type":"number",   "req":True,  "min":0, "max":None,  "dec":2,  "opts":None,                         "hint":"Enter value in Lakhs",                        "sub":"Facilities & Planning",           "auto":None},
 ]
 
 S3_FIELDS = [
@@ -128,6 +141,7 @@ S7_FIELDS = [
     {"no":81,  "key":"f81",  "label":"AUTO DC %",                                           "type":"number",   "req":True,  "min":0,  "max":100,  "dec":2,  "opts":None,                         "hint":"Enter AUTO DC % as per IMS Reports",          "sub":"Bay Operations",                  "auto":None},
     {"no":82,  "key":"f82",  "label":"CAT-A %",                                             "type":"number",   "req":True,  "min":0,  "max":100,  "dec":2,  "opts":None,                         "hint":"Enter CAT-A % as per IMS Reports",            "sub":"Bay Operations",                  "auto":None},
     {"no":83,  "key":"f83",  "label":"LPM",                                                 "type":"number",   "req":True,  "min":0,  "max":None, "dec":2,  "opts":None,                         "hint":"Enter LPM as per TAS Reports",                "sub":"Bay Operations",                  "auto":None},
+    {"no":152, "key":"f152", "label":"Bay Occupancy (%)",                                  "type":"number",   "req":True,  "min":0,  "max":100,  "dec":2,  "opts":None,                         "hint":"Enter Bay Occupancy % for the month as per TAS report. e.g. total occupied bay-hours / total available bay-hours × 100.", "sub":"Bay Operations",                  "auto":None},
     # TAS Performance
     {"no":84,  "key":"f84",  "label":"Operating Hours of Location",                         "type":"int",      "req":True,  "min":0,  "max":744,  "dec":0,  "opts":None,                         "hint":"Enter operating hours in month (max 744)",    "sub":"TAS Performance",                 "auto":None},
     {"no":85,  "key":"f85",  "label":"Indents Executed within Operational Hours",           "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter count as per TAS Reports",              "sub":"TAS Performance",                 "auto":None},
@@ -137,6 +151,7 @@ S7_FIELDS = [
     {"no":89,  "key":"f89",  "label":"File Note No. & Date for TFMS–SAP Integration",      "type":"textarea", "req":False, "min":None,"max":None,"dec":None,"opts":None,                        "hint":"Enter File Note number and date raised for TFMS–SAP integration. e.g. FN-2026/06/123 dated 01/06/2026 — Discrepancy of 10 KL in MS loading. Leave blank if no file note raised this month.", "sub":"TAS Performance",                 "auto":None},
     {"no":90,  "key":"f90",  "label":"First 2 Hours TT Released per Bay (Operational Bays)","type":"number",  "req":True,  "min":0,  "max":None, "dec":2,  "opts":None,                         "hint":"Enter value as per TAS Reports",              "sub":"TAS Performance",                 "auto":None},
     {"no":91,  "key":"f91",  "label":"Online Density % (Target 98%)",                       "type":"number",   "req":True,  "min":0,  "max":100,  "dec":2,  "opts":None,                         "hint":"Enter % as per TAS Reports",                  "sub":"TAS Performance",                 "auto":None},
+    {"no":153, "key":"f153", "label":"Instances of Manual Density Forced (Nos.)",          "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter count of manual density forced instances for the month as per TAS report.", "sub":"TAS Performance",                 "auto":None},
     {"no":92,  "key":"f92",  "label":"No. of PLC IO's Forced",                              "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter count as per TAS Reports",              "sub":"TAS Performance",                 "auto":None},
     {"no":93,  "key":"f93",  "label":"No. of Manual Bay Allocations",                       "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter count as per TAS Reports",              "sub":"TAS Performance",                 "auto":None},
     {"no":94,  "key":"f94",  "label":"No. of Sick TT Instances",                            "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter count as per TAS Reports",              "sub":"TAS Performance",                 "auto":None},
@@ -144,9 +159,12 @@ S7_FIELDS = [
     {"no":96,  "key":"f96",  "label":"No. of TT's Loaded Locally",                         "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter count as per TAS Reports",              "sub":"TAS Performance",                 "auto":None},
     {"no":97,  "key":"f97",  "label":"Quantity of Local Loading (KL)",                      "type":"number",   "req":True,  "min":0,  "max":None, "dec":3,  "opts":None,                         "hint":"Enter value in KL",                           "sub":"TAS Performance",                 "auto":None},
     {"no":98,  "key":"f98",  "label":"Cycle Time R2 to R3 (Min)",                           "type":"number",   "req":True,  "min":0,  "max":None, "dec":2,  "opts":None,                         "hint":"Enter average cycle time in minutes",         "sub":"TAS Performance",                 "auto":None},
+    {"no":154, "key":"f154", "label":"R2 - Loading Start Time (Minutes)",                  "type":"number",   "req":True,  "min":0,  "max":None, "dec":2,  "opts":None,                         "hint":"Enter avg. value for the month as per TAS report — time from R2 gate entry to loading start (minutes).", "sub":"TAS Performance",                 "auto":None},
+    {"no":155, "key":"f155", "label":"Loading Completed to R3 Time (Minutes)",             "type":"number",   "req":True,  "min":0,  "max":None, "dec":2,  "opts":None,                         "hint":"Enter avg. value for the month as per TAS report — time from loading completion to R3 gate exit (minutes).", "sub":"TAS Performance",                 "auto":None},
     {"no":99,  "key":"f99",  "label":"TAS Open Audit Observations vs Total (%)",            "type":"number",   "req":True,  "min":0,  "max":100,  "dec":2,  "opts":None,                         "hint":"Enter % of open audit observations",          "sub":"TAS Performance",                 "auto":None},
     # System Compliance
     {"no":100, "key":"f100", "label":"BCU vs MFM Totalizer Matching",                       "type":"select",   "req":True,  "min":None,"max":None,"dec":None,"opts":["Yes","No","NA"],                "hint":"Select appropriate option",                   "sub":"System Compliance",               "auto":None},
+    {"no":156, "key":"f156", "label":"Reasons - BCU-MFM not matching",                    "type":"textarea", "req":False, "min":None,"max":None,"dec":None,"opts":None, "show_when":{"f100":"No"}, "hint":"Enter reasons for BCU vs MFM Totalizer mismatch (max 750 chars). Include date, product, quantity variance and corrective action. Visible only when BCU vs MFM = No.", "sub":"System Compliance",               "auto":None},
     {"no":101, "key":"f101", "label":"No. of Instances of Unauthorized Flow",               "type":"int",      "req":True,  "min":0,  "max":None, "dec":0,  "opts":None,                         "hint":"Enter whole number count",                    "sub":"System Compliance",               "auto":None},
     {"no":102, "key":"f102", "label":"User Access as per Circular",                         "type":"select",   "req":True,  "min":None,"max":None,"dec":None,"opts":["Yes","No","NA"],                "hint":"Select appropriate option",                   "sub":"System Compliance",               "auto":None},
     {"no":103, "key":"f103", "label":"H, HH, HHH Matching with File Note",                  "type":"select",   "req":True,  "min":None,"max":None,"dec":None,"opts":["Yes","No","NA"],                "hint":"Select appropriate option",                   "sub":"System Compliance",               "auto":None},
@@ -215,7 +233,7 @@ SECTION_FIELDS: dict[int, list] = {
 
 SECTION_NAMES: dict[int, str] = {
     1:  "S1 — Operations",
-    2:  "S2 — Finance & Planning (F&P)",
+    2:  "S2 — Facilities & Planning (F&P)",
     3:  "S3 — Supply & Distribution (S&D)",
     4:  "S4 — Biofuel",
     5:  "S5 — Maintenance & Inspection (M&I)",
@@ -237,16 +255,18 @@ TOP_EXCLUDED_FIELDS: frozenset = frozenset({
     "f24", "f26",
     # S1 — Manpower
     "f30", "f31", "f32", "f33", "f141",
-    # S2 — Finance & Planning (entire section N/A)
+    # S2 — Facilities & Planning (entire section N/A)
     "f35", "f36", "f37", "f38", "f39", "f40", "f41", "f42", "f43",
+    "f157", "f158",
     # S5 — M&I summary (entire section N/A; S5A also skipped)
     "f54", "f55", "f56", "f57", "f58",
     # S6 — HSE (partial)
     "f59", "f60", "f61", "f65", "f67", "f68", "f69", "f71",
     "f72", "f73", "f74", "f75", "f76",
     # S7 — TAS (partial)
-    "f77", "f78", "f83", "f88", "f89", "f90", "f91", "f92", "f93",
-    "f96", "f97", "f98", "f99", "f100", "f101", "f102", "f103", "f104",
+    "f77", "f78", "f83", "f152", "f88", "f89", "f90", "f91", "f92", "f93",
+    "f153", "f154", "f155",
+    "f96", "f97", "f98", "f99", "f100", "f101", "f102", "f103", "f104", "f156",
 })
 
 # Fields marked N in TOP Data.xlsx for HMEL locations
@@ -255,16 +275,18 @@ HMEL_EXCLUDED_FIELDS: frozenset = frozenset({
     "f9", "f10", "f11",
     # S1 — Inventory
     "f24", "f26",
-    # S2 — Finance & Planning (entire section N/A)
+    # S2 — Facilities & Planning (entire section N/A)
     "f35", "f36", "f37", "f38", "f39", "f40", "f41", "f42", "f43",
+    "f157", "f158",
     # S5 — M&I summary (entire section N/A; S5A also skipped)
     "f54", "f55", "f56", "f57", "f58",
     # S6 — HSE (partial)
     "f59", "f67", "f68", "f69", "f71",
     "f72", "f73", "f74", "f75", "f76",
     # S7 — TAS (partial)
-    "f77", "f78", "f83", "f88", "f89", "f90", "f91", "f92", "f93",
-    "f96", "f97", "f98", "f99", "f100", "f101", "f102", "f103", "f104",
+    "f77", "f78", "f83", "f152", "f88", "f89", "f90", "f91", "f92", "f93",
+    "f153", "f154", "f155",
+    "f96", "f97", "f98", "f99", "f100", "f101", "f102", "f103", "f104", "f156",
 })
 
 # Sections entirely N/A for a loc_type — auto-completed, not shown to user
