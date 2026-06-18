@@ -1593,7 +1593,7 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
             col_cfg[k] = st.column_config.SelectboxColumn(lbl, options=cfg["opts"])
 
     if is_locked:
-        # Read-only view: render as styled HTML table (bypasses canvas renderer)
+        # Read-only view: render as styled HTML table with HPCL blue header
         st.markdown(
             f'<div class="sub-header" style="margin-top:22px;">&#128203; &nbsp; {ui["title"]}</div>',
             unsafe_allow_html=True,
@@ -1604,7 +1604,30 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
             display_df = df_init.rename(
                 columns={k: v["label"] for k, v in ui["cols"].items()}
             )
-            html = display_df.to_html(index=False, escape=True, border=0, classes="mis-tbl")
+            # Build styled HTML table with coloured headers
+            cols_html = "".join(
+                f'<th style="background:#0033A0;color:#ffffff;font-weight:700;'
+                f'font-size:11px;padding:7px 12px;text-align:left;'
+                f'border-right:1px solid #1a5fcc;white-space:nowrap;">{c}</th>'
+                for c in display_df.columns
+            )
+            rows_html = ""
+            for ri, row in display_df.iterrows():
+                bg = "#f8faff" if ri % 2 == 0 else "#ffffff"
+                cells = "".join(
+                    f'<td style="padding:5px 12px;font-size:11px;color:#1a1a2e;'
+                    f'border-right:1px solid #eef0f5;">{v if v not in (None,"") else "—"}</td>'
+                    for v in row
+                )
+                rows_html += f'<tr style="background:{bg};">{cells}</tr>'
+            html = (
+                f'<div style="overflow-x:auto;border-radius:8px;'
+                f'border:1px solid #d0d7e8;margin-top:8px;">'
+                f'<table style="border-collapse:collapse;width:100%;min-width:600px;">'
+                f'<thead><tr>{cols_html}</tr></thead>'
+                f'<tbody>{rows_html}</tbody>'
+                f'</table></div>'
+            )
             st.markdown(html, unsafe_allow_html=True)
         return df_init
 
@@ -1614,6 +1637,19 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
         f'<span style="font-size:11px;font-weight:400;margin-left:10px;opacity:0.8;">'
         f'— Use + button to add rows &nbsp;·&nbsp; Click a cell to edit</span>'
         f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Inject CSS to style the data_editor column header row (HPCL blue background)
+    st.markdown(
+        '<style>'
+        '[data-testid="stDataEditorGridContainer"] .dvn-scroller > div:first-child {'
+        '  background:#0033A0 !important;'
+        '}'
+        '[data-testid="stDataEditorGridContainer"] canvas:first-of-type {'
+        '  filter: brightness(1);'
+        '}'
+        '</style>',
         unsafe_allow_html=True,
     )
 
@@ -3058,7 +3094,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
 
     if role == "Maker":
         # Build template bytes (cached in session to avoid regenerating on every rerun)
-        cache_key = f"_xlsx_v7_{user['userId']}_{month_year}"
+        cache_key = f"_xlsx_v8_{user['userId']}_{month_year}"
         if cache_key not in st.session_state:
             with st.spinner("Building template…"):
                 try:
@@ -5476,7 +5512,8 @@ def _mi_tab_outage(uid: str, month_year: str, tank_opts: list):
             for rid, row in zip(ids, saved):
                 pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
                 tn  = row.get("tank_no", "")
-                st.session_state[f"{pfx}_tank"]    = tn if tn in tank_opts else (tank_opts[0] if tank_opts else "Other Tanks")
+                # Use None when tank not found so selectbox shows no implicit default
+                st.session_state[f"{pfx}_tank"]    = tn if tn in tank_opts else ("Other Tanks" if "Other Tanks" in tank_opts else None)
                 st.session_state[f"{pfx}_other"]   = row.get("other_tank_desc", "")
                 st.session_state[f"{pfx}_p_start"] = _mi_parse_date(row.get("planned_start"))
                 st.session_state[f"{pfx}_p_end"]   = _mi_parse_date(row.get("planned_end"))
@@ -5511,9 +5548,12 @@ def _mi_tab_outage(uid: str, month_year: str, tank_opts: list):
 
             c1, c2 = st.columns(2)
             with c1:
-                tn_def = st.session_state.get(f"{pfx}_tank", tank_opts[0] if tank_opts else "Other Tanks")
-                tn_idx = tank_opts.index(tn_def) if tn_def in tank_opts else len(tank_opts) - 1
-                st.selectbox("Tank No. *", tank_opts, index=tn_idx, key=f"{pfx}_tank",
+                _tn_cur = st.session_state.get(f"{pfx}_tank")
+                if _tn_cur is not None and _tn_cur in tank_opts:
+                    _tn_idx = tank_opts.index(_tn_cur)
+                else:
+                    _tn_idx = None  # no implicit default for new/unrecognised rows
+                st.selectbox("Tank No. *", tank_opts, index=_tn_idx, key=f"{pfx}_tank",
                              help="Select the SAP tank number from Tank Master list")
             with c2:
                 if st.session_state.get(f"{pfx}_tank") == "Other Tanks":
@@ -5654,7 +5694,7 @@ def _mi_tab_repair(uid: str, month_year: str, tank_opts: list):
             for rid, row in zip(ids, saved):
                 pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
                 tn  = row.get("tank_no", "")
-                st.session_state[f"{pfx}_tank"]   = tn if tn in tank_opts else (tank_opts[0] if tank_opts else "Other Tanks")
+                st.session_state[f"{pfx}_tank"]   = tn if tn in tank_opts else ("Other Tanks" if "Other Tanks" in tank_opts else None)
                 st.session_state[f"{pfx}_other"]  = row.get("other_tank_desc", "")
                 st.session_state[f"{pfx}_nature"] = row.get("nature_of_repair", "")
                 rc_raw = row.get("revenue_capex", "Revenue")
@@ -5686,9 +5726,12 @@ def _mi_tab_repair(uid: str, month_year: str, tank_opts: list):
 
             c1, c2 = st.columns(2)
             with c1:
-                tn_def = st.session_state.get(f"{pfx}_tank", tank_opts[0] if tank_opts else "Other Tanks")
-                tn_idx = tank_opts.index(tn_def) if tn_def in tank_opts else len(tank_opts) - 1
-                st.selectbox("Tank No. *", tank_opts, index=tn_idx, key=f"{pfx}_tank",
+                _tn_cur = st.session_state.get(f"{pfx}_tank")
+                if _tn_cur is not None and _tn_cur in tank_opts:
+                    _tn_idx = tank_opts.index(_tn_cur)
+                else:
+                    _tn_idx = None
+                st.selectbox("Tank No. *", tank_opts, index=_tn_idx, key=f"{pfx}_tank",
                              help="Select the SAP tank number from Tank Master list")
             with c2:
                 if st.session_state.get(f"{pfx}_tank") == "Other Tanks":
