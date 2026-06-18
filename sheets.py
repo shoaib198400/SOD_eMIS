@@ -1715,6 +1715,36 @@ def generate_mis_template(
                 dv.sqref = cell_ref
                 ws1.add_data_validation(dv)
 
+            elif ftype == "date":
+                # Store as text in DD/MM/YYYY format; enforce format via custom validation
+                c.number_format = "@"  # force text so Excel doesn't auto-convert to serial
+                _cr0 = cell_ref       # e.g. "AZ4"
+                formula = (
+                    f'=AND(LEN({_cr0})=10,'
+                    f'ISNUMBER(VALUE(LEFT({_cr0},2))),'
+                    f'MID({_cr0},3,1)="/",'
+                    f'ISNUMBER(VALUE(MID({_cr0},4,2))),'
+                    f'MID({_cr0},6,1)="/",'
+                    f'ISNUMBER(VALUE(RIGHT({_cr0},4))),'
+                    f'VALUE(LEFT({_cr0},2))>=1,'
+                    f'VALUE(LEFT({_cr0},2))<=31,'
+                    f'VALUE(MID({_cr0},4,2))>=1,'
+                    f'VALUE(MID({_cr0},4,2))<=12)'
+                )
+                dv = DataValidation(
+                    type="custom", formula1=formula,
+                    allow_blank=True,
+                    showErrorMessage=True,
+                    errorStyle="warning",
+                    errorTitle="Invalid Date Format",
+                    error='Enter date as DD/MM/YYYY — e.g. 25/06/2026',
+                    showInputMessage=True,
+                    promptTitle=lbl[:32],
+                    prompt=f"{hint}\nFormat: DD/MM/YYYY (e.g. 25/06/2026)",
+                )
+                dv.sqref = cell_ref
+                ws1.add_data_validation(dv)
+
             else:
                 # textarea / unconstrained — hint is in row 3; no validation rule needed
                 pass

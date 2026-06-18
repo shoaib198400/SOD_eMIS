@@ -226,6 +226,9 @@ def _load_draft_to_session(user_id: str, month_year: str, section_num: int):
                 st.session_state[sk] = int(raw)
             elif f["type"] == "number":
                 st.session_state[sk] = float(raw)
+            elif f["type"] == "date":
+                from datetime import datetime as _dts
+                st.session_state[sk] = _dts.strptime(str(raw).strip(), "%d/%m/%Y").date()
             else:
                 st.session_state[sk] = str(raw)
         except (TypeError, ValueError):
@@ -269,6 +272,8 @@ def _field_help(field: dict) -> str:
         rule_parts.append(f"select: {' / '.join(opts)}")
     elif t == "textarea":
         rule_parts.append("text; max 750 characters")
+    elif t == "date":
+        rule_parts.append("date; DD/MM/YYYY")
 
     rule_str = "; ".join(rule_parts)
     hint = field.get("hint", "")
@@ -307,6 +312,19 @@ def _render_field(field: dict, sk: str, disabled: bool, all_vals: dict):
         if sk in st.session_state and st.session_state[sk] not in opts:
             del st.session_state[sk]
         st.selectbox(label, opts, key=sk, disabled=disabled, help=tooltip)
+
+    elif ftype == "date":
+        from datetime import date as _date_t
+        # Coerce string "DD/MM/YYYY" stored in session/draft to a date object
+        _sv = st.session_state.get(sk)
+        if isinstance(_sv, str) and _sv:
+            try:
+                from datetime import datetime as _dt_t
+                st.session_state[sk] = _dt_t.strptime(_sv, "%d/%m/%Y").date()
+            except Exception:
+                st.session_state.pop(sk, None)
+        st.date_input(label, value=None, format="DD/MM/YYYY",
+                      key=sk, disabled=disabled, help=tooltip)
 
     elif ftype == "textarea":
         st.text_area(label, key=sk, disabled=disabled, help=tooltip,
@@ -349,10 +367,13 @@ def _do_save(user_id: str, month_year: str, section_num: int,
     """Collect session-state values and persist draft."""
     if is_locked:
         return {"ok": False, "msg": "Section is locked."}
+    from datetime import date as _date_cls
     field_data, all_req_filled = {}, True
     for f in fields:
         sk  = _sk(month_year, f["key"])
         val = st.session_state.get(sk)
+        if isinstance(val, _date_cls):
+            val = val.strftime("%d/%m/%Y")
         if val is not None and val != "":
             field_data[f["key"]] = val
         elif f.get("req") and not f.get("auto"):
@@ -3037,7 +3058,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
 
     if role == "Maker":
         # Build template bytes (cached in session to avoid regenerating on every rerun)
-        cache_key = f"_xlsx_v6_{user['userId']}_{month_year}"
+        cache_key = f"_xlsx_v7_{user['userId']}_{month_year}"
         if cache_key not in st.session_state:
             with st.spinner("Building template…"):
                 try:
