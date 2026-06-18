@@ -1640,19 +1640,6 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
         unsafe_allow_html=True,
     )
 
-    # Inject CSS to style the data_editor column header row (HPCL blue background)
-    st.markdown(
-        '<style>'
-        '[data-testid="stDataEditorGridContainer"] .dvn-scroller > div:first-child {'
-        '  background:#0033A0 !important;'
-        '}'
-        '[data-testid="stDataEditorGridContainer"] canvas:first-of-type {'
-        '  filter: brightness(1);'
-        '}'
-        '</style>',
-        unsafe_allow_html=True,
-    )
-
     edited = st.data_editor(
         df_init,
         key=f"de_{tab_key}_{mc}",
@@ -3553,7 +3540,8 @@ def show_dashboard():
     st.session_state["current_month_label"] = selected["label"]
 
     with st.spinner(""):
-        data = sheets.get_dashboard_data(user["userId"], selected["value"])
+        data = sheets.get_dashboard_data(user["userId"], selected["value"],
+                                          user.get("locType", "HPCL"))
     if not data.get("ok"):
         st.error(data.get("msg", "Failed to load dashboard data."))
         return

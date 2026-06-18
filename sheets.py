@@ -641,7 +641,7 @@ def get_available_months(user_id: str) -> dict:
         return {"ok": False, "msg": str(e), "months": []}
 
 
-def get_dashboard_data(user_id: str, month_year: str = None) -> dict:
+def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HPCL") -> dict:
     try:
         user_id = str(user_id or "").strip()
         if not user_id:
@@ -655,6 +655,7 @@ def get_dashboard_data(user_id: str, month_year: str = None) -> dict:
 
         # Derive per-section completion from the draft row (column C)
         secs_done: list = []
+        draft: dict = {}
         try:
             draft    = load_draft(user_id, month_year)
             secs_raw = draft.get("_sections_complete", "")
@@ -663,6 +664,39 @@ def get_dashboard_data(user_id: str, month_year: str = None) -> dict:
             )
         except Exception:
             pass
+
+        # Validate stored completion against current SECTION_FIELDS definitions.
+        # A section is only complete if every current required non-auto non-excluded
+        # field has a non-empty value in the saved draft.
+        try:
+            from form_defs import SECTION_FIELDS, get_excluded_fields, get_skip_sections
+            excl_keys  = get_excluded_fields(loc_type)
+            skip_secs  = get_skip_sections(loc_type)
+            valid_secs = []
+            for sec_num in secs_done:
+                if sec_num in skip_secs:
+                    valid_secs.append(sec_num)  # skip-sections always count as done
+                    continue
+                all_filled = True
+                for f in SECTION_FIELDS.get(sec_num, []):
+                    if f.get("auto") or not f.get("req"):
+                        continue
+                    if f["key"] in excl_keys:
+                        continue
+                    # Conditional field — skip if its show_when condition is not met
+                    sw = f.get("show_when")
+                    if sw and not all(
+                        str(draft.get(k) or "") == str(v) for k, v in sw.items()
+                    ):
+                        continue
+                    if not draft.get(f["key"]):
+                        all_filled = False
+                        break
+                if all_filled:
+                    valid_secs.append(sec_num)
+            secs_done = sorted(valid_secs)
+        except Exception:
+            pass  # on any import/logic error keep original secs_done
 
         # S5 only counts as complete when M&I MIS (S5A) is also fully filled
         mi_complete = check_mi_complete(user_id, month_year) if 5 in secs_done else False
