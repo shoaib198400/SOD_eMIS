@@ -1862,14 +1862,14 @@ def generate_mis_template(
           "ms_gasohol_tw_vol_kl", "hsd_tw_vol_kl", "vru_uptime_pct"],
          {"vru_operational": "Yes,No"}),
 
-        ("MI_AUDIT_2526", "S5A-4 Audit 25-26",
+        ("MI_AUDIT_2526", "S5A-4 M&I Audit 25-26",
          ["Audit Date", "No. of Recommendations", "No. Pending", "External Score"],
          ["DD/MM/YYYY", "Total recommendations from audit",
           "Pending recommendations", "Score from external auditor"],
          ["audit_date", "no_recommendations", "no_pending", "external_score"],
          {}),
 
-        ("MI_AUDIT_2627", "S5A-5 Audit 26-27",
+        ("MI_AUDIT_2627", "S5A-5 M&I Audit 26-27",
          ["Audit Carried Out", "Audit Date", "No. of Recommendations",
           "No. Pending", "External Score"],
          ["Yes/No", "DD/MM/YYYY", "Total recommendations",
@@ -1907,17 +1907,18 @@ def generate_mis_template(
          {}),
 
         ("MI_EXT_PIPELINE", "S5A-9 Ext. Pipeline",
-         ["Pipeline Details", "Length Metres", "Product", "Size Inch",
+         ["Pipeline Type", "Pipeline Details", "Length Metres", "Product", "Size Inch",
           "Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
           "Last LRUT Date", "Other Testing"],
-         ["Describe pipeline segment (route / from-to)", "Length in metres",
+         ["UG = Underground / AG = Above Ground",
+          "Describe pipeline segment (route / from-to)", "Length in metres",
           "Product carried e.g. MS HSD ATF",
           "Nominal bore in inches", "DD/MM/YYYY", "DD/MM/YYYY", "DD/MM/YYYY",
           "DD/MM/YYYY", "Describe any other testing"],
-         ["pipeline_details", "length_metres", "product", "size_inch",
+         ["pipeline_type", "pipeline_details", "length_metres", "product", "size_inch",
           "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
           "last_lrut_date", "other_testing"],
-         {}),
+         {"pipeline_type": "UG,AG"}),
 
         ("MI_TANK_STATUS", "S5A-10 Tank Status",
          ["Tank No", "Cleaning Completed Date", "Cleaning Due Date",
@@ -2008,13 +2009,17 @@ def generate_mis_template(
                     val = rec.get(key) or None
                     _cell(ws_mi, ri, ci, val, font=NM_FONT, fill=WHITE_FILL,
                           align=LEFT, lock=False)
+                    if key in date_keys_tab:
+                        ws_mi.cell(row=ri, column=ci).number_format = "@"
                 ws_mi.row_dimensions[ri].height = 20
             start_blank = 4 + len(saved_rows)
 
-        # Blank unlocked rows to row 150
+        # Blank unlocked rows to row 150 — date columns forced to text format
         for ri in range(start_blank, 151):
             for ci in range(1, n_cols + 1):
                 ws_mi.cell(row=ri, column=ci).protection = UNLOCKED_CELL
+                if keys[ci - 1] in date_keys_tab:
+                    ws_mi.cell(row=ri, column=ci).number_format = "@"
 
         # Data validations per column (DD/MM/YYYY formula for dates; list for dropdowns)
         for ci, (hdr, hint, key) in enumerate(zip(hdrs, hints, keys), 1):
@@ -2354,10 +2359,10 @@ def generate_mi_mis_report(
             "last_lrut_date", "other_testing"])
 
     _sheet("MI_EXT_PIPELINE", "Ext. Pipeline",
-           ["Pipeline Details", "Length (m)", "Product", "Size (inch)",
+           ["Type", "Pipeline Details", "Length (m)", "Product", "Size (inch)",
             "Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
             "Last LRUT Date", "Other Testing"],
-           ["pipeline_details", "length_metres", "product", "size_inch",
+           ["pipeline_type", "pipeline_details", "length_metres", "product", "size_inch",
             "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
             "last_lrut_date", "other_testing"])
 
@@ -2409,7 +2414,14 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
             except Exception:
                 return str(v)
         sv = str(v).strip()
-        # If Excel stored a date serial as a float (rare with data_only), skip conversion
+        # Normalise D/M/YYYY or D/M/YY text strings to zero-padded DD/MM/YYYY
+        import re as _re2
+        _dm = _re2.match(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})$', sv)
+        if _dm:
+            _d, _m, _y = _dm.groups()
+            if 1 <= int(_m) <= 12 and 1 <= int(_d) <= 31:
+                _y = "20" + _y if len(_y) == 2 else _y
+                sv = f"{int(_d):02d}/{int(_m):02d}/{_y}"
         return sv if sv else None
 
     # Build label → key inverse map (case-insensitive, strip * and [Auto])
@@ -2495,9 +2507,9 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
           "voc_value_mgcc","inlet_emission_mgcc",
           "ms_gasohol_tt_vol_kl","hsd_tt_vol_kl",
           "ms_gasohol_tw_vol_kl","hsd_tw_vol_kl","vru_uptime_pct"]),
-        ("S5A-4 Audit 25-26",    "MI_AUDIT_2526",
+        ("S5A-4 M&I Audit 25-26", "MI_AUDIT_2526",
          ["audit_date","no_recommendations","no_pending","external_score"]),
-        ("S5A-5 Audit 26-27",    "MI_AUDIT_2627",
+        ("S5A-5 M&I Audit 26-27", "MI_AUDIT_2627",
          ["audit_carried_out","audit_date","no_recommendations",
           "no_pending","external_score"]),
         ("S5A-6 Tech. Audit",    "MI_TECH_AUDIT",
@@ -2509,7 +2521,7 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
          ["last_ut_date","last_hydrotest_date","last_dcvg_date",
           "last_lrut_date","other_testing"]),
         ("S5A-9 Ext. Pipeline",  "MI_EXT_PIPELINE",
-         ["pipeline_details","length_metres","product","size_inch",
+         ["pipeline_type","pipeline_details","length_metres","product","size_inch",
           "last_ut_date","last_hydrotest_date","last_dcvg_date",
           "last_lrut_date","other_testing"]),
         ("S5A-10 Tank Status",   "MI_TANK_STATUS",
@@ -2885,7 +2897,7 @@ _MI_TAB_HEADERS = {
     ],
     "MI_EXT_PIPELINE": [
         "user_id", "month_year", "na_flag",
-        "pipeline_details", "length_metres", "product", "size_inch",
+        "pipeline_type", "pipeline_details", "length_metres", "product", "size_inch",
         "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
         "last_lrut_date", "other_testing", "saved_at",
     ],
@@ -3103,7 +3115,7 @@ def _normalize_tm_date(val: str) -> str:
     return val
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_full_tank_master_excel(
     location_code: str | None = None,
     zone: str | None = None,

@@ -2290,6 +2290,70 @@ def show_review(user: dict, month_year: str, month_label: str):
                     + df_rc.to_html(index=False, escape=True, border=0, classes="mis-tbl"),
                     unsafe_allow_html=True,
                 )
+        elif sec_num == 5:
+            # ── S5A M&I MIS data (read-only summary for checker) ─────────────
+            st.markdown(
+                '<div class="sub-header" style="font-size:12px;padding:7px 16px;">'
+                '&#128220; &nbsp; S5A — Maintenance &amp; Inspection (M&amp;I) MIS</div>',
+                unsafe_allow_html=True,
+            )
+            _MI_REVIEW_TABS = [
+                ("MI_TANK_OUTAGE",    "S5A-1 Tank Outage",
+                 ["tank_no","outage_for","planned_start","planned_end","actual_start","actual_end","current_status"]),
+                ("MI_MAJOR_REPAIR",   "S5A-2 Major Repair",
+                 ["tank_no","nature_of_repair","revenue_capex","current_status","etc_date"]),
+                ("MI_VRU",            "S5A-3 VRU",
+                 ["vru_operational","date_not_operating","ms_vol_recovered_kl","vru_uptime_pct"]),
+                ("MI_AUDIT_2526",     "S5A-4 M&I Audit 25-26",
+                 ["audit_date","no_recommendations","no_pending","external_score"]),
+                ("MI_AUDIT_2627",     "S5A-5 M&I Audit 26-27",
+                 ["audit_carried_out","audit_date","no_recommendations","no_pending","external_score"]),
+                ("MI_TECH_AUDIT",     "S5A-6 Tech. Audit",
+                 ["audit_date","no_recommendations","no_pending","ref_no"]),
+                ("MI_EQUIP_BREAKDOWN","S5A-7 Equip. Breakdown",
+                 ["equipment_name","equipment_details","start_date","current_status"]),
+                ("MI_INT_PIPELINE",   "S5A-8 Int. Pipeline",
+                 ["last_ut_date","last_hydrotest_date","last_dcvg_date","last_lrut_date"]),
+                ("MI_EXT_PIPELINE",   "S5A-9 Ext. Pipeline",
+                 ["pipeline_type","pipeline_details","product","length_metres","last_ut_date"]),
+                ("MI_TANK_STATUS",    "S5A-10 Tank Status",
+                 ["tank_no","tank_status","cleaning_completed_date","inspection_date","painting_date"]),
+            ]
+            _any_mi = False
+            for _mi_key, _mi_label, _mi_cols in _MI_REVIEW_TABS:
+                _mi_rows = sheets.load_mi_data(_mi_key, maker_id, month_year)
+                if not _mi_rows:
+                    continue
+                _any_mi = True
+                if _mi_rows[0].get("na_flag") == "Y":
+                    st.markdown(
+                        f'<div class="sub-header" style="font-size:12px;padding:7px 16px;">'
+                        f'&#128203; &nbsp; {_mi_label} — Not Applicable</div>',
+                        unsafe_allow_html=True,
+                    )
+                    continue
+                # Filter columns that exist in the data
+                _avail_cols = [c for c in _mi_cols if any(c in r for r in _mi_rows)]
+                if not _avail_cols:
+                    _avail_cols = _mi_cols
+                _df_mi = pd.DataFrame(
+                    [{c: r.get(c, "") for c in _avail_cols} for r in _mi_rows]
+                )
+                # Prettify column names
+                _col_rename = {c: c.replace("_", " ").title() for c in _avail_cols}
+                _df_mi.rename(columns=_col_rename, inplace=True)
+                st.markdown(
+                    f'<div class="sub-header" style="font-size:12px;padding:7px 16px;">'
+                    f'&#128203; &nbsp; {_mi_label}</div>'
+                    + _df_mi.to_html(index=False, escape=True, border=0, classes="mis-tbl"),
+                    unsafe_allow_html=True,
+                )
+            if not _any_mi:
+                st.info(
+                    "S5A — M&I MIS data has not been submitted for this period. "
+                    "The Maker should complete the M&I MIS form (accessible via the "
+                    "'M&I MIS' button on the dashboard) before final submission."
+                )
         elif sec_num == 10:
             for tk in ("IRR_DETAILS", "LEGAL_CASES"):
                 tk_rows = sheets.load_detail_table(maker_id, month_year, tk)
@@ -2954,7 +3018,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
 
     if role == "Maker":
         # Build template bytes (cached in session to avoid regenerating on every rerun)
-        cache_key = f"_xlsx_v4_{user['userId']}_{month_year}"
+        cache_key = f"_xlsx_v5_{user['userId']}_{month_year}"
         if cache_key not in st.session_state:
             with st.spinner("Building template…"):
                 try:
@@ -3169,11 +3233,17 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                         mi_tab_key, user["userId"], month_year,
                                         mi_rows)
                                     mi_tabs_saved += 1
-                            # Invalidate M&I completion cache
+                            # Invalidate M&I completion cache and force-reload all tab states
                             if mi_tabs_saved:
                                 sheets.check_mi_complete.clear()
                                 st.session_state.pop(
                                     f"_mi_comp_{user['userId']}_{month_year}", None)
+                                # Clear per-tab loaded/rows/ctr/na flags so each tab
+                                # reloads fresh from Google Sheets on next visit
+                                for _tc in ("to","mr","vr","a25","a27","ta","eb","ip","ep","ts"):
+                                    for _sk in ("_loaded","_rows","_ctr","_na"):
+                                        st.session_state.pop(
+                                            f"mi_{_tc}_{user['userId']}_{month_year}{_sk}", None)
 
                             # ── Clear stale caches ───────────────────────
                             for s in range(1, 11):
@@ -3367,6 +3437,30 @@ def show_dashboard():
         return
 
     icon_map = {"NOT_STARTED":"⚪","IN_PROGRESS":"🔵","PENDING_REVIEW":"🟡","SUBMITTED":"✅","LOCKED":"🔒","REJECTED":"❌"}
+
+    # Smart default: prefer current calendar month if it has any activity,
+    # otherwise fall back to the latest month with activity (most recently touched).
+    # This prevents jumping to a prior incomplete month when current month is started.
+    if "sel_month" not in st.session_state:
+        _cur_key = sheets.month_key()   # today's month key e.g. "Jun-2026"
+        _cur_idx  = 0
+        _best_idx = 0     # last non-NOT_STARTED month (fallback)
+        _any_active = False
+        for _mi, _mo in enumerate(months):
+            if _mo["value"] == _cur_key:
+                _cur_idx = _mi
+            if _mo["status"] != "NOT_STARTED":
+                _best_idx = _mi
+                _any_active = True
+        # Priority: current month if it has activity, else latest active, else current month
+        _cur_status = months[_cur_idx]["status"] if months else "NOT_STARTED"
+        if _cur_status != "NOT_STARTED":
+            st.session_state["sel_month"] = _cur_idx          # current month is active → show it
+        elif _any_active:
+            st.session_state["sel_month"] = _best_idx         # latest prior active month
+        else:
+            st.session_state["sel_month"] = _cur_idx          # nothing active → default to today
+
     with col_mon:
         sel_idx = st.selectbox(
             "Month", range(len(months)),
@@ -6320,7 +6414,8 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
     sk_ctr    = f"mi_{T}_{uid}_{month_year}_ctr"
     sk_loaded = f"mi_{T}_{uid}_{month_year}_loaded"
 
-    DATE_FIELDS = ["last_ut_date", "last_hydrotest_date", "last_dcvg_date", "last_lrut_date"]
+    DATE_FIELDS    = ["last_ut_date", "last_hydrotest_date", "last_dcvg_date", "last_lrut_date"]
+    PIPE_TYPE_OPTS = ["UG", "AG"]
 
     if not st.session_state.get(sk_loaded):
         saved = sheets.load_mi_data("MI_EXT_PIPELINE", uid, month_year)
@@ -6335,6 +6430,10 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
             st.session_state[sk_ctr]  = len(saved)
             for rid, row in zip(ids, saved):
                 pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
+                pt_raw = row.get("pipeline_type", "UG")
+                st.session_state[f"{pfx}_pipeline_type"] = (
+                    pt_raw if pt_raw in PIPE_TYPE_OPTS else "UG"
+                )
                 st.session_state[f"{pfx}_pipeline_details"] = row.get("pipeline_details", "")
                 st.session_state[f"{pfx}_length_metres"]    = row.get("length_metres", "")
                 st.session_state[f"{pfx}_product"]          = row.get("product", "")
@@ -6364,6 +6463,12 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
             with dc:
                 if st.button("🗑", key=f"{pfx}_del", help="Remove this pipeline row"):
                     to_delete = rid
+
+            _pt_def = st.session_state.get(f"{pfx}_pipeline_type", "UG")
+            _pt_idx = PIPE_TYPE_OPTS.index(_pt_def) if _pt_def in PIPE_TYPE_OPTS else 0
+            st.selectbox("Pipeline Type *", PIPE_TYPE_OPTS, index=_pt_idx,
+                         key=f"{pfx}_pipeline_type",
+                         help="UG = Underground pipeline  /  AG = Above Ground pipeline")
 
             st.text_area("Pipeline Details *", key=f"{pfx}_pipeline_details", max_chars=256,
                          help="Describe the pipeline segment (route, from-to, purpose)")
@@ -6413,13 +6518,14 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
         for rid in st.session_state.get(sk_rows, []):
             pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
             _tbl.append({
+                "Type": st.session_state.get(f"{pfx}_pipeline_type", ""),
                 "Pipeline Details": (st.session_state.get(f"{pfx}_pipeline_details") or "")[:40],
                 "Product": st.session_state.get(f"{pfx}_product", ""),
                 "Length (m)": st.session_state.get(f"{pfx}_length_metres", ""),
                 "Size (in)": st.session_state.get(f"{pfx}_size_inch", ""),
                 "Last UT": _mi_fmt_date(st.session_state.get(f"{pfx}_last_ut_date")),
             })
-        _mi_summary_table(_tbl, ["Pipeline Details", "Product", "Length (m)", "Size (in)", "Last UT"])
+        _mi_summary_table(_tbl, ["Type", "Pipeline Details", "Product", "Length (m)", "Size (in)", "Last UT"])
 
         if st.button("➕ Add Pipeline Segment", key=f"mi_{T}_add_{uid}_{month_year}"):
             new_id = st.session_state.get(sk_ctr, 0)
@@ -6430,15 +6536,17 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
     if st.button("💾 Save External Pipeline Data", key=f"mi_{T}_save_{uid}_{month_year}",
                  type="primary"):
         if na_val:
-            rows_to_save = [{"na_flag": "Y", "pipeline_details": "NA", "length_metres": "NA",
-                             "product": "NA", "size_inch": "NA", "last_ut_date": "NA",
-                             "last_hydrotest_date": "NA", "last_dcvg_date": "NA",
-                             "last_lrut_date": "NA", "other_testing": "NA"}]
+            rows_to_save = [{"na_flag": "Y", "pipeline_type": "NA", "pipeline_details": "NA",
+                             "length_metres": "NA", "product": "NA", "size_inch": "NA",
+                             "last_ut_date": "NA", "last_hydrotest_date": "NA",
+                             "last_dcvg_date": "NA", "last_lrut_date": "NA",
+                             "other_testing": "NA"}]
         else:
             rows_to_save = []
             errors = []
             for i, rid in enumerate(st.session_state.get(sk_rows, [])):
                 pfx  = f"mi_{T}_{uid}_{month_year}_{rid}"
+                pt   = (st.session_state.get(f"{pfx}_pipeline_type") or "UG").strip()
                 pd_  = (st.session_state.get(f"{pfx}_pipeline_details") or "").strip()
                 lm   = (st.session_state.get(f"{pfx}_length_metres") or "").strip()
                 prd  = (st.session_state.get(f"{pfx}_product") or "").strip()
@@ -6452,8 +6560,8 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
                 else:
                     rows_to_save.append({
                         "row_no": str(i + 1), "na_flag": "N",
-                        "pipeline_details": pd_, "length_metres": lm,
-                        "product": prd, "size_inch": sz, **dates,
+                        "pipeline_type": pt, "pipeline_details": pd_,
+                        "length_metres": lm, "product": prd, "size_inch": sz, **dates,
                         "other_testing": (st.session_state.get(f"{pfx}_other_testing") or "").strip(),
                     })
             if errors:
@@ -6757,6 +6865,8 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
         if res.get("ok"):
             st.success(f"✅ Tank Status saved — {res['rows']} tank(s).")
             st.session_state.pop(sk_loaded, None)
+            sheets.check_mi_complete.clear()
+            sheets.get_full_tank_master_excel.clear()   # force fresh download next time
         else:
             st.error(f"Save failed: {res.get('msg', '')}")
 
@@ -6859,16 +6969,7 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
         _tab_done = []
         for tk in _MI_TAB_KEYS:
             rows = sheets.load_mi_data(tk, uid, month_year)
-            if tk == "MI_TANK_STATUS":
-                # Tank Status: complete only when every tank in Tank Master has a row
-                expected = len([t for t in tank_list if t != "Other Tanks"])
-                saved_tanks = [r.get("tank_no") for r in rows if r.get("na_flag") != "Y"]
-                # NA flag on first row means user marked as N/A → count as complete
-                is_na = bool(rows and rows[0].get("na_flag") == "Y")
-                _tab_done.append(is_na or (expected > 0 and len(saved_tanks) >= expected)
-                                 or (expected == 0 and bool(rows)))
-            else:
-                _tab_done.append(bool(rows))
+            _tab_done.append(bool(rows))
         st.session_state[_comp_cache_key] = _tab_done
     tab_done = st.session_state[_comp_cache_key]
 
@@ -6896,8 +6997,8 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
         f"{_badge(0)} 🛢️ Tank Outage",
         f"{_badge(1)} 🔧 Major Repair",
         f"{_badge(2)} 💨 VRU",
-        f"{_badge(3)} 📋 Audit 25-26",
-        f"{_badge(4)} 📋 Audit 26-27",
+        f"{_badge(3)} 📋 M&I Audit 25-26",
+        f"{_badge(4)} 📋 M&I Audit 26-27",
     ]
     tabs1 = st.tabs(r1_labels)
     with tabs1[0]:
@@ -6949,7 +7050,7 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
             st.caption("All 10 M&I tabs are complete. You can generate the M&I MIS Report.")
         else:
             pending_tabs = [
-                ["Tank Outage","Major Repair","VRU","Audit 25-26","Audit 26-27",
+                ["Tank Outage","Major Repair","VRU","M&I Audit 25-26","M&I Audit 26-27",
                  "Tech. Audit","Equip. Bkdn","Int. Pipeline","Ext. Pipeline","Tank Status"][i]
                 for i, d in enumerate(tab_done) if not d
             ]
