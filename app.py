@@ -1787,18 +1787,21 @@ def _inject_field_enhancements(fields: list):
       }}
     }});
 
-    /* Update selectbox borders: green when value is chosen, red when placeholder */
+    /* Update selectbox borders: green when value chosen, red when placeholder shown.
+       Baseweb CSS-in-JS gives selected-value span a class containing "singleValue"
+       and placeholder span a class containing "placeholder". */
     pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
       var wrapper=sb.querySelector('[data-baseweb="select"] > div:first-child');
       if(!wrapper)return;
-      /* Baseweb renders [data-id="value"] inside the select when a value is selected */
-      var hasVal=!!sb.querySelector('[data-baseweb="select"] [data-id="value"]');
-      if(hasVal){{
+      var hasSingleVal=!!sb.querySelector('[class*="singleValue"]');
+      var hasPlaceholder=!!sb.querySelector('[class*="placeholder"]');
+      /* Green: a real value is displayed (singleValue present, no placeholder) */
+      if(hasSingleVal&&!hasPlaceholder){{
         wrapper.style.setProperty('border-color','#2e7d32','important');
         wrapper.style.setProperty('box-shadow','0 0 0 2px rgba(46,125,50,0.1)','important');
       }} else {{
         wrapper.style.setProperty('border-color','#c62828','important');
-        wrapper.style.removeProperty('box-shadow');
+        wrapper.style.setProperty('box-shadow','none','important');
       }}
     }});
   }}
@@ -1898,7 +1901,8 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
 
     /* ── Disabled inputs (locked/checker view): force dark bold text ── */
     [data-testid="stNumberInput"] input:disabled,
-    [data-testid="stTextInput"]   input:disabled {
+    [data-testid="stTextInput"]   input:disabled,
+    [data-testid="stDateInput"]   input:disabled {
         color: #0d0d1a !important;
         -webkit-text-fill-color: #0d0d1a !important;
         font-weight: 700 !important;
