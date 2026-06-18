@@ -1896,6 +1896,27 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         display: none !important;
     }
 
+    /* ── Disabled inputs (locked/checker view): force dark bold text ── */
+    [data-testid="stNumberInput"] input:disabled,
+    [data-testid="stTextInput"]   input:disabled {
+        color: #0d0d1a !important;
+        -webkit-text-fill-color: #0d0d1a !important;
+        font-weight: 700 !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stTextArea"] textarea:disabled {
+        color: #0d0d1a !important;
+        -webkit-text-fill-color: #0d0d1a !important;
+        font-weight: 600 !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSelectbox"] [aria-disabled="true"] [data-id="value"],
+    [data-testid="stSelectbox"] [aria-disabled="true"] span {
+        color: #0d0d1a !important;
+        font-weight: 700 !important;
+        opacity: 1 !important;
+    }
+
     /* ── Tooltip icon slightly larger ── */
     [data-testid="stTooltipIcon"] svg {
         width: 15px !important; height: 15px !important;
@@ -2250,22 +2271,23 @@ def _render_section_readonly(sec_num: int, draft: dict):
                 i += 1
             elif f["type"] == "textarea":
                 raw  = draft.get(f["key"], "")
-                disp = str(raw).replace("\n", "<br>") if raw not in (None, "") else "<em style='color:#ccc;'>—</em>"
+                disp = str(raw).replace("\n", "<br>") if raw not in (None, "") else "<em style='color:#aaa;'>—</em>"
                 rows_html += (
                     f'<tr><td colspan="4" style="padding:8px 14px;">'
-                    f'<span style="font-size:11px;font-weight:600;color:#555;">{f["label"]}</span><br>'
-                    f'<span style="font-size:13px;color:#1a1a2e;">{disp}</span>'
+                    f'<span style="font-size:11px;font-weight:600;color:#334;">{f["label"]}</span><br>'
+                    f'<span style="font-size:13px;font-weight:600;color:#0d0d1a;">{disp}</span>'
                     f'</td></tr>'
                 )
                 i += 1
             else:
                 def _cell(fld: dict) -> str:
                     raw  = draft.get(fld["key"], "")
-                    disp = str(raw) if raw not in (None, "") else "<em style='color:#ccc;'>—</em>"
+                    disp = str(raw) if raw not in (None, "") else "<em style='color:#aaa;'>—</em>"
                     return (
                         f'<td style="padding:8px 14px;width:25%;font-size:11px;font-weight:600;'
-                        f'color:#555;border-right:1px solid #f0f0f0;">{fld["label"]}</td>'
-                        f'<td style="padding:8px 14px;width:25%;font-size:13px;color:#1a1a2e;">{disp}</td>'
+                        f'color:#334;border-right:1px solid #eef0f5;vertical-align:top;">{fld["label"]}</td>'
+                        f'<td style="padding:8px 14px;width:25%;font-size:13px;font-weight:700;'
+                        f'color:#0d0d1a;">{disp}</td>'
                     )
 
                 row_h = "<tr style='border-bottom:1px solid #f5f5f5;'>" + _cell(f)
