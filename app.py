@@ -378,6 +378,14 @@ def _do_save(user_id: str, month_year: str, section_num: int,
             field_data[f["key"]] = val
         elif f.get("req") and not f.get("auto"):
             all_req_filled = False
+    # Cross-field: complied recommendations cannot exceed total
+    if section_num == 1 and all_req_filled:
+        try:
+            if int(field_data.get("f161") or 0) > int(field_data.get("f160") or 0):
+                all_req_filled = False
+        except (ValueError, TypeError):
+            pass
+
     return sheets.save_draft(user_id, month_year, section_num,
                              field_data, mark_complete=all_req_filled)
 
@@ -2046,6 +2054,21 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
 
     # Inject focus-tooltip + red/green border JS (runs in hidden iframe → parent)
     _inject_field_enhancements(fields)
+
+    # ── Cross-field validation warnings ───────────────────────────────────────
+    if section_num == 1 and not is_locked:
+        try:
+            _total    = all_vals.get("f160")
+            _complied = all_vals.get("f161")
+            if _total is not None and _complied is not None:
+                if int(_complied) > int(_total):
+                    st.error(
+                        "⛔  **Complied Recommendations cannot exceed Total Recommendations.**  "
+                        "Correct the value of 'No. of Complied Recommendations' before saving — "
+                        f"currently **{_complied}** complied out of **{_total}** total."
+                    )
+        except (ValueError, TypeError):
+            pass
 
     # ── Detail tables for S3 and S10 ─────────────────────────────────────────
     detail_dfs: dict = {}
