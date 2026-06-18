@@ -1297,8 +1297,6 @@ def show_login():
                 st.session_state.page = (
                     "change_password" if result["isFirstLogin"] else "dashboard"
                 )
-                if not result["isFirstLogin"]:
-                    st.session_state["just_logged_in"] = True
                 st.rerun()
             else:
                 st.error(result["msg"])
@@ -1893,7 +1891,7 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
                     st.session_state.selected_section = num
                     st.rerun()
             if num == 5 and user.get("locType", "HPCL") == "HPCL":
-                if st.button("↳ S5A  M&I MIS", key="btn_mi_mis_sec", use_container_width=True,
+                if st.button("↳ S5A - M&I MIS", key="btn_mi_mis_sec", use_container_width=True,
                              help="Maintenance & Inspection detailed MIS entry"):
                     st.session_state.selected_section = "mi_mis"
                     st.rerun()
@@ -3320,44 +3318,6 @@ def _section_grid():
                 </div>""", unsafe_allow_html=True)
 
 
-def _inject_login_loading_overlay():
-    """Full-page overlay shown immediately after login to mask dashboard cold-load."""
-    st.markdown("""
-    <div id="ll-overlay" style="
-        position:fixed;top:0;left:0;width:100vw;height:100vh;
-        background:linear-gradient(135deg,#001a6e 0%,#002b9c 55%,#003DC0 100%);
-        z-index:99999;display:flex;flex-direction:column;
-        align-items:center;justify-content:center;
-        transition:opacity 0.6s ease;">
-      <div style="text-align:center;">
-        <div style="color:white;font-size:28px;font-weight:800;letter-spacing:1px;
-                    text-shadow:0 2px 12px rgba(0,0,0,0.3);">&#127981; HPCL SOD e-MIS</div>
-        <div style="color:#C8D7FF;font-size:13px;margin-top:8px;letter-spacing:0.5px;">
-          Securing your session&hellip;</div>
-        <div style="margin-top:28px;">
-          <div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.25);
-                      border-top-color:white;border-radius:50%;
-                      animation:ll-spin 0.8s linear infinite;display:inline-block;"></div>
-        </div>
-        <div style="color:#8FB4FF;font-size:11px;margin-top:16px;">Loading dashboard&hellip;</div>
-      </div>
-    </div>
-    <style>
-    @keyframes ll-spin { to { transform: rotate(360deg); } }
-    </style>
-    <script>
-    (function() {
-        function fadeOut() {
-            var el = document.getElementById('ll-overlay');
-            if (!el) return;
-            el.style.opacity = '0';
-            setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 650);
-        }
-        setTimeout(fadeOut, 1400);
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-
 
 def show_dashboard():
     _dashboard_css()
@@ -3399,7 +3359,7 @@ def show_dashboard():
                 st.session_state.selected_section = num
                 st.rerun()
             if num == 5 and user.get("locType", "HPCL") == "HPCL":
-                if st.button("↳ S5A  M&I MIS", key="btn_mi_mis_dash", use_container_width=True,
+                if st.button("↳ S5A - M&I MIS", key="btn_mi_mis_dash", use_container_width=True,
                              help="Maintenance & Inspection detailed MIS entry"):
                     st.session_state.selected_section = "mi_mis"
                     st.rerun()
@@ -7166,8 +7126,6 @@ def main():
     elif page == "change_password":
         show_change_password()
     elif page == "dashboard":
-        if st.session_state.pop("just_logged_in", False):
-            _inject_login_loading_overlay()
         if role == "Zone":
             sec = st.session_state.get("selected_section")
             if sec == "chatbot":
