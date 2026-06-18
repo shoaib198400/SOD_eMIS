@@ -689,7 +689,7 @@ def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HP
                         str(draft.get(k) or "") == str(v) for k, v in sw.items()
                     ):
                         continue
-                    if not draft.get(f["key"]):
+                    if draft.get(f["key"]) in (None, ""):
                         all_filled = False
                         break
                 if all_filled:

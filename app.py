@@ -1772,7 +1772,7 @@ def _inject_field_enhancements(fields: list):
       }}
     }});
 
-    /* Selectboxes — use combobox input so getLabel() traversal works */
+    /* Selectboxes — tooltip + green/red border */
     pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
       if(sb.dataset.mis)return; sb.dataset.mis='1';
       function tipEl(){{
@@ -1784,6 +1784,21 @@ def _inject_field_enhancements(fields: list):
       if(inp&&inp!==sb){{
         inp.addEventListener('focus',function(){{ showTip(inp); }});
         inp.addEventListener('blur', function(){{ hideTip(); }});
+      }}
+    }});
+
+    /* Update selectbox borders: green when value is chosen, red when placeholder */
+    pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
+      var wrapper=sb.querySelector('[data-baseweb="select"] > div:first-child');
+      if(!wrapper)return;
+      /* Baseweb renders [data-id="value"] inside the select when a value is selected */
+      var hasVal=!!sb.querySelector('[data-baseweb="select"] [data-id="value"]');
+      if(hasVal){{
+        wrapper.style.setProperty('border-color','#2e7d32','important');
+        wrapper.style.setProperty('box-shadow','0 0 0 2px rgba(46,125,50,0.1)','important');
+      }} else {{
+        wrapper.style.setProperty('border-color','#c62828','important');
+        wrapper.style.removeProperty('box-shadow');
       }}
     }});
   }}
@@ -1869,11 +1884,16 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         display: none !important;
     }
 
-    /* ── Selectbox base-web border ── */
+    /* ── Selectbox base-web border (red default; JS upgrades to green when value present) ── */
     [data-testid="stSelectbox"] [data-baseweb="select"] > div:first-child {
         border: 1.5px solid #c62828 !important;
         border-radius: 8px !important;
-        transition: border-color 0.25s ease !important;
+        transition: border-color 0.25s ease, box-shadow 0.25s ease !important;
+    }
+
+    /* ── Hide Streamlit's "Press Enter to apply" hint — Tab/blur already commits value ── */
+    [data-testid="InputInstructions"] {
+        display: none !important;
     }
 
     /* ── Tooltip icon slightly larger ── */
