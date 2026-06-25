@@ -641,6 +641,7 @@ def get_available_months(user_id: str) -> dict:
         return {"ok": False, "msg": str(e), "months": []}
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HPCL") -> dict:
     try:
         user_id = str(user_id or "").strip()
@@ -828,6 +829,8 @@ def save_draft(user_id: str, month_year: str,
         audit_log(user_id, f"SaveDraft {tag}",
                   f"month={month_year} secs={secs_str} pct={pct}")
 
+        # Invalidate dashboard cache so this user's next dashboard load is fresh
+        get_dashboard_data.clear()
         return {"ok": True, "pct": pct, "secs_done": sorted(secs_done)}
 
     except Exception as e:
