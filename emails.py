@@ -358,3 +358,203 @@ def send_all_reminders(month_year: str,
         "errors": errors,
         "msg": msg,
     }
+
+
+# ── Location credential email map ─────────────────────────────────────────────
+# Source: SOD Location In-charges.msg (Outlook contact group, extracted 2026-06)
+# Keys = Plant Code (str), Values = Location In-charge email
+
+LOCATION_EMAIL_MAP = {
+    "1128": "mtra.tmlic@hpcl.in",
+    "1146": "meer.irdic@hpcl.in",
+    "1155": "roork.irdic@hpcl.in",
+    "1157": "brly.irdic@hpcl.in",
+    "1164": "bhatinda.irdic@hpcl.in",
+    "1216": "baha.tmlic@hpcl.in",
+    "1221": "del.tmlic@hpcl.in",
+    "1233": "bhtp.irdic@hpcl.in",
+    "1242": "jaip.tmlic@hpcl.in",
+    "1254": "jal.irdic@hpcl.in",
+    "1256": "jammu.irdic@hpcl.in",
+    "1259": "srin.irdic@hpcl.in",
+    "1265": "leh.irdic@hpcl.in",
+    "1278": "jodh.irdic@hpcl.in",
+    "1281": "ajmer.tmlic@hpcl.in",
+    "1292": "lko.irdic@hpcl.in",
+    "1305": "kanp.tmlic@hpcl.in",
+    "1308": "strgnj.irdic@hpcl.in",
+    "1313": "btlpr.irdic@hpcl.in",
+    "1319": "mgsr.irdic@hpcl.in",
+    "1334": "rwri.irdic@hpcl.in",
+    "1341": "hisr.tmlic@hpcl.in",
+    "1385": "plnpr.tmlic@hpcl.in",
+    "1396": "manm.irdic@hpcl.in",
+    "1397": "manm.irdic@hpcl.in",
+    "1410": "vado.irdic@hpcl.in",
+    "1412": "hazira.irdic@hpcl.in",
+    "1424": "jaba.irdic@hpcl.in",
+    "1435": "gwal.irdic@hpcl.in",
+    "1436": "sagar.irdic@hpcl.in",
+    "1449": "vadi.top@hpcl.in",
+    "1457": "indo.irdic@hpcl.in",
+    "1485": "akol.irdic@hpcl.in",
+    "1504": "miraj.irdic@hpcl.in",
+    "1509": "slpr.irdic@hpcl.in",
+    "1527": "rpr.irdic@hpcl.in",
+    "1528": "rpr.irdic@hpcl.in",
+    "1546": "mund.tmlic@hpcl.in",
+    "1551": "vasco.tmlic@hpcl.in",
+    "1552": "vasco.tmlic@hpcl.in",
+    "1554": "mum.tmlic@hpcl.in",
+    "1583": "kandla.tmlic@hpcl.in",
+    "1584": "loni.tmlic@hpcl.in",
+    "1585": "mahul.tmlic@hpcl.in",
+    "1588": "vashi.tmlic@hpcl.in",
+    "1629": "prdp.tmlic@hpcl.in",
+    "1630": "prdp.tmlic@hpcl.in",
+    "1636": "blsr.irdic@hpcl.in",
+    "1644": "kolk.tmlic@hpcl.in",
+    "1649": "hald.tmlic@hpcl.in",
+    "1650": "hald.tmlic@hpcl.in",
+    "1652": "mour.top@hpcl.in",
+    "1656": "drgp.irdic@hpcl.in",
+    "1672": "bngn.top@hpcl.in",
+    "1677": "guwa.irdic@hpcl.in",
+    "1689": "numa.top@hpcl.in",
+    "1693": "silg.top@hpcl.in",
+    "1711": "brni.irdic@hpcl.in",
+    "1712": "brni.irdic@hpcl.in",
+    "1723": "patna.irdic@hpcl.in",
+    "1742": "bokr.irdic@hpcl.in",
+    "1775": "blr.tmlic@hpcl.in",
+    "1777": "hassn.tmlic@hpcl.in",
+    "1797": "gulb.irdic@hpcl.in",
+    "1800": "hubl.irdic@hpcl.in",
+    "1831": "coch.tmlic@hpcl.in",
+    "1845": "irum.tmlic@hpcl.in",
+    "1856": "coim.irdic@hpcl.in",
+    "1871": "madu.irdic@hpcl.in",
+    "1879": "ten.irdic@hpcl.in",
+    "1892": "kozh.irdic@hpcl.in",
+    "1895": "mang.tmlic@hpcl.in",
+    "1915": "rmgdm.irdic@hpcl.in",
+    "1919": "secu.tmlic@hpcl.in",
+    "1937": "sury.tmlic@hpcl.in",
+    "1940": "kada.irdic@hpcl.in",
+    "1953": "rjmdy.tmlic@hpcl.in",
+    "1973": "cass.tmlic@hpcl.in",
+    "1979": "vija.tmlic@hpcl.in",
+    "1991": "chen.tmlic@hpcl.in",
+    "1992": "vskp.tmlic@hpcl.in",
+    "1999": "dhmpri.tmlic@hpcl.in",
+    "3562": "vashi.bo.tmlic@hpcl.in",
+    "3693": "kaknd.tmlic@hpcl.in",
+    "3718": "vskp.bo.tmlic@hpcl.in",
+    "3833": "coch.tmlic@hpcl.in",
+}
+
+
+def build_credentials_email_html(
+    loc_name: str,
+    loc_code: str,
+    password: str,
+    app_url: str = "https://hpcl-sod-mis.streamlit.app",
+) -> str:
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
+        "<body style='font-family:Arial,sans-serif;margin:0;padding:0;background:#f4f6fb;'>"
+        "<div style='max-width:600px;margin:30px auto;background:white;border-radius:14px;"
+        "box-shadow:0 2px 12px rgba(0,0,0,0.10);overflow:hidden;'>"
+        "<div style='background:#002B8F;padding:22px 30px;'>"
+        "<div style='color:white;font-size:20px;font-weight:700;letter-spacing:0.5px;'>"
+        "HPCL SOD &mdash; MIS Portal</div>"
+        "<div style='color:#a8bfe8;font-size:12px;margin-top:4px;'>"
+        "Supply, Operations &amp; Distribution &nbsp;&middot;&nbsp; Login Credentials</div>"
+        "</div>"
+        "<div style='padding:28px 30px;'>"
+        f"<p style='font-size:15px;color:#333;margin-top:0;'>Dear <strong>{loc_name} Team</strong>,</p>"
+        "<p style='font-size:14px;color:#444;line-height:1.8;'>Your login credentials for the "
+        "<strong>HPCL SOD MIS Portal</strong> are shared below. "
+        "Please log in and change your password after the first login.</p>"
+        "<table style='width:100%;border-collapse:collapse;margin:18px 0;'>"
+        "<tr style='background:#002B8F;'>"
+        "<th style='padding:10px 16px;color:white;text-align:left;font-size:13px;width:40%;'>Detail</th>"
+        "<th style='padding:10px 16px;color:white;text-align:left;font-size:13px;'>Value</th></tr>"
+        "<tr style='background:#f5f7ff;'>"
+        "<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Portal URL</td>"
+        f"<td style='padding:10px 16px;font-size:14px;'><a href='{app_url}' style='color:#0033A0;'>{app_url}</a></td></tr>"
+        "<tr style='background:#ffffff;'>"
+        "<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>User ID</td>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:700;letter-spacing:1px;'>{loc_code}</td></tr>"
+        "<tr style='background:#f5f7ff;'>"
+        "<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Password</td>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:700;letter-spacing:1px;'>{password}</td></tr>"
+        "</table>"
+        "<div style='background:#fff8e1;border-left:4px solid #f59e0b;border-radius:6px;"
+        "padding:12px 16px;margin:16px 0;font-size:13px;color:#7c5c00;'>"
+        "<strong>&#9888; Important:</strong> Please change your password after the first login "
+        "using the <em>Change Password</em> option in the sidebar. Keep your credentials confidential.</div>"
+        "<p style='font-size:14px;color:#333;line-height:1.8;margin-top:16px;'>"
+        "The MIS data submission for your location is due by the <strong>15th of every month</strong>"
+        " (for the previous month). For any issues, raise a support ticket from within the portal"
+        f" or contact <a href='mailto:{SENDER_EMAIL}' style='color:#0033A0;'>{SENDER_EMAIL}</a>.</p>"
+        "<p style='font-size:12px;color:#aaa;border-top:1px solid #eee;"
+        "padding-top:16px;margin-top:24px;line-height:1.7;'>"
+        "This is an auto-generated message from the HPCL SOD MIS Portal.<br>"
+        f"Sent by: {SENDER_EMAIL} &nbsp;&middot;&nbsp; Supply, Operations &amp; Distribution HQO<br>"
+        "Please do not reply directly to this email.</p>"
+        "</div></div></body></html>"
+    )
+
+
+def send_credential_email(
+    to_email: str,
+    loc_name: str,
+    loc_code: str,
+    password: str,
+    app_url: str = "https://hpcl-sod-mis.streamlit.app",
+    cc_email: str = "",
+    test_mode: bool = False,
+    test_email: str = "",
+) -> dict:
+    """Send login credentials to a location via Outlook COM."""
+    try:
+        import pythoncom
+        import win32com.client as win32
+    except ImportError:
+        return {"ok": False, "msg": "pywin32 not installed. Run: pip install pywin32"}
+
+    try:
+        html_body  = build_credentials_email_html(loc_name, loc_code, password, app_url)
+        pfx        = "[TEST] " if test_mode else ""
+        subject    = f"{pfx}HPCL SOD MIS Portal — Login Credentials | {loc_name}"
+        actual_to  = (test_email or SENDER_EMAIL) if test_mode else to_email
+        actual_cc  = "" if test_mode else cc_email
+        actual_bcc = "" if test_mode else SENDER_EMAIL  # BCC sender for audit trail
+
+        pythoncom.CoInitialize()
+        try:
+            outlook   = win32.Dispatch("Outlook.Application")
+            mail_item = outlook.CreateItem(0)
+            mail_item.To       = actual_to
+            if actual_cc:
+                mail_item.CC   = actual_cc
+            if actual_bcc:
+                mail_item.BCC  = actual_bcc
+            mail_item.Subject  = subject
+            mail_item.HTMLBody = html_body
+            try:
+                mail_item.Send()
+                return {"ok": True, "mode": "sent", "to": actual_to}
+            except Exception as send_exc:
+                try:
+                    mail_item.Save()
+                    return {"ok": True, "mode": "draft",
+                            "msg": f"Saved as Outlook draft (send error: {send_exc})",
+                            "to": actual_to}
+                except Exception as draft_exc:
+                    return {"ok": False, "msg": f"Send and draft both failed: {draft_exc}"}
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as exc:
+        return {"ok": False, "msg": f"Outlook error: {exc}"}

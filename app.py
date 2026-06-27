@@ -3158,7 +3158,8 @@ def _quick_links(user: dict, month_year: str, data: dict):
                 try:
                     draft_flat = sheets.load_draft(user["userId"], month_year)
                     st.session_state[cache_key] = sheets.generate_mis_template(
-                        user["userId"], month_year, user, draft_flat
+                        user["userId"], month_year, user, draft_flat,
+                        loc_type=user.get("locType", "HPCL"),
                     )
                 except Exception as ex:
                     st.session_state[cache_key] = None
@@ -3824,6 +3825,92 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                         st.info(f"All {skipped} locations already have accounts.")
                 else:
                     st.error(f"Sync failed: {res['msg']}")
+
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
+                'padding:0 4px 3px;">Delete all MIS data for specific location '
+                'codes (use before launch to wipe test data).</div>',
+                unsafe_allow_html=True)
+            _reset_codes = st.text_input(
+                "Location codes to reset (comma-separated)",
+                key="admin_reset_codes",
+                placeholder="e.g. 1424, 1457, 1588",
+            )
+            if st.button("🗑️  Reset Location Data", key="btn_reset_loc_data",
+                         use_container_width=True):
+                codes = [c.strip() for c in _reset_codes.split(",") if c.strip()]
+                if not codes:
+                    st.warning("Enter at least one location code.")
+                else:
+                    msgs = []
+                    for code in codes:
+                        with st.spinner(f"Resetting {code}…"):
+                            _r = sheets.reset_location_data(code)
+                        msgs.append(f"**{code}**: {_r['msg']}" if _r["ok"]
+                                    else f"**{code}**: ❌ {_r['msg']}")
+                    st.success("\n\n".join(msgs))
+
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
+                'padding:0 4px 3px;">Email MIS Portal login credentials to all '
+                'Location In-charges via Outlook. Sends User ID + Password to each location.</div>',
+                unsafe_allow_html=True)
+            if st.button("📧  Load Locations for Email", key="btn_cred_load",
+                         use_container_width=True):
+                st.session_state["_cred_accounts"] = sheets.get_all_maker_credentials()
+                st.rerun()
+            if st.session_state.get("_cred_accounts"):
+                import emails as _emails_mod
+                _all_accounts = st.session_state["_cred_accounts"]
+                _zone_opts    = ["All Zones"] + sorted({a["zone"] for a in _all_accounts if a.get("zone")})
+                _cred_zone    = st.selectbox("Filter by Zone", _zone_opts, key="admin_cred_zone")
+                _accounts     = _all_accounts if _cred_zone == "All Zones" else [
+                    a for a in _all_accounts if a["zone"] == _cred_zone
+                ]
+                _email_map = _emails_mod.LOCATION_EMAIL_MAP
+                _with_email = [(a, _email_map.get(a["userId"], ""))
+                               for a in _accounts]
+                _ok_count = sum(1 for _, e in _with_email if e)
+                _miss = [a["userId"] for a, e in _with_email if not e]
+                st.caption(
+                    f"{_ok_count} / {len(_accounts)} locations have email addresses. "
+                    + (f"No email: {', '.join(_miss[:5])}{'…' if len(_miss)>5 else ''}" if _miss else "")
+                )
+                _test_mode = st.toggle("Test mode (send only to me)", value=True,
+                                       key="cred_test_mode")
+                if st.button("📨  Send Credentials", key="btn_send_creds",
+                             use_container_width=True, type="primary"):
+                    import emails as _em
+                    sent, failed, skipped = 0, 0, 0
+                    _errs = []
+                    ok_email, _ = _em.email_configured()
+                    if not ok_email:
+                        st.error("Outlook not available. Open Microsoft Outlook and retry.")
+                    else:
+                        for acct, to_email in _with_email:
+                            if not to_email:
+                                skipped += 1
+                                continue
+                            _res = _em.send_credential_email(
+                                to_email=to_email,
+                                loc_name=acct["locName"],
+                                loc_code=acct["userId"],
+                                password=acct["password"],
+                                test_mode=_test_mode,
+                                test_email=user.get("userId", ""),
+                            )
+                            if _res["ok"]:
+                                sent += 1
+                            else:
+                                failed += 1
+                                _errs.append(f"{acct['userId']}: {_res['msg']}")
+                        st.success(
+                            f"Sent: {sent} | Failed: {failed} | Skipped (no email): {skipped}"
+                        )
+                        if _errs:
+                            st.error("\n".join(_errs[:5]))
 
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":

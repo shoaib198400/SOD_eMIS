@@ -313,6 +313,54 @@ def get_loc_type(loc_code: str) -> str:
     return ltype
 
 
+def reset_location_data(loc_code: str) -> dict:
+    """Delete ALL MIS data for a location (pre-launch data cleanup).
+
+    Clears: MIS_DRAFT, SubmissionStatus, Railway_Claims, IRR_Details,
+    Legal_Cases, MI_TANK_OUTAGE, MI_MAJOR_REPAIR, MI_VRU, MI_AUDIT_2526,
+    MI_AUDIT_2627, MI_TECH_AUDIT, MI_EQUIP_BREAKDOWN, MI_INT_PIPELINE,
+    MI_EXT_PIPELINE, MI_TANK_STATUS.
+    """
+    uid = str(loc_code).strip()
+    tabs_to_clear = [
+        "MIS_DRAFT", "SUBMISSION_STATUS",
+        "RAILWAY_CLAIMS", "IRR_DETAILS", "LEGAL_CASES",
+        "MI_TANK_OUTAGE", "MI_MAJOR_REPAIR", "MI_VRU",
+        "MI_AUDIT_2526", "MI_AUDIT_2627", "MI_TECH_AUDIT",
+        "MI_EQUIP_BREAKDOWN", "MI_INT_PIPELINE", "MI_EXT_PIPELINE",
+        "MI_TANK_STATUS",
+    ]
+    deleted_total = 0
+    errors = []
+    try:
+        for tab_key in tabs_to_clear:
+            tab_name = TABS.get(tab_key)
+            if not tab_name:
+                continue
+            try:
+                ws = _ws(tab_name)
+                rows_to_del = []
+                for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                    if row and str(row[0]).strip() == uid:
+                        rows_to_del.append(i)
+                for row_idx in reversed(rows_to_del):
+                    ws.delete_rows(row_idx)
+                deleted_total += len(rows_to_del)
+            except Exception as tab_err:
+                errors.append(f"{tab_name}: {tab_err}")
+        # Also clear the cached dashboard data
+        try:
+            get_dashboard_data.clear()
+        except Exception:
+            pass
+        msg = f"Deleted {deleted_total} row(s) for location {uid}."
+        if errors:
+            msg += "  Warnings: " + "; ".join(errors)
+        return {"ok": True, "deleted": deleted_total, "msg": msg}
+    except Exception as exc:
+        return {"ok": False, "msg": str(exc)}
+
+
 def _resolve_loc_info(loc_code: str, stored_name: str) -> tuple:
     """Return (loc_name, loc_type) for a location code."""
     code_up = loc_code.strip().upper()
@@ -1326,6 +1374,26 @@ def get_zone_admin_accounts() -> list:
         return []
 
 
+def get_all_maker_credentials() -> list:
+    """Return list of {userId, locName, zone, password} for all Maker accounts."""
+    try:
+        ws   = _ws(TABS["USER_ACCESS"])
+        rows = ws.get_all_values()
+        out  = []
+        for r in rows[1:]:
+            r = (r + [""] * 8)[:8]
+            if r[4].strip() == "Maker" and r[0].strip():
+                out.append({
+                    "userId":  r[0].strip(),
+                    "locName": r[1].strip(),
+                    "zone":    r[2].strip(),
+                    "password": r[3].strip(),
+                })
+        return out
+    except Exception:
+        return []
+
+
 def upsert_zone_account(zone_name: str, new_user_id: str, new_password: str) -> dict:
     """Create or update a Zone account matched by zone_name.
 
@@ -1493,6 +1561,7 @@ def generate_mis_template(
     month_year: str,
     user_info: dict,
     existing_draft: dict | None = None,
+    loc_type: str = "HPCL",
 ) -> bytes:
     """Build a validated, protected .xlsx workbook with 4 sheets.
 
@@ -1545,6 +1614,7 @@ def generate_mis_template(
     LOCK_FILL  = _fill("F0F4FF")   # soft blue — locked identity
     HINT_FILL  = _fill("F8F9FA")
     WHITE_FILL = _fill("FFFFFF")
+    NA_FILL    = _fill("D0D0D0")   # grey — N/A for this location type
 
     W_FONT  = _font(bold=True,  color="FFFFFF", size=9)
     AU_FONT = _font(italic=True, color="1a7a3c", size=9)
@@ -1567,6 +1637,10 @@ def generate_mis_template(
         if bdr:   c.border     = _border
         c.protection = LOCKED_CELL if lock else UNLOCKED_CELL
         return c
+
+    # ── Location-type exclusions ─────────────────────────────────────────
+    from form_defs import get_excluded_fields as _get_excl
+    _excl_keys = _get_excl(loc_type)   # frozenset of field keys not applicable
 
     # ── Collect all fields in section order ──────────────────────────────
     all_fields = []
@@ -1620,12 +1694,16 @@ def generate_mis_template(
 
     for ci, (sn, f) in enumerate(all_fields, N_ID + 1):
         is_auto = bool(f.get("auto"))
+        is_na   = f["key"] in _excl_keys
         lbl = f["label"] + (" *" if f.get("req") and not is_auto else "")
         if is_auto:
             lbl += "  [Auto-Calc]"
+        if is_na:
+            lbl = f["label"] + "  [N/A — Not Applicable]"
         _cell(ws1, 2, ci, lbl,
-              font=AU_FONT if is_auto else W_FONT,
-              fill=AUTO_FILL if is_auto else BLUE_FILL,
+              font=_font(italic=True, color="666666", size=9) if is_na
+                   else (AU_FONT if is_auto else W_FONT),
+              fill=NA_FILL if is_na else (AUTO_FILL if is_auto else BLUE_FILL),
               align=CENTER)
         ws1.column_dimensions[get_column_letter(ci)].width = 22
     ws1.row_dimensions[2].height = 60
@@ -1636,6 +1714,10 @@ def generate_mis_template(
               font=HT_FONT, fill=HINT_FILL, align=CENTER)
 
     for ci, (sn, f) in enumerate(all_fields, N_ID + 1):
+        if f["key"] in _excl_keys:
+            _cell(ws1, 3, ci, f"Not applicable for {loc_type} locations — leave blank",
+                  font=HT_FONT, fill=NA_FILL, align=CENTER)
+            continue
         parts = [f.get("hint", "")]
         if f.get("min") is not None:
             parts.append(f"Min: {f['min']}")
@@ -1661,8 +1743,15 @@ def generate_mis_template(
 
     for ci, (sn, f) in enumerate(all_fields, N_ID + 1):
         is_auto   = bool(f.get("auto"))
+        is_na     = f["key"] in _excl_keys
         raw       = draft.get(f["key"])
         cell_ref  = f"{get_column_letter(ci)}4"
+
+        if is_na:
+            _cell(ws1, 4, ci, "N/A",
+                  font=_font(italic=True, color="888888", size=10),
+                  fill=NA_FILL, align=CENTER, lock=True)
+            continue
 
         if is_auto:
             formula = _to_xl_formula(f["auto"])
