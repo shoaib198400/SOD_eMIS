@@ -587,3 +587,55 @@ def send_credential_email(
             pythoncom.CoUninitialize()
     except Exception as exc:
         return {"ok": False, "msg": f"Outlook error: {exc}"}
+
+
+# ── Forgot Password / Help Request Email ──────────────────────────────────────
+ADMIN_EMAIL = "shoaibrehman@hpcl.in"
+
+
+def send_forgot_password_email(user_id: str, issue_text: str) -> dict:
+    """Send a password reset / help request email directly to the Admin."""
+    if platform.system() != "Windows":
+        return {"ok": False, "msg": "Email not available on cloud deployment."}
+    try:
+        import win32com.client as win32
+        import pythoncom
+
+        subject = f"SOD e-MIS: Password Reset Request — User ID {user_id}"
+        html_body = (
+            "<html><body style='font-family:Arial,sans-serif;font-size:14px;color:#222;'>"
+            "<div style='max-width:520px;margin:20px auto;border:1px solid #ddd;"
+            "border-radius:8px;padding:24px;background:#f9f9f9;'>"
+            "<div style='background:#001F5E;color:#fff;padding:12px 18px;"
+            "border-radius:6px 6px 0 0;margin:-24px -24px 20px;'>"
+            "<b>HPCL SOD e-MIS &mdash; Password Reset Request</b></div>"
+            f"<p><b>User ID:</b> {user_id}</p>"
+            f"<p><b>Message from user:</b><br>"
+            f"<span style='background:#fff;border:1px solid #eee;display:block;"
+            f"padding:10px;border-radius:4px;margin-top:4px;'>{issue_text}</span></p>"
+            "<hr style='margin:20px 0;border:none;border-top:1px solid #ddd;'>"
+            "<p style='font-size:12px;color:#888;'>Sent automatically from SOD e-MIS login page.</p>"
+            "</div></body></html>"
+        )
+
+        pythoncom.CoInitialize()
+        try:
+            outlook   = win32.Dispatch("Outlook.Application")
+            mail_item = outlook.CreateItem(0)
+            mail_item.To       = ADMIN_EMAIL
+            mail_item.Subject  = subject
+            mail_item.HTMLBody = html_body
+            try:
+                mail_item.Send()
+                return {"ok": True}
+            except Exception as send_exc:
+                try:
+                    mail_item.Save()
+                    return {"ok": True, "mode": "draft",
+                            "msg": f"Saved as Outlook draft: {send_exc}"}
+                except Exception as draft_exc:
+                    return {"ok": False, "msg": f"Send and draft both failed: {draft_exc}"}
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as exc:
+        return {"ok": False, "msg": f"Outlook error: {exc}"}

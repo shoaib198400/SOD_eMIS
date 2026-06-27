@@ -1302,30 +1302,34 @@ def show_login():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── CSS: style the Forgot Password submit button as a text link ──────────
+    # ── CSS: style Forgot Password submit btn as red italic text ─────────────
     st.markdown("""
     <style>
-    div[data-testid="stForm"] div[data-testid="stFormSubmitButton"]:not(:last-of-type) button {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
+    div[data-testid="stForm"]
+        div[data-testid="column"]:nth-child(2)
+        div[data-testid="stFormSubmitButton"] button {
+        all: unset !important;
         color: #E53935 !important;
-        font-size: 12px !important;
+        font-style: italic !important;
+        font-size: 13px !important;
         font-weight: 700 !important;
-        padding: 4px 0 !important;
-        min-height: unset !important;
+        cursor: pointer !important;
+        display: block !important;
         width: 100% !important;
         text-align: right !important;
+        padding: 6px 2px !important;
+        line-height: 1.4 !important;
     }
-    div[data-testid="stForm"] div[data-testid="stFormSubmitButton"]:not(:last-of-type) button:hover {
-        background: transparent !important;
-        color: #b71c1c !important;
+    div[data-testid="stForm"]
+        div[data-testid="column"]:nth-child(2)
+        div[data-testid="stFormSubmitButton"] button:hover {
         text-decoration: underline !important;
+        color: #b71c1c !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Login form — restored to original layout ──────────────────────────────
+    # ── Login form — original layout with Forgot Password as text link ────────
     with st.form("login_form", clear_on_submit=False):
         loc_code = st.text_input(
             "User ID",
@@ -1347,35 +1351,33 @@ def show_login():
         st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
         login_btn = st.form_submit_button("🔑  Login", use_container_width=True, type="primary")
 
-    # ── Forgot Password panel (appears below the card on click) ──────────────
+    # ── Forgot Password inline form (no card/tile, plain and minimal) ─────────
     if st.session_state.get("_fp_open"):
         with st.form("forgot_pw_form", clear_on_submit=True):
-            st.markdown(
-                '<div style="font-size:13px;font-weight:700;color:#001F5E;margin-bottom:4px;">'
-                '🔐 Request Password Reset</div>'
-                '<div style="font-size:12px;color:#555;margin-bottom:8px;">'
-                'Enter your User ID. The Admin will reset your password and contact you.</div>',
-                unsafe_allow_html=True,
-            )
             fp_code = st.text_input(
-                "User ID", placeholder="e.g. 1424", max_chars=20,
-                label_visibility="collapsed",
+                "User ID", placeholder="Your User ID (e.g. 1424)", max_chars=20,
             )
-            fp_submit = st.form_submit_button("📨  Submit Reset Request", use_container_width=True)
+            fp_issue = st.text_area(
+                "Describe your issue",
+                placeholder="e.g. I forgot my password and need it reset.",
+                max_chars=400,
+                height=80,
+            )
+            fp_submit = st.form_submit_button("📨  Submit", use_container_width=True)
         if fp_submit:
             if not fp_code.strip():
                 st.error("Please enter your User ID.")
+            elif not fp_issue.strip():
+                st.error("Please describe your issue.")
             else:
-                with st.spinner("Submitting…"):
-                    _fp_res = sheets.request_password_reset(fp_code.strip())
-                if _fp_res["ok"]:
-                    st.success(
-                        f"✅ Request submitted for **{fp_code.strip()}**.  "
-                        "Admin will reset your password shortly."
-                    )
+                with st.spinner("Sending…"):
+                    import emails as _em
+                    _fp_res = _em.send_forgot_password_email(fp_code.strip(), fp_issue.strip())
+                if _fp_res.get("ok"):
+                    st.success("✅ Your request has been sent to the Admin. You will be contacted shortly.")
                     st.session_state["_fp_open"] = False
                 else:
-                    st.error(_fp_res["msg"])
+                    st.error(f"Could not send email: {_fp_res.get('msg')}")
 
     if fgt_btn:
         st.session_state["_fp_open"] = not st.session_state.get("_fp_open", False)
