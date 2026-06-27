@@ -50,6 +50,15 @@ ZONE_EMAIL_MAP = {
 
 # ── Outlook availability check ────────────────────────────────────────────────
 
+def _get_outlook():
+    """Connect to a running Outlook instance; start one if not running."""
+    import win32com.client as _w
+    try:
+        return _w.GetActiveObject("Outlook.Application")
+    except Exception:
+        return _w.Dispatch("Outlook.Application")
+
+
 def email_configured() -> tuple:
     """Return (True, '') if Outlook COM is reachable, else (False, reason)."""
     if platform.system() != "Windows":
@@ -61,10 +70,9 @@ def email_configured() -> tuple:
         return False, "pywin32 not installed — run: pip install pywin32"
     try:
         import pythoncom
-        import win32com.client
         pythoncom.CoInitialize()
         try:
-            win32com.client.Dispatch("Outlook.Application")
+            _get_outlook()
         finally:
             pythoncom.CoUninitialize()
         return True, ""
@@ -245,7 +253,7 @@ def send_zone_reminder(zone_name: str, month_year: str,
 
         pythoncom.CoInitialize()
         try:
-            outlook   = win32.Dispatch("Outlook.Application")
+            outlook   = _get_outlook()
             mail_item = outlook.CreateItem(0)   # 0 = olMailItem
 
             mail_item.To       = to_str
@@ -443,6 +451,7 @@ LOCATION_EMAIL_MAP = {
     "1723": "patna.irdic@hpcl.in",
     "1742": "bokr.irdic@hpcl.in",
     "1743": "bokr.irdic@hpcl.in",          # JASIDIH TOP-IOC
+    "1747": "bokr.irdic@hpcl.in",
     "1775": "blr.tmlic@hpcl.in",
     "1777": "hassn.tmlic@hpcl.in",
     "1797": "gulb.irdic@hpcl.in",
@@ -563,7 +572,7 @@ def send_credential_email(
 
         pythoncom.CoInitialize()
         try:
-            outlook   = win32.Dispatch("Outlook.Application")
+            outlook   = _get_outlook()
             mail_item = outlook.CreateItem(0)
             mail_item.To       = actual_to
             if actual_cc:
@@ -620,7 +629,7 @@ def send_forgot_password_email(user_id: str, issue_text: str) -> dict:
 
         pythoncom.CoInitialize()
         try:
-            outlook   = win32.Dispatch("Outlook.Application")
+            outlook   = _get_outlook()
             mail_item = outlook.CreateItem(0)
             mail_item.To       = ADMIN_EMAIL
             mail_item.Subject  = subject
