@@ -513,7 +513,7 @@ def build_credentials_email_html(
     loc_name: str,
     loc_code: str,
     password: str,
-    app_url: str = "https://hpcl-sod-mis.streamlit.app",
+    app_url: str = "https://sodemis.streamlit.app/",
 ) -> str:
     return (
         "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
@@ -567,7 +567,7 @@ def send_credential_email(
     loc_name: str,
     loc_code: str,
     password: str,
-    app_url: str = "https://hpcl-sod-mis.streamlit.app",
+    app_url: str = "https://sodemis.streamlit.app/",
     cc_email: str = "",
     test_mode: bool = False,
     test_email: str = "",
