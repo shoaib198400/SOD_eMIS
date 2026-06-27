@@ -239,12 +239,6 @@ def _build_email_html(zone_name: str, month_year: str,
         Please log in to the HPCL SOD MIS Portal and complete your submission.
       </p>
 
-      <p style="font-size:12px;color:#aaa;border-top:1px solid #eee;
-                padding-top:16px;margin-top:24px;line-height:1.7;">
-        This is an auto-generated message from the HPCL SOD MIS Portal.<br>
-        Sent by: {SENDER_EMAIL} &nbsp;&middot;&nbsp; Supply, Operations &amp; Distribution HQO<br>
-        Please do not reply directly to this email.
-      </p>
     </div>
   </div>
 </body>
@@ -553,11 +547,6 @@ def build_credentials_email_html(
         "The MIS data submission for your location is due by the <strong>5th of every month</strong>"
         " (for the previous month). For any issues, raise a support ticket from within the portal"
         f" or contact <a href='mailto:{SENDER_EMAIL}' style='color:#0033A0;'>{SENDER_EMAIL}</a>.</p>"
-        "<p style='font-size:12px;color:#aaa;border-top:1px solid #eee;"
-        "padding-top:16px;margin-top:24px;line-height:1.7;'>"
-        "This is an auto-generated message from the HPCL SOD MIS Portal.<br>"
-        f"Sent by: {SENDER_EMAIL} &nbsp;&middot;&nbsp; Supply, Operations &amp; Distribution HQO<br>"
-        "Please do not reply directly to this email.</p>"
         "</div></div></body></html>"
     )
 
