@@ -3967,146 +3967,15 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                     st.success("\n\n".join(msgs))
 
             st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
-            if st.button("📋  Review Email Recipients", key="btn_email_review",
-                         use_container_width=True):
+            st.markdown(
+                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
+                'padding:0 4px 3px;">Send login credentials to all Location In-charges '
+                'and Zone ODs via Outlook. Review recipients before sending.</div>',
+                unsafe_allow_html=True)
+            if st.button("📧  Mail Trigger", key="btn_email_review",
+                         use_container_width=True, type="primary"):
                 st.session_state["selected_section"] = "email_review"
                 st.rerun()
-
-            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
-            st.markdown(
-                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
-                'padding:0 4px 3px;">Email MIS Portal login credentials to all '
-                'Location In-charges via Outlook. Sends User ID + Password to each location.</div>',
-                unsafe_allow_html=True)
-            if st.button("📧  Load Locations for Email", key="btn_cred_load",
-                         use_container_width=True):
-                st.session_state["_cred_accounts"] = sheets.get_all_maker_credentials()
-                st.rerun()
-            if st.session_state.get("_cred_accounts"):
-                import emails as _emails_mod
-                _all_accounts = st.session_state["_cred_accounts"]
-                _zone_opts    = ["All Zones"] + sorted({a["zone"] for a in _all_accounts if a.get("zone")})
-                _cred_zone    = st.selectbox("Filter by Zone", _zone_opts, key="admin_cred_zone")
-                _accounts     = _all_accounts if _cred_zone == "All Zones" else [
-                    a for a in _all_accounts if a["zone"] == _cred_zone
-                ]
-                _email_map = _emails_mod.LOCATION_EMAIL_MAP
-                _with_email = [(a, _email_map.get(a["userId"], ""))
-                               for a in _accounts]
-                _ok_count = sum(1 for _, e in _with_email if e)
-                _miss = [a["userId"] for a, e in _with_email if not e]
-                st.caption(
-                    f"{_ok_count} / {len(_accounts)} locations have email addresses. "
-                    + (f"No email: {', '.join(_miss[:5])}{'…' if len(_miss)>5 else ''}" if _miss else "")
-                )
-                _test_mode = st.toggle("🔒 Test mode — send only to me", value=True,
-                                       key="cred_test_mode")
-                if _test_mode:
-                    st.caption(f"Test emails → shoaibrehman@hpcl.in")
-                else:
-                    st.markdown(
-                        '<div style="background:#fdecea;border-left:3px solid #e53935;'
-                        'padding:5px 8px;border-radius:4px;font-size:10px;color:#b71c1c;'
-                        'font-weight:700;margin:2px 0;">⚠️ LIVE MODE — will send to real recipients</div>',
-                        unsafe_allow_html=True,
-                    )
-                if st.button("📨  Send Credentials", key="btn_send_creds",
-                             use_container_width=True, type="primary"):
-                    if not _test_mode:
-                        if not st.session_state.get("_loc_cred_confirmed"):
-                            st.session_state["_loc_cred_confirmed"] = True
-                            st.warning("⚠️ This will send LIVE emails to all real recipients. Click Send again to confirm.")
-                            st.stop()
-                    st.session_state.pop("_loc_cred_confirmed", None)
-                    import emails as _em
-                    sent, failed, skipped = 0, 0, 0
-                    _errs = []
-                    ok_email, _em_reason = _em.email_configured()
-                    if not ok_email:
-                        st.error(f"Outlook not accessible: {_em_reason}\n\nMake sure Microsoft Outlook is open and signed in, then retry.")
-                    else:
-                        for acct, to_email in _with_email:
-                            if not to_email:
-                                skipped += 1
-                                continue
-                            _res = _em.send_credential_email(
-                                to_email=to_email,
-                                loc_name=acct["locName"],
-                                loc_code=acct["userId"],
-                                password=acct["password"],
-                                test_mode=_test_mode,
-                                test_email=_em.SENDER_EMAIL,
-                            )
-                            if _res["ok"]:
-                                sent += 1
-                            else:
-                                failed += 1
-                                _errs.append(f"{acct['userId']}: {_res['msg']}")
-                        st.success(
-                            f"Sent: {sent} | Failed: {failed} | Skipped (no email): {skipped}"
-                        )
-                        if _errs:
-                            st.error("\n".join(_errs[:5]))
-
-            # ── Zone credential emails ────────────────────────────────────
-            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
-            st.markdown(
-                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
-                'padding:0 4px 3px;">Send MIS Portal credentials to Zone ODs '
-                '(BLRMIS, BHOMIS etc. → personal emails).</div>',
-                unsafe_allow_html=True)
-            _z_test_mode = st.toggle("🔒 Test mode — send only to me", value=True,
-                                     key="zone_cred_test_mode")
-            if _z_test_mode:
-                st.caption("Test emails → shoaibrehman@hpcl.in")
-            else:
-                st.markdown(
-                    '<div style="background:#fdecea;border-left:3px solid #e53935;'
-                    'padding:5px 8px;border-radius:4px;font-size:10px;color:#b71c1c;'
-                    'font-weight:700;margin:2px 0;">⚠️ LIVE MODE — will send to real Zone ODs</div>',
-                    unsafe_allow_html=True,
-                )
-            if st.button("🏢  Send Zone Credentials", key="btn_send_zone_creds",
-                         use_container_width=True):
-                if not _z_test_mode:
-                    if not st.session_state.get("_zone_cred_confirmed"):
-                        st.session_state["_zone_cred_confirmed"] = True
-                        st.warning("⚠️ This will send LIVE emails to all 16 Zone ODs. Click Send again to confirm.")
-                        st.stop()
-                st.session_state.pop("_zone_cred_confirmed", None)
-                import emails as _em2
-                ok_e, _em2_reason = _em2.email_configured()
-                if not ok_e:
-                    st.error(f"Outlook not accessible: {_em2_reason}\n\nOpen Microsoft Outlook and retry.")
-                else:
-                    _zone_accts = sheets.get_all_zone_credentials()
-                    _z_cmap     = _em2.ZONE_CREDENTIAL_MAP
-                    zs, zf, zsk = 0, 0, 0
-                    _z_errs = []
-                    for acct in _zone_accts:
-                        zone_cfg = _z_cmap.get(acct["zone"], {})
-                        to_email = zone_cfg.get("to", "")
-                        cc_email = zone_cfg.get("cc", "") if not _z_test_mode else ""
-                        if not to_email:
-                            zsk += 1
-                            continue
-                        _res = _em2.send_credential_email(
-                            to_email=to_email,
-                            loc_name=acct["zone"],
-                            loc_code=acct["userId"],
-                            password=acct["password"],
-                            cc_email=cc_email,
-                            test_mode=_z_test_mode,
-                            test_email=_em2.SENDER_EMAIL,
-                        )
-                        if _res["ok"]:
-                            zs += 1
-                        else:
-                            zf += 1
-                            _z_errs.append(f"{acct['userId']}: {_res['msg']}")
-                    st.success(f"Zone emails — Sent: {zs} | Failed: {zf} | Skipped: {zsk}")
-                    if _z_errs:
-                        st.error("\n".join(_z_errs[:5]))
 
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
@@ -4799,115 +4668,296 @@ def show_analytics_page(user: dict):
 
 
 def show_email_review(user: dict):
-    """Admin-only full-page review of all email recipient mappings."""
+    """Admin-only full-page email management: review, preview and send credentials."""
     import emails as _em
+    import pandas as _pd
 
-    st.markdown(
-        '<div style="font-size:22px;font-weight:800;color:#001F5E;margin-bottom:4px;">'
-        '📧 Email Recipient Review</div>'
-        '<div style="font-size:13px;color:#666;margin-bottom:18px;">'
-        'Review all recipient mappings and sender details before sending credentials. '
-        'Verify test mode is ON before sending.</div>',
-        unsafe_allow_html=True,
-    )
-    if st.button("← Back to Dashboard", key="btn_er_back"):
-        st.session_state.pop("selected_section", None)
-        st.rerun()
+    # ── Page header + back button ─────────────────────────────────────────────
+    c_title, c_back = st.columns([5, 1])
+    with c_title:
+        st.markdown(
+            '<div style="font-size:24px;font-weight:800;color:#001F5E;margin-bottom:2px;">'
+            '📧 Mail Trigger — Credential Emails</div>'
+            '<div style="font-size:13px;color:#666;margin-bottom:6px;">'
+            f'Sender: <b>{_em.SENDER_EMAIL}</b> &nbsp;·&nbsp; '
+            f'Test mode routes all emails to: <b>{_em.SENDER_EMAIL}</b></div>',
+            unsafe_allow_html=True,
+        )
+    with c_back:
+        if st.button("← Dashboard", key="btn_er_back", use_container_width=True):
+            st.session_state.pop("selected_section", None)
+            st.rerun()
 
     st.markdown("---")
 
-    # ── Sender info ───────────────────────────────────────────────────────────
-    st.markdown(
-        f'<div style="background:#e8f5e9;border-left:4px solid #388e3c;padding:10px 16px;'
-        f'border-radius:6px;margin-bottom:16px;font-size:13px;">'
-        f'<b>Sender (From):</b> {_em.SENDER_EMAIL} &nbsp;·&nbsp; '
-        f'<b>Test mode routes to:</b> {_em.SENDER_EMAIL}</div>',
-        unsafe_allow_html=True,
-    )
+    # ── Load all account data once ────────────────────────────────────────────
+    try:
+        all_accts = sheets.get_all_maker_credentials()
+    except Exception as exc:
+        st.error(f"Could not load location accounts: {exc}")
+        all_accts = []
+    try:
+        zone_accts = sheets.get_all_zone_credentials()
+    except Exception as exc:
+        st.error(f"Could not load zone accounts: {exc}")
+        zone_accts = []
 
-    tab_loc, tab_zone = st.tabs(["📍 Location Recipients (111)", "🏢 Zone OD Recipients (16)"])
+    em_map = _em.LOCATION_EMAIL_MAP
+    loc_rows = []
+    for a in sorted(all_accts, key=lambda x: x.get("zone", "") + x.get("userId", "")):
+        email = em_map.get(a["userId"], "")
+        loc_rows.append({
+            "Zone":     a.get("zone", ""),
+            "Code":     a["userId"],
+            "Location": a.get("locName", ""),
+            "Email":    email or "— NO EMAIL —",
+            "Password": a.get("password", ""),
+            "_has_email": bool(email),
+        })
+    df_loc = _pd.DataFrame(loc_rows) if loc_rows else _pd.DataFrame(
+        columns=["Zone", "Code", "Location", "Email", "Password", "_has_email"])
 
-    # ── Location tab ──────────────────────────────────────────────────────────
+    zone_rows_data = []
+    for a in zone_accts:
+        cfg = _em.ZONE_CREDENTIAL_MAP.get(a.get("zone", ""), {})
+        zone_rows_data.append({
+            "Zone":     a.get("zone", ""),
+            "User ID":  a.get("userId", ""),
+            "Password": a.get("password", ""),
+            "To Email": cfg.get("to", "— MISSING —"),
+            "CC":       cfg.get("cc", ""),
+            "_has_email": bool(cfg.get("to")),
+        })
+    df_zone = _pd.DataFrame(zone_rows_data) if zone_rows_data else _pd.DataFrame(
+        columns=["Zone", "User ID", "Password", "To Email", "CC", "_has_email"])
+
+    # ── KPI strip ─────────────────────────────────────────────────────────────
+    loc_ok  = df_loc["_has_email"].sum()  if not df_loc.empty  else 0
+    loc_tot = len(df_loc)
+    zone_ok = df_zone["_has_email"].sum() if not df_zone.empty else 0
+    zone_tot = len(df_zone)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Locations — with email", f"{loc_ok} / {loc_tot}")
+    k2.metric("Locations — no email (skip)", loc_tot - loc_ok)
+    k3.metric("Zones — with email", f"{zone_ok} / {zone_tot}")
+    k4.metric("Zones — no email (skip)", zone_tot - zone_ok)
+
+    st.markdown("---")
+
+    # ── Tabs ─────────────────────────────────────────────────────────────────
+    tab_loc, tab_zone, tab_prev = st.tabs([
+        "📍 Location Credentials", "🏢 Zone OD Credentials", "👁️ Email Preview"
+    ])
+
+    # ══ Tab 1 — Location credentials ═════════════════════════════════════════
     with tab_loc:
-        st.caption(
-            "These are the email addresses that will receive credential emails "
-            "for each plant. Locations without email are skipped automatically."
-        )
-        try:
-            all_accts = sheets.get_all_maker_credentials()
-        except Exception as exc:
-            st.error(f"Could not load accounts: {exc}")
-            all_accts = []
+        col_tbl, col_ctrl = st.columns([3, 1])
 
-        em_map = _em.LOCATION_EMAIL_MAP
-        rows = []
-        for a in sorted(all_accts, key=lambda x: x.get("zone", "") + x.get("userId", "")):
-            email = em_map.get(a["userId"], "")
-            rows.append({
-                "Zone":      a.get("zone", ""),
-                "Code":      a["userId"],
-                "Location":  a.get("locName", ""),
-                "Email":     email if email else "— NO EMAIL —",
-                "Status":    "✅" if email else "❌",
-            })
+        with col_tbl:
+            st.markdown("##### Recipient List — All Locations")
+            _zone_opts = ["All Zones"] + sorted(df_loc["Zone"].unique().tolist())
+            _sel_zone  = st.selectbox("Filter by Zone", _zone_opts, key="er_loc_zone")
+            df_view = df_loc if _sel_zone == "All Zones" else df_loc[df_loc["Zone"] == _sel_zone]
 
-        import pandas as _pd
-        df = _pd.DataFrame(rows)
-        no_email = df[df["Status"] == "❌"]
-        with_email = df[df["Status"] == "✅"]
+            missing = df_view[~df_view["_has_email"]]["Code"].tolist()
+            if missing:
+                st.warning(f"No email for: {', '.join(missing)} — will be skipped.")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Locations", len(df))
-        col2.metric("With Email", len(with_email))
-        col3.metric("No Email (skipped)", len(no_email))
+            st.dataframe(
+                df_view[["Zone", "Code", "Location", "Email"]].assign(
+                    Status=df_view["_has_email"].map({True: "✅", False: "❌"})
+                ),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "Status": st.column_config.TextColumn("", width="small"),
+                    "Code":   st.column_config.TextColumn("Code", width="small"),
+                },
+            )
 
-        if not no_email.empty:
-            st.warning(f"These {len(no_email)} locations have no email and will be skipped: "
-                       + ", ".join(no_email["Code"].tolist()))
+        with col_ctrl:
+            st.markdown("##### Send Controls")
+            _loc_test = st.toggle("🔒 Test mode", value=True, key="er_loc_test")
+            if _loc_test:
+                st.success(f"✅ Test: email → {_em.SENDER_EMAIL}")
+            else:
+                st.error("⚠️ LIVE MODE\nWill send to real location ICs")
 
-        st.dataframe(
-            df[["Zone", "Code", "Location", "Email", "Status"]],
-            use_container_width=True, hide_index=True,
-            column_config={
-                "Status": st.column_config.TextColumn("", width="small"),
-                "Code":   st.column_config.TextColumn("Code", width="small"),
-            },
-        )
+            _with_email_view = [
+                (r, r["Email"]) for _, r in df_view.iterrows() if r["_has_email"]
+            ]
+            st.caption(f"{len(_with_email_view)} emails will be sent from {len(df_view)} selected.")
 
-    # ── Zone tab ──────────────────────────────────────────────────────────────
+            if st.button("📨 Send Location Credentials", key="btn_er_send_loc",
+                         use_container_width=True, type="primary"):
+                if not _loc_test and not st.session_state.get("_er_loc_confirmed"):
+                    st.session_state["_er_loc_confirmed"] = True
+                    st.warning("⚠️ LIVE send to real recipients. Click again to confirm.")
+                    st.stop()
+                st.session_state.pop("_er_loc_confirmed", None)
+                ok_e, reason = _em.email_configured()
+                if not ok_e:
+                    st.error(f"Outlook not accessible: {reason}\nOpen Outlook and retry.")
+                else:
+                    sent, failed, skipped = 0, 0, 0
+                    _errs = []
+                    _bar = st.progress(0, text="Sending…")
+                    total = len(_with_email_view)
+                    for i, (row, to_email) in enumerate(_with_email_view):
+                        _res = _em.send_credential_email(
+                            to_email=to_email,
+                            loc_name=row["Location"],
+                            loc_code=row["Code"],
+                            password=row["Password"],
+                            test_mode=_loc_test,
+                            test_email=_em.SENDER_EMAIL,
+                        )
+                        if _res["ok"]:
+                            sent += 1
+                        else:
+                            failed += 1
+                            _errs.append(f"{row['Code']}: {_res['msg']}")
+                        _bar.progress((i + 1) / max(total, 1),
+                                      text=f"Sent {i+1}/{total}…")
+                    _bar.empty()
+                    st.success(f"✅ Sent: {sent}  |  ❌ Failed: {failed}  |  ⏭ Skipped: {skipped}")
+                    if _errs:
+                        st.error("\n".join(_errs[:8]))
+
+    # ══ Tab 2 — Zone OD credentials ══════════════════════════════════════════
     with tab_zone:
-        st.caption(
-            "These are the Zone OD email addresses that will receive zone "
-            "credential emails (BLRMIS, BHOMIS etc.)."
-        )
-        zone_rows = []
-        for zone_name, cfg in sorted(_em.ZONE_CREDENTIAL_MAP.items()):
-            zone_rows.append({
-                "Zone":    zone_name,
-                "To":      cfg.get("to", "— MISSING —"),
-                "CC":      cfg.get("cc", ""),
-                "Status":  "✅" if cfg.get("to") else "❌",
-            })
-        df_z = _pd.DataFrame(zone_rows)
-        st.dataframe(
-            df_z[["Zone", "To", "CC", "Status"]],
-            use_container_width=True, hide_index=True,
-            column_config={
-                "Status": st.column_config.TextColumn("", width="small"),
-            },
-        )
+        col_ztbl, col_zctrl = st.columns([3, 1])
 
-    st.markdown("---")
-    st.markdown(
-        '<div style="background:#fff3e0;border-left:4px solid #f57c00;padding:10px 16px;'
-        'border-radius:6px;font-size:12px;color:#7c4c00;">'
-        '<b>⚠️ Before sending live credentials:</b><br>'
-        '1. Run in <b>Test mode</b> first — one email goes to <b>shoaibrehman@hpcl.in</b>.<br>'
-        '2. Verify the email looks correct (content, User ID, Password).<br>'
-        '3. Toggle <b>Test mode OFF</b> only when ready. A confirmation click is required.<br>'
-        '4. Location credentials and Zone credentials each have their <b>own independent test toggle</b>.</div>',
-        unsafe_allow_html=True,
-    )
+        with col_ztbl:
+            st.markdown("##### Recipient List — Zone ODs (16 Zones)")
+            if df_zone.empty:
+                st.info("No zone accounts found.")
+            else:
+                miss_z = df_zone[~df_zone["_has_email"]]["Zone"].tolist()
+                if miss_z:
+                    st.warning(f"No email configured for zones: {', '.join(miss_z)}")
+                st.dataframe(
+                    df_zone[["Zone", "User ID", "To Email", "CC"]].assign(
+                        Status=df_zone["_has_email"].map({True: "✅", False: "❌"})
+                    ),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Status": st.column_config.TextColumn("", width="small"),
+                    },
+                )
+
+        with col_zctrl:
+            st.markdown("##### Send Controls")
+            _zone_test = st.toggle("🔒 Test mode", value=True, key="er_zone_test")
+            if _zone_test:
+                st.success(f"✅ Test: email → {_em.SENDER_EMAIL}")
+            else:
+                st.error("⚠️ LIVE MODE\nWill send to real Zone ODs")
+
+            _zone_sendable = df_zone[df_zone["_has_email"]] if not df_zone.empty else df_zone
+            st.caption(f"{len(_zone_sendable)} zone emails will be sent.")
+
+            if st.button("🏢 Send Zone Credentials", key="btn_er_send_zone",
+                         use_container_width=True, type="primary"):
+                if not _zone_test and not st.session_state.get("_er_zone_confirmed"):
+                    st.session_state["_er_zone_confirmed"] = True
+                    st.warning("⚠️ LIVE send to all 16 Zone ODs. Click again to confirm.")
+                    st.stop()
+                st.session_state.pop("_er_zone_confirmed", None)
+                ok_e2, reason2 = _em.email_configured()
+                if not ok_e2:
+                    st.error(f"Outlook not accessible: {reason2}\nOpen Outlook and retry.")
+                else:
+                    zs, zf, zsk = 0, 0, 0
+                    _z_errs = []
+                    for acct in zone_accts:
+                        cfg = _em.ZONE_CREDENTIAL_MAP.get(acct.get("zone", ""), {})
+                        to_email = cfg.get("to", "")
+                        cc_email = "" if _zone_test else cfg.get("cc", "")
+                        if not to_email:
+                            zsk += 1
+                            continue
+                        _res = _em.send_credential_email(
+                            to_email=to_email,
+                            loc_name=acct.get("zone", ""),
+                            loc_code=acct.get("userId", ""),
+                            password=acct.get("password", ""),
+                            cc_email=cc_email,
+                            test_mode=_zone_test,
+                            test_email=_em.SENDER_EMAIL,
+                        )
+                        if _res["ok"]:
+                            zs += 1
+                        else:
+                            zf += 1
+                            _z_errs.append(f"{acct.get('zone')}: {_res['msg']}")
+                    st.success(f"✅ Sent: {zs}  |  ❌ Failed: {zf}  |  ⏭ Skipped: {zsk}")
+                    if _z_errs:
+                        st.error("\n".join(_z_errs[:8]))
+
+    # ══ Tab 3 — Email Preview ═════════════════════════════════════════════════
+    with tab_prev:
+        st.markdown("##### Preview: What the recipient will see")
+        st.caption("Select any location or zone to preview the exact email that will be sent.")
+
+        p_col1, p_col2 = st.columns([1, 2])
+        with p_col1:
+            prev_type = st.radio("Preview type", ["Location", "Zone"], horizontal=True,
+                                 key="er_prev_type")
+            if prev_type == "Location":
+                loc_options = {f"{r['Code']} — {r['Location']}": r
+                               for _, r in df_loc.iterrows() if r["_has_email"]}
+                if loc_options:
+                    sel_loc_key = st.selectbox("Select location", list(loc_options.keys()),
+                                               key="er_prev_loc")
+                    prev_row = loc_options[sel_loc_key]
+                    prev_to      = prev_row["Email"]
+                    prev_name    = prev_row["Location"]
+                    prev_code    = prev_row["Code"]
+                    prev_pass    = prev_row["Password"]
+                    prev_subject = f"HPCL SOD MIS Portal — Login Credentials | {prev_name}"
+                    prev_html    = _em.build_credentials_email_html(
+                        prev_name, prev_code, prev_pass
+                    )
+                else:
+                    st.info("No locations with email to preview.")
+                    prev_html = ""
+                    prev_to = prev_subject = ""
+            else:
+                zone_options = {r["Zone"]: r for _, r in df_zone.iterrows() if r["_has_email"]}
+                if zone_options:
+                    sel_zone_key = st.selectbox("Select zone", list(zone_options.keys()),
+                                                key="er_prev_zone")
+                    prev_zrow    = zone_options[sel_zone_key]
+                    prev_to      = prev_zrow["To Email"]
+                    prev_name    = prev_zrow["Zone"]
+                    prev_code    = prev_zrow["User ID"]
+                    prev_pass    = prev_zrow["Password"]
+                    prev_subject = f"HPCL SOD MIS Portal — Login Credentials | {prev_name}"
+                    prev_html    = _em.build_credentials_email_html(
+                        prev_name, prev_code, prev_pass
+                    )
+                else:
+                    st.info("No zones with email to preview.")
+                    prev_html = ""
+                    prev_to = prev_subject = ""
+
+            if prev_to:
+                st.markdown(
+                    f'<div style="background:#f5f8ff;border:1px solid #d0d8f0;border-radius:8px;'
+                    f'padding:10px 14px;font-size:12px;margin-top:8px;line-height:1.9;">'
+                    f'<b>From:</b> {_em.SENDER_EMAIL}<br>'
+                    f'<b>To:</b> {prev_to}<br>'
+                    f'<b>Subject:</b> {prev_subject}</div>',
+                    unsafe_allow_html=True,
+                )
+
+        with p_col2:
+            if prev_html:
+                st.markdown("**Email body (rendered):**")
+                st.components.v1.html(prev_html, height=520, scrolling=True)
+            else:
+                st.info("Select a location or zone on the left to see the preview.")
 
 
 def show_zone_dashboard(user: dict):
