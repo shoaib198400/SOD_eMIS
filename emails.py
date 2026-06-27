@@ -550,7 +550,7 @@ def build_credentials_email_html(
         "<strong>&#9888; Important:</strong> Please change your password after the first login "
         "using the <em>Change Password</em> option in the sidebar. Keep your credentials confidential.</div>"
         "<p style='font-size:14px;color:#333;line-height:1.8;margin-top:16px;'>"
-        "The MIS data submission for your location is due by the <strong>15th of every month</strong>"
+        "The MIS data submission for your location is due by the <strong>5th of every month</strong>"
         " (for the previous month). For any issues, raise a support ticket from within the portal"
         f" or contact <a href='mailto:{SENDER_EMAIL}' style='color:#0033A0;'>{SENDER_EMAIL}</a>.</p>"
         "<p style='font-size:12px;color:#aaa;border-top:1px solid #eee;"
