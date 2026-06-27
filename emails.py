@@ -50,34 +50,94 @@ ZONE_EMAIL_MAP = {
 
 # ── Outlook availability check ────────────────────────────────────────────────
 
-def _get_outlook():
-    """Connect to a running Outlook instance; start one if not running."""
-    import win32com.client as _w
+def _send_via_powershell(to: str, subject: str, html_body: str,
+                         cc: str = "", bcc: str = "") -> dict:
+    """Send email through Outlook using PowerShell subprocess.
+
+    This avoids Python COM threading/bitness issues that occur when Outlook
+    is open but GetActiveObject/Dispatch fail in Streamlit's thread context.
+    Outlook must be open and signed-in on this machine.
+    """
+    import subprocess, tempfile, os
+
+    # Write HTML to a temp file (avoids PowerShell string-escaping problems)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html',
+                                     encoding='utf-8', delete=False) as hf:
+        hf.write(html_body)
+        html_file = hf.name.replace("\\", "/")
+
+    def _ps_escape(s):
+        return s.replace("`", "``").replace('"', '`"').replace("$", "`$")
+
+    ps_code = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$html = [System.IO.File]::ReadAllText('" + html_file + "')\n"
+        "try { $ol = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') }\n"
+        "catch { $ol = New-Object -ComObject Outlook.Application }\n"
+        "$mail = $ol.CreateItem(0)\n"
+        f'$mail.To = "{_ps_escape(to)}"\n'
+        f'$mail.Subject = "{_ps_escape(subject)}"\n'
+        "$mail.HTMLBody = $html\n"
+    )
+    if cc:
+        ps_code += f'$mail.CC = "{_ps_escape(cc)}"\n'
+    if bcc:
+        ps_code += f'$mail.BCC = "{_ps_escape(bcc)}"\n'
+    ps_code += (
+        "try { $mail.Send(); Write-Output 'SENT' }\n"
+        "catch { $mail.Save(); Write-Output 'DRAFT' }\n"
+    )
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.ps1',
+                                     encoding='utf-8', delete=False) as pf:
+        pf.write(ps_code)
+        ps_file = pf.name
+
     try:
-        return _w.GetActiveObject("Outlook.Application")
-    except Exception:
-        return _w.Dispatch("Outlook.Application")
+        res = subprocess.run(
+            ["powershell.exe", "-ExecutionPolicy", "Bypass",
+             "-NonInteractive", "-File", ps_file],
+            capture_output=True, text=True, timeout=60
+        )
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        if "SENT" in out:
+            return {"ok": True, "mode": "sent"}
+        if "DRAFT" in out:
+            return {"ok": True, "mode": "draft", "msg": "Saved as Outlook draft"}
+        return {"ok": False, "msg": (err or out or f"PS exit {res.returncode}")[:400]}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "msg": "Timed out (60 s). Is Outlook open and signed in?"}
+    except Exception as exc:
+        return {"ok": False, "msg": str(exc)}
+    finally:
+        for f in (html_file.replace("/", "\\"), ps_file):
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
 
 
 def email_configured() -> tuple:
-    """Return (True, '') if Outlook COM is reachable, else (False, reason)."""
+    """Return (True, '') if Outlook is reachable via PowerShell, else (False, reason)."""
     if platform.system() != "Windows":
-        return False, "local_only"   # sentinel — not an error, just local feature
+        return False, "local_only"
     try:
-        import win32com.client  # noqa: F401
-        import pythoncom        # noqa: F401
-    except ImportError:
-        return False, "pywin32 not installed — run: pip install pywin32"
-    try:
-        import pythoncom
-        pythoncom.CoInitialize()
-        try:
-            _get_outlook()
-        finally:
-            pythoncom.CoUninitialize()
-        return True, ""
+        import subprocess
+        res = subprocess.run(
+            ["powershell.exe", "-NonInteractive", "-Command",
+             "try { [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') | Out-Null; Write-Output 'OK' } "
+             "catch { try { $ol = New-Object -ComObject Outlook.Application; $ol | Out-Null; Write-Output 'OK' } catch { Write-Output \"FAIL: $_\" } }"],
+            capture_output=True, text=True, timeout=15,
+        )
+        out = (res.stdout or "").strip()
+        if out.startswith("OK"):
+            return True, ""
+        return False, out or "Outlook not accessible"
+    except subprocess.TimeoutExpired:
+        return False, "PowerShell check timed out"
     except Exception as exc:
-        return False, f"Outlook is not running or not installed: {exc}"
+        return False, str(exc)
 
 
 # backward-compat alias
@@ -215,73 +275,30 @@ def send_zone_reminder(zone_name: str, month_year: str,
                        custom_intro: str = "",
                        test_mode: bool = False,
                        test_email: str = "") -> dict:
-    """Send one reminder email for a zone through Outlook COM.
-    Falls back to saving as Outlook draft if direct Send() fails.
-
-    test_mode=True overrides all recipients with test_email only.
-    """
+    """Send one reminder email for a zone via PowerShell + Outlook."""
     contacts = ZONE_EMAIL_MAP.get(zone_name)
     if not contacts:
         return {"ok": False, "msg": f"No email contacts configured for: {zone_name}"}
 
-    try:
-        import pythoncom
-        import win32com.client as win32
-    except ImportError:
-        return {"ok": False, "msg": "pywin32 not installed. Run: pip install pywin32"}
+    today   = date.today()
+    overdue = today > due_date
+    pfx     = "[TEST] " if test_mode else ""
+    subject = (
+        f"{pfx}OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
+        if overdue else
+        f"{pfx}Reminder — MIS Submission Pending | {zone_name} | {month_year}"
+    )
+    html_body = _build_email_html(zone_name, month_year, pending_locs,
+                                  due_date, custom_intro)
 
-    try:
-        today   = date.today()
-        overdue = today > due_date
-        pfx     = "[TEST] " if test_mode else ""
-        subject = (
-            f"{pfx}OVERDUE — MIS Submission Pending | {zone_name} | {month_year}"
-            if overdue else
-            f"{pfx}Reminder — MIS Submission Pending | {zone_name} | {month_year}"
-        )
-        html_body = _build_email_html(zone_name, month_year, pending_locs,
-                                      due_date, custom_intro)
+    if test_mode:
+        to_str, cc_str, bcc_str = test_email or SENDER_EMAIL, "", ""
+    else:
+        to_str  = contacts["to"]
+        cc_str  = contacts["cc"]
+        bcc_str = "; ".join(BCC_EMAILS)
 
-        if test_mode:
-            to_str  = test_email or SENDER_EMAIL
-            cc_str  = ""
-            bcc_str = ""
-        else:
-            to_str  = contacts["to"]
-            cc_str  = contacts["cc"]
-            bcc_str = "; ".join(BCC_EMAILS)
-
-        pythoncom.CoInitialize()
-        try:
-            outlook   = _get_outlook()
-            mail_item = outlook.CreateItem(0)   # 0 = olMailItem
-
-            mail_item.To       = to_str
-            if cc_str:
-                mail_item.CC   = cc_str
-            if bcc_str:
-                mail_item.BCC  = bcc_str
-            mail_item.Subject  = subject
-            mail_item.HTMLBody = html_body
-
-            try:
-                mail_item.Send()
-                return {"ok": True, "mode": "sent"}
-            except Exception as send_exc:
-                try:
-                    mail_item.Save()
-                    return {
-                        "ok": True,
-                        "mode": "draft",
-                        "msg": f"Saved as Outlook draft (send error: {send_exc})",
-                    }
-                except Exception as draft_exc:
-                    return {"ok": False, "msg": f"Send and draft both failed: {draft_exc}"}
-        finally:
-            pythoncom.CoUninitialize()
-
-    except Exception as exc:
-        return {"ok": False, "msg": f"Outlook error: {exc}"}
+    return _send_via_powershell(to_str, subject, html_body, cc_str, bcc_str)
 
 
 # ── All-zones batch sender ────────────────────────────────────────────────────
@@ -555,47 +572,14 @@ def send_credential_email(
     test_mode: bool = False,
     test_email: str = "",
 ) -> dict:
-    """Send login credentials to a location via Outlook COM."""
-    try:
-        import pythoncom
-        import win32com.client as win32
-    except ImportError:
-        return {"ok": False, "msg": "pywin32 not installed. Run: pip install pywin32"}
-
-    try:
-        html_body  = build_credentials_email_html(loc_name, loc_code, password, app_url)
-        pfx        = "[TEST] " if test_mode else ""
-        subject    = f"{pfx}HPCL SOD MIS Portal — Login Credentials | {loc_name}"
-        actual_to  = (test_email or SENDER_EMAIL) if test_mode else to_email
-        actual_cc  = "" if test_mode else cc_email
-        actual_bcc = "" if test_mode else SENDER_EMAIL  # BCC sender for audit trail
-
-        pythoncom.CoInitialize()
-        try:
-            outlook   = _get_outlook()
-            mail_item = outlook.CreateItem(0)
-            mail_item.To       = actual_to
-            if actual_cc:
-                mail_item.CC   = actual_cc
-            if actual_bcc:
-                mail_item.BCC  = actual_bcc
-            mail_item.Subject  = subject
-            mail_item.HTMLBody = html_body
-            try:
-                mail_item.Send()
-                return {"ok": True, "mode": "sent", "to": actual_to}
-            except Exception as send_exc:
-                try:
-                    mail_item.Save()
-                    return {"ok": True, "mode": "draft",
-                            "msg": f"Saved as Outlook draft (send error: {send_exc})",
-                            "to": actual_to}
-                except Exception as draft_exc:
-                    return {"ok": False, "msg": f"Send and draft both failed: {draft_exc}"}
-        finally:
-            pythoncom.CoUninitialize()
-    except Exception as exc:
-        return {"ok": False, "msg": f"Outlook error: {exc}"}
+    """Send login credentials to a location via PowerShell + Outlook."""
+    html_body  = build_credentials_email_html(loc_name, loc_code, password, app_url)
+    pfx        = "[TEST] " if test_mode else ""
+    subject    = f"{pfx}HPCL SOD MIS Portal — Login Credentials | {loc_name}"
+    actual_to  = (test_email or SENDER_EMAIL) if test_mode else to_email
+    actual_cc  = "" if test_mode else cc_email
+    actual_bcc = "" if test_mode else SENDER_EMAIL
+    return _send_via_powershell(actual_to, subject, html_body, actual_cc, actual_bcc)
 
 
 # ── Forgot Password / Help Request Email ──────────────────────────────────────
@@ -603,48 +587,23 @@ ADMIN_EMAIL = "shoaibrehman@hpcl.in"
 
 
 def send_forgot_password_email(user_id: str, issue_text: str) -> dict:
-    """Send a password reset / help request email directly to the Admin."""
+    """Send a password reset / help request email to Admin via PowerShell + Outlook."""
     if platform.system() != "Windows":
         return {"ok": False, "msg": "Email not available on cloud deployment."}
-    try:
-        import win32com.client as win32
-        import pythoncom
-
-        subject = f"SOD e-MIS: Password Reset Request — User ID {user_id}"
-        html_body = (
-            "<html><body style='font-family:Arial,sans-serif;font-size:14px;color:#222;'>"
-            "<div style='max-width:520px;margin:20px auto;border:1px solid #ddd;"
-            "border-radius:8px;padding:24px;background:#f9f9f9;'>"
-            "<div style='background:#001F5E;color:#fff;padding:12px 18px;"
-            "border-radius:6px 6px 0 0;margin:-24px -24px 20px;'>"
-            "<b>HPCL SOD e-MIS &mdash; Password Reset Request</b></div>"
-            f"<p><b>User ID:</b> {user_id}</p>"
-            f"<p><b>Message from user:</b><br>"
-            f"<span style='background:#fff;border:1px solid #eee;display:block;"
-            f"padding:10px;border-radius:4px;margin-top:4px;'>{issue_text}</span></p>"
-            "<hr style='margin:20px 0;border:none;border-top:1px solid #ddd;'>"
-            "<p style='font-size:12px;color:#888;'>Sent automatically from SOD e-MIS login page.</p>"
-            "</div></body></html>"
-        )
-
-        pythoncom.CoInitialize()
-        try:
-            outlook   = _get_outlook()
-            mail_item = outlook.CreateItem(0)
-            mail_item.To       = ADMIN_EMAIL
-            mail_item.Subject  = subject
-            mail_item.HTMLBody = html_body
-            try:
-                mail_item.Send()
-                return {"ok": True}
-            except Exception as send_exc:
-                try:
-                    mail_item.Save()
-                    return {"ok": True, "mode": "draft",
-                            "msg": f"Saved as Outlook draft: {send_exc}"}
-                except Exception as draft_exc:
-                    return {"ok": False, "msg": f"Send and draft both failed: {draft_exc}"}
-        finally:
-            pythoncom.CoUninitialize()
-    except Exception as exc:
-        return {"ok": False, "msg": f"Outlook error: {exc}"}
+    subject = f"SOD e-MIS: Password Reset Request — User ID {user_id}"
+    html_body = (
+        "<html><body style='font-family:Arial,sans-serif;font-size:14px;color:#222;'>"
+        "<div style='max-width:520px;margin:20px auto;border:1px solid #ddd;"
+        "border-radius:8px;padding:24px;background:#f9f9f9;'>"
+        "<div style='background:#001F5E;color:#fff;padding:12px 18px;"
+        "border-radius:6px 6px 0 0;margin:-24px -24px 20px;'>"
+        "<b>HPCL SOD e-MIS &mdash; Password Reset Request</b></div>"
+        f"<p><b>User ID:</b> {user_id}</p>"
+        f"<p><b>Message from user:</b><br>"
+        f"<span style='background:#fff;border:1px solid #eee;display:block;"
+        f"padding:10px;border-radius:4px;margin-top:4px;'>{issue_text}</span></p>"
+        "<hr style='margin:20px 0;border:none;border-top:1px solid #ddd;'>"
+        "<p style='font-size:12px;color:#888;'>Sent from SOD e-MIS login page.</p>"
+        "</div></body></html>"
+    )
+    return _send_via_powershell(ADMIN_EMAIL, subject, html_body)

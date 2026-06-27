@@ -4000,9 +4000,9 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                     import emails as _em
                     sent, failed, skipped = 0, 0, 0
                     _errs = []
-                    ok_email, _ = _em.email_configured()
+                    ok_email, _em_reason = _em.email_configured()
                     if not ok_email:
-                        st.error("Outlook not available. Open Microsoft Outlook and retry.")
+                        st.error(f"Outlook not accessible: {_em_reason}\n\nMake sure Microsoft Outlook is open and signed in, then retry.")
                     else:
                         for acct, to_email in _with_email:
                             if not to_email:
@@ -4037,9 +4037,9 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
             if st.button("🏢  Send Zone Credentials", key="btn_send_zone_creds",
                          use_container_width=True):
                 import emails as _em2
-                ok_e, _ = _em2.email_configured()
+                ok_e, _em2_reason = _em2.email_configured()
                 if not ok_e:
-                    st.error("Outlook not available.")
+                    st.error(f"Outlook not accessible: {_em2_reason}\n\nOpen Microsoft Outlook and retry.")
                 else:
                     _zone_accts = sheets.get_all_zone_credentials()
                     _z_cmap     = _em2.ZONE_CREDENTIAL_MAP
