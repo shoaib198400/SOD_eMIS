@@ -3912,6 +3912,50 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                         if _errs:
                             st.error("\n".join(_errs[:5]))
 
+            # ── Zone credential emails ────────────────────────────────────
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div style="font-size:10px;color:rgba(255,255,255,0.55);'
+                'padding:0 4px 3px;">Send MIS Portal credentials to Zone ODs '
+                '(BLRMIS, BHOMIS etc. → personal emails).</div>',
+                unsafe_allow_html=True)
+            if st.button("🏢  Send Zone Credentials", key="btn_send_zone_creds",
+                         use_container_width=True):
+                import emails as _em2
+                ok_e, _ = _em2.email_configured()
+                if not ok_e:
+                    st.error("Outlook not available.")
+                else:
+                    _zone_accts = sheets.get_all_zone_credentials()
+                    _z_cmap     = _em2.ZONE_CREDENTIAL_MAP
+                    _z_test     = st.session_state.get("cred_test_mode", True)
+                    zs, zf, zsk = 0, 0, 0
+                    _z_errs = []
+                    for acct in _zone_accts:
+                        zone_cfg = _z_cmap.get(acct["zone"], {})
+                        to_email = zone_cfg.get("to", "")
+                        cc_email = zone_cfg.get("cc", "") if not _z_test else ""
+                        if not to_email:
+                            zsk += 1
+                            continue
+                        _res = _em2.send_credential_email(
+                            to_email=to_email,
+                            loc_name=acct["zone"],
+                            loc_code=acct["userId"],
+                            password=acct["password"],
+                            cc_email=cc_email,
+                            test_mode=_z_test,
+                            test_email=user.get("userId", ""),
+                        )
+                        if _res["ok"]:
+                            zs += 1
+                        else:
+                            zf += 1
+                            _z_errs.append(f"{acct['userId']}: {_res['msg']}")
+                    st.success(f"Zone emails — Sent: {zs} | Failed: {zf} | Skipped: {zsk}")
+                    if _z_errs:
+                        st.error("\n".join(_z_errs[:5]))
+
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)

@@ -370,8 +370,13 @@ LOCATION_EMAIL_MAP = {
     "1155": "roork.irdic@hpcl.in",
     "1157": "brly.irdic@hpcl.in",
     "1164": "bhatinda.irdic@hpcl.in",
+    "1180": "sgrur.irdic@hpcl.in",        # Sangrur Depot
+    "1183": "nlgrh.irdic@hpcl.in",        # Nalgarh Depot
+    "1187": "vinodkdhamija@hpcl.in",      # HMEL White Oil Terminal
     "1216": "baha.tmlic@hpcl.in",
     "1221": "del.tmlic@hpcl.in",
+    "1222": "lalk.top@hpcl.in",           # LALKUAN-IOC
+    "1224": "dineshbahadur@hpcl.in",      # Barmer Terminal
     "1233": "bhtp.irdic@hpcl.in",
     "1242": "jaip.tmlic@hpcl.in",
     "1254": "jal.irdic@hpcl.in",
@@ -395,13 +400,17 @@ LOCATION_EMAIL_MAP = {
     "1424": "jaba.irdic@hpcl.in",
     "1435": "gwal.irdic@hpcl.in",
     "1436": "sagar.irdic@hpcl.in",
+    "1442": "serajul.haque@hpcl.in",       # BAKANIA TOP-RIL
     "1449": "vadi.top@hpcl.in",
     "1457": "indo.irdic@hpcl.in",
+    "1462": "blr.irdic@hpcl.in",           # BANGROD TOP-IOC
     "1485": "akol.irdic@hpcl.in",
+    "1498": "ward.irdic@hpcl.in;wardha.top@hpcl.in",  # WARDHA TOP-NEL (two IDs)
     "1504": "miraj.irdic@hpcl.in",
     "1509": "slpr.irdic@hpcl.in",
     "1527": "rpr.irdic@hpcl.in",
     "1528": "rpr.irdic@hpcl.in",
+    "1541": "vadi.top@hpcl.in",            # HPCL JAMNAGAR (same as Vadinar TOP)
     "1546": "mund.tmlic@hpcl.in",
     "1551": "vasco.tmlic@hpcl.in",
     "1552": "vasco.tmlic@hpcl.in",
@@ -417,20 +426,29 @@ LOCATION_EMAIL_MAP = {
     "1649": "hald.tmlic@hpcl.in",
     "1650": "hald.tmlic@hpcl.in",
     "1652": "mour.top@hpcl.in",
+    "1655": "drgp.irdic@hpcl.in",          # RAJBUNDH IOC TOP
     "1656": "drgp.irdic@hpcl.in",
     "1672": "bngn.top@hpcl.in",
+    "1676": "digb.top@hpcl.in",            # DIGBOI TOP-IOC
     "1677": "guwa.irdic@hpcl.in",
+    "1687": "mald.top@hpcl.in",            # MALDA TOP-IOC
     "1689": "numa.top@hpcl.in",
+    "1691": "silg.top@hpcl.in",            # RANGPO TOP-IOC
     "1693": "silg.top@hpcl.in",
+    "1698": "rahulchangmai@hpcl.in",       # Dimapur TOP-IOC
+    "1700": "silg.top@hpcl.in",            # RANGAPANI TOP-NRL
+    "1708": "rahulchangmai@hpcl.in",       # Dimapur Depot
     "1711": "brni.irdic@hpcl.in",
     "1712": "brni.irdic@hpcl.in",
     "1723": "patna.irdic@hpcl.in",
     "1742": "bokr.irdic@hpcl.in",
+    "1743": "bokr.irdic@hpcl.in",          # JASIDIH TOP-IOC
     "1775": "blr.tmlic@hpcl.in",
     "1777": "hassn.tmlic@hpcl.in",
     "1797": "gulb.irdic@hpcl.in",
     "1800": "hubl.irdic@hpcl.in",
     "1831": "coch.tmlic@hpcl.in",
+    "1898": "mang.tmlic@hpcl.in",          # KASARGOD TOP-ONGC
     "1845": "irum.tmlic@hpcl.in",
     "1856": "coim.irdic@hpcl.in",
     "1871": "madu.irdic@hpcl.in",
@@ -447,11 +465,22 @@ LOCATION_EMAIL_MAP = {
     "1991": "chen.tmlic@hpcl.in",
     "1992": "vskp.tmlic@hpcl.in",
     "1999": "dhmpri.tmlic@hpcl.in",
+    "3129": "vinodkdhamija@hpcl.in",      # HMEL Bitumen Terminal
     "3562": "vashi.bo.tmlic@hpcl.in",
     "3693": "kaknd.tmlic@hpcl.in",
     "3718": "vskp.bo.tmlic@hpcl.in",
     "3833": "coch.tmlic@hpcl.in",
+    # Skip: 1899 Ferokee TOP IOC — no email; 1882 VNKOTI TOP-IOC — not functional;
+    #       1445 Borkheri TOP BPC — not functional; 1885 MRPL TOP — non-HPCL
 }
+
+
+# ── Zone credential email map ──────────────────────────────────────────────────
+# Maps zone name → dict with "to" and "cc" for sending zone account credentials.
+# "to" = personal email of the Zone OD (from Zonal OD.msg + ZONE_EMAIL_MAP)
+# Credential emails for zone accounts (BLRMIS, BHOMIS, etc.) go to these recipients.
+
+ZONE_CREDENTIAL_MAP = {k: v for k, v in ZONE_EMAIL_MAP.items()}
 
 
 def build_credentials_email_html(

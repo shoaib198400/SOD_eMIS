@@ -1394,6 +1394,26 @@ def get_all_maker_credentials() -> list:
         return []
 
 
+def get_all_zone_credentials() -> list:
+    """Return list of {userId, locName, zone, password} for all Zone accounts."""
+    try:
+        ws   = _ws(TABS["USER_ACCESS"])
+        rows = ws.get_all_values()
+        out  = []
+        for r in rows[1:]:
+            r = (r + [""] * 8)[:8]
+            if r[4].strip() == "Zone" and r[0].strip():
+                out.append({
+                    "userId":  r[0].strip(),
+                    "locName": r[1].strip(),
+                    "zone":    r[2].strip(),
+                    "password": r[3].strip(),
+                })
+        return out
+    except Exception:
+        return []
+
+
 def upsert_zone_account(zone_name: str, new_user_id: str, new_password: str) -> dict:
     """Create or update a Zone account matched by zone_name.
 
