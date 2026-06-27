@@ -1716,11 +1716,14 @@ def _inject_field_enhancements(fields: list):
   }}
   var TIP=pd.getElementById('_mis_tip');
 
+  var _ALL_TID=
+    '[data-testid="stNumberInput"],[data-testid="stTextInput"],'+
+    '[data-testid="stTextArea"],[data-testid="stSelectbox"],'+
+    '[data-testid="stDateInput"]';
+
   /* ── Get label text by traversing UP from the inner element ── */
   function getLabel(el){{
-    var c=el.closest(
-      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
-    );
+    var c=el.closest(_ALL_TID);
     return c?(c.querySelector('label')||{{}}).innerText||'':'';
   }}
 
@@ -1736,9 +1739,7 @@ def _inject_field_enhancements(fields: list):
         return '<br><span style="opacity:.85">&#183; '+x+'</span>';
       }}).join('');
     TIP.style.display='block';
-    var posEl=el.closest(
-      '[data-testid="stNumberInput"],[data-testid="stTextArea"],[data-testid="stSelectbox"]'
-    )||el;
+    var posEl=el.closest(_ALL_TID)||el;
     var r=posEl.getBoundingClientRect(), h=TIP.offsetHeight||56;
     TIP.style.left=Math.max(8,r.left)+'px';
     TIP.style.top=(r.top-h-12)+'px';
@@ -1760,6 +1761,30 @@ def _inject_field_enhancements(fields: list):
       }}
     }});
 
+    /* Text inputs */
+    pd.querySelectorAll('[data-testid="stTextInput"] input').forEach(function(el){{
+      if(el.dataset.mis)return; el.dataset.mis='1';
+      el.addEventListener('focus',function(){{ showTip(el); }});
+      el.addEventListener('blur', function(){{ hideTip(); }});
+      var wi=el.closest('[data-testid="stTextInput"]');
+      if(wi&&!wi.dataset.misHov){{ wi.dataset.misHov='1';
+        wi.addEventListener('mouseenter',function(){{ showTip(el); }});
+        wi.addEventListener('mouseleave',function(){{ hideTip(); }});
+      }}
+    }});
+
+    /* Date inputs */
+    pd.querySelectorAll('[data-testid="stDateInput"] input').forEach(function(el){{
+      if(el.dataset.mis)return; el.dataset.mis='1';
+      el.addEventListener('focus',function(){{ showTip(el); }});
+      el.addEventListener('blur', function(){{ hideTip(); }});
+      var wd=el.closest('[data-testid="stDateInput"]');
+      if(wd&&!wd.dataset.misHov){{ wd.dataset.misHov='1';
+        wd.addEventListener('mouseenter',function(){{ showTip(el); }});
+        wd.addEventListener('mouseleave',function(){{ hideTip(); }});
+      }}
+    }});
+
     /* Text areas */
     pd.querySelectorAll('[data-testid="stTextArea"] textarea').forEach(function(ta){{
       if(ta.dataset.mis)return; ta.dataset.mis='1';
@@ -1772,7 +1797,7 @@ def _inject_field_enhancements(fields: list):
       }}
     }});
 
-    /* Selectboxes — tooltip + green/red border */
+    /* Selectboxes */
     pd.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(sb){{
       if(sb.dataset.mis)return; sb.dataset.mis='1';
       function tipEl(){{
