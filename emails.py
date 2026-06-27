@@ -490,8 +490,10 @@ LOCATION_EMAIL_MAP = {
     "3693": "kaknd.tmlic@hpcl.in",
     "3718": "vskp.bo.tmlic@hpcl.in",
     "3833": "coch.tmlic@hpcl.in",
+    "1420": "hazira.irdic@hpcl.in",
+    "1885": "mang.tmlic@hpcl.in",
     # Skip: 1899 Ferokee TOP IOC — no email; 1882 VNKOTI TOP-IOC — not functional;
-    #       1445 Borkheri TOP BPC — not functional; 1885 MRPL TOP — non-HPCL
+    #       1445 Borkheri TOP BPC — not functional
 }
 
 

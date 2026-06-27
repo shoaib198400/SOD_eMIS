@@ -1396,18 +1396,25 @@ def get_all_maker_credentials() -> list:
 
 
 def get_all_zone_credentials() -> list:
-    """Return list of {userId, locName, zone, password} for all Zone accounts."""
+    """Return list of {userId, locName, zone, password} for all Zone accounts.
+    Deduplicates by zone name — keeps the first occurrence to prevent double emails.
+    """
     try:
         ws   = _ws(TABS["USER_ACCESS"])
         rows = ws.get_all_values()
         out  = []
+        seen_zones = set()
         for r in rows[1:]:
             r = (r + [""] * 8)[:8]
+            zone = r[2].strip()
             if r[4].strip() == "Zone" and r[0].strip():
+                if zone in seen_zones:
+                    continue  # skip duplicate zone row
+                seen_zones.add(zone)
                 out.append({
-                    "userId":  r[0].strip(),
-                    "locName": r[1].strip(),
-                    "zone":    r[2].strip(),
+                    "userId":   r[0].strip(),
+                    "locName":  r[1].strip(),
+                    "zone":     zone,
                     "password": r[3].strip(),
                 })
         return out
