@@ -1302,7 +1302,30 @@ def show_login():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Login form ────────────────────────────────────────────────────────────
+    # ── CSS: style the Forgot Password submit button as a text link ──────────
+    st.markdown("""
+    <style>
+    div[data-testid="stForm"] div[data-testid="stFormSubmitButton"]:not(:last-of-type) button {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #E53935 !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        padding: 4px 0 !important;
+        min-height: unset !important;
+        width: 100% !important;
+        text-align: right !important;
+    }
+    div[data-testid="stForm"] div[data-testid="stFormSubmitButton"]:not(:last-of-type) button:hover {
+        background: transparent !important;
+        color: #b71c1c !important;
+        text-decoration: underline !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Login form — restored to original layout ──────────────────────────────
     with st.form("login_form", clear_on_submit=False):
         loc_code = st.text_input(
             "User ID",
@@ -1314,37 +1337,31 @@ def show_login():
             type="password",
             placeholder="Enter your password",
         )
+        c_rem, c_fgt = st.columns([1, 1])
+        with c_rem:
+            st.checkbox("Remember me")
+        with c_fgt:
+            fgt_btn = st.form_submit_button(
+                "Forgot Password?", use_container_width=True
+            )
         st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
         login_btn = st.form_submit_button("🔑  Login", use_container_width=True, type="primary")
 
-    # ── Forgot Password — outside the form so the button works ───────────────
-    _fp_open = st.session_state.get("_fp_open", False)
-    _fp_label = "▲  Hide" if _fp_open else "🔑  Forgot Password?"
-    if st.button(_fp_label, key="btn_forgot_pw", use_container_width=True):
-        st.session_state["_fp_open"] = not _fp_open
-        st.rerun()
-
+    # ── Forgot Password panel (appears below the card on click) ──────────────
     if st.session_state.get("_fp_open"):
-        st.markdown(
-            '<div style="background:#f5f8ff;border:1px solid #d0d8f0;border-radius:10px;'
-            'padding:14px 16px;margin-top:4px;">'
-            '<div style="font-size:13px;font-weight:700;color:#001F5E;margin-bottom:8px;">'
-            '🔐 Request Password Reset</div>'
-            '<div style="font-size:12px;color:#555;margin-bottom:10px;">'
-            'Enter your User ID below. Your request will be logged and the Admin will '
-            'reset your password and notify you.</div></div>',
-            unsafe_allow_html=True,
-        )
         with st.form("forgot_pw_form", clear_on_submit=True):
+            st.markdown(
+                '<div style="font-size:13px;font-weight:700;color:#001F5E;margin-bottom:4px;">'
+                '🔐 Request Password Reset</div>'
+                '<div style="font-size:12px;color:#555;margin-bottom:8px;">'
+                'Enter your User ID. The Admin will reset your password and contact you.</div>',
+                unsafe_allow_html=True,
+            )
             fp_code = st.text_input(
-                "Your User ID (Location Code)",
-                placeholder="e.g. 1424",
-                max_chars=20,
+                "User ID", placeholder="e.g. 1424", max_chars=20,
                 label_visibility="collapsed",
             )
-            fp_submit = st.form_submit_button(
-                "📨  Submit Reset Request", use_container_width=True
-            )
+            fp_submit = st.form_submit_button("📨  Submit Reset Request", use_container_width=True)
         if fp_submit:
             if not fp_code.strip():
                 st.error("Please enter your User ID.")
@@ -1353,12 +1370,16 @@ def show_login():
                     _fp_res = sheets.request_password_reset(fp_code.strip())
                 if _fp_res["ok"]:
                     st.success(
-                        f"✅ Reset request submitted for **{fp_code.strip()}**.  "
-                        "The Admin will reset your password and inform you shortly."
+                        f"✅ Request submitted for **{fp_code.strip()}**.  "
+                        "Admin will reset your password shortly."
                     )
                     st.session_state["_fp_open"] = False
                 else:
                     st.error(_fp_res["msg"])
+
+    if fgt_btn:
+        st.session_state["_fp_open"] = not st.session_state.get("_fp_open", False)
+        st.rerun()
 
     if login_btn:
         if not loc_code or not password:
