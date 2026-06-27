@@ -21,7 +21,7 @@ SECTIONS = [
         "HSD (MT) — High Speed Diesel throughput",
         "Total Throughput (MT) including all other products",
         "Throughput Target (MT) — as per plan",
-        "MEB (Rs Lacs) — Monthly Expenditure Budget and % vs Budget",
+        "MEB (Rs Lakhs) — Monthly Expenditure Budget and % vs Budget",
         "OPEX (Rs/MT) and OPEX Target (Rs/MT)",
         "Solar Plant: Installed Capacity (KW), Generation (KWH), Grid Export (KWH)",
         "Electricity: KWH from SEB / DG / Solar, Contract Demand (KVA), Power Factor",
@@ -33,10 +33,10 @@ SECTIONS = [
     ]),
     (2, "Finance & Planning (F&P)", [
         "VRU Available & Functioning (Yes / No / NA)",
-        "No. of Approved NPCB Projects and their cumulative value (Rs Lacs)",
+        "No. of Approved NPCB Projects and their cumulative value (Rs Lakhs)",
         "CAPEX done (Lakhs) vs AOP Target (Lakhs)",
         "CAPITALIZATION done (Lakhs) vs AOP Target (Lakhs)",
-        "Scrap Value at Location (Rs Lacs) and Physical Scrap Disposal this month (Rs Lacs)",
+        "Scrap Value at Location (Rs Lakhs) and Physical Scrap Disposal this month (Rs Lakhs)",
     ]),
     (3, "Supply & Distribution (S&D)", [
         "Rakes Unloaded / Loaded — count for the month",

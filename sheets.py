@@ -307,6 +307,12 @@ def _loc_name_map() -> dict:
         return {}
 
 
+def get_loc_type(loc_code: str) -> str:
+    """Return loc_type ('HPCL'|'TOP'|'HMEL') for a location code."""
+    _, ltype = _resolve_loc_info(loc_code, loc_code)
+    return ltype
+
+
 def _resolve_loc_info(loc_code: str, stored_name: str) -> tuple:
     """Return (loc_name, loc_type) for a location code."""
     code_up = loc_code.strip().upper()
@@ -2801,11 +2807,11 @@ _AN_FIELD_LABELS = {
     "f2":  "HSD (MT)",
     "f3":  "Total (MT) incl. Other Products",
     "f4":  "Thruput Target (MT)",
-    "f5":  "MEB (Rs in Lacs)",
+    "f5":  "MEB (Rs in Lakhs)",
     "f6":  "MEB % w.r.t Budget",
     "f7":  "OPEX (Rs/MT)",
     "f8":  "OPEX Target (Rs/MT)",
-    "f12": "Electricity Expenditure (Rs in Lacs)",
+    "f12": "Electricity Expenditure (Rs in Lakhs)",
     "f21": "SEC (KWH/MT)",
     "f24": "AIM Holds (Nos.)",
     "f26": "Auto-Reconciliation (% of Tanks on Auto Reco)",

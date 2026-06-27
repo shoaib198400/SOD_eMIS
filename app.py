@@ -2528,12 +2528,30 @@ def show_review(user: dict, month_year: str, month_label: str):
         if status == "SUBMITTED":
             st.info("This submission is already approved and locked.")
         elif status == "PENDING_REVIEW":
+            # ── Pre-approval completeness check ──────────────────────────────
+            from form_defs import get_skip_sections
+            _maker_loc_type = sheets.get_loc_type(maker_id)
+            _skip_secs      = get_skip_sections(_maker_loc_type)
+            _required_secs  = {n for n, _ in SECTIONS if n not in _skip_secs}
+            _dash            = sheets.get_dashboard_data(maker_id, month_year, _maker_loc_type)
+            _secs_done       = set(_dash.get("secs_done", []))
+            _incomplete      = sorted(_required_secs - _secs_done)
+            _all_complete    = len(_incomplete) == 0
+
+            if not _all_complete:
+                st.error(
+                    f"⛔  **Cannot Approve — {len(_incomplete)} section(s) incomplete:**  "
+                    + ", ".join(f"S{n}" for n in _incomplete)
+                    + "  |  The Maker must fill and save all sections before approval."
+                )
+
             _rej_key = f"_chk_rej_{maker_id}_{month_year}"
             col_approve, col_reject = st.columns(2)
 
             with col_approve:
                 if st.button("✅  Approve & Lock Submission",
-                             use_container_width=True, type="primary", key="rev_approve"):
+                             use_container_width=True, type="primary", key="rev_approve",
+                             disabled=not _all_complete):
                     with st.spinner("Approving…"):
                         maker_info = {"locName": maker_id, "zone": user.get("zone", "")}
                         res = sheets.approve_submission(
@@ -3134,7 +3152,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
 
     if role == "Maker":
         # Build template bytes (cached in session to avoid regenerating on every rerun)
-        cache_key = f"_xlsx_v8_{user['userId']}_{month_year}"
+        cache_key = f"_xlsx_v9_{user['userId']}_{month_year}"
         if cache_key not in st.session_state:
             with st.spinner("Building template…"):
                 try:
@@ -3503,14 +3521,14 @@ def show_dashboard():
                  "Excel Upload Error",
                  "MIS Unlock Request",
                  "Portal Slow / Error",
-                 "Other"],
+                 "Others/Suggestions"],
                 key="tk_type",
                 label_visibility="collapsed",
             )
             _tk_desc = st.text_area(
                 "Describe your issue",
                 placeholder="Briefly describe the problem you are facing…",
-                max_chars=500,
+                max_chars=750,
                 key="tk_desc",
             )
             if st.button("📨  Submit Ticket", key="btn_submit_ticket",
@@ -4029,12 +4047,12 @@ def _an_financial_tab(df, fy_months: list, mlabels: list):
 
     c3, c4 = st.columns(2)
     with c3:
-        elec = _an_monthly_agg(df, fy_months, "Electricity Expenditure (Rs in Lacs)")
+        elec = _an_monthly_agg(df, fy_months, "Electricity Expenditure (Rs in Lakhs)")
         fig3 = go.Figure(go.Scatter(x=mlabels, y=elec, mode="lines+markers",
                                      fill="tozeroy", fillcolor="rgba(13,110,253,0.08)",
                                      line=dict(color="#0d6efd", width=2.5),
                                      marker=dict(size=7), name="Electricity ₹L"))
-        fig3.update_layout(**_an_chart_layout("Electricity Expenditure (Rs in Lacs)"))
+        fig3.update_layout(**_an_chart_layout("Electricity Expenditure (Rs in Lakhs)"))
         st.plotly_chart(fig3, use_container_width=True)
 
     with c4:
