@@ -429,6 +429,7 @@ def check_login(location_code: str, password: str) -> dict:
             audit_log(location_code, "Login", f"Successful login as {role.strip() or 'Maker'}")
 
             _lname, _ltype = _resolve_loc_info(loc_code_cell, loc_name)
+            _is_default_pw = stored_pass.strip() == loc_code_cell.strip()
             return {
                 "ok":          True,
                 "userId":      loc_code_cell.strip(),
@@ -436,7 +437,7 @@ def check_login(location_code: str, password: str) -> dict:
                 "locType":     _ltype,   # HPCL | TOP | HMEL
                 "zone":        zone.strip(),
                 "role":        role.strip() or "Maker",
-                "isFirstLogin": is_first_raw.strip().upper() == "TRUE",
+                "isFirstLogin": is_first_raw.strip().upper() == "TRUE" or _is_default_pw,
                 "_sheet_row":  sheet_row,
                 "_password":   password,
             }
@@ -1541,6 +1542,26 @@ def hqo_account_exists() -> bool:
 # ── App Settings (admin-controlled feature flags) ────────────────────────────
 
 @st.cache_data(ttl=60)
+def register_session(user_id: str, token: str) -> dict:
+    """Write session token for user to Settings (key=sess_<uid>)."""
+    import time as _t
+    return set_setting(f"sess_{user_id}", f"{token}|{int(_t.time())}", user_id)
+
+
+def check_session_valid(user_id: str, token: str) -> bool:
+    """Return True if stored session token matches the one in this session."""
+    stored = get_setting(f"sess_{user_id}", "")
+    if not stored or "|" not in stored:
+        return False
+    stored_token = stored.rsplit("|", 1)[0]
+    return stored_token == token
+
+
+def clear_session(user_id: str) -> None:
+    """Remove the active session token for a user (on logout/timeout)."""
+    set_setting(f"sess_{user_id}", "", user_id)
+
+
 def get_setting(key: str, default: str = "FALSE") -> str:
     """Read a single value from the Settings tab (cached 60 s)."""
     try:

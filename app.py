@@ -1259,6 +1259,18 @@ def show_login():
     if st.session_state.get("user") and st.session_state.get("page", "login") != "login":
         return
 
+    # Show session-end banners (cleared after display)
+    if st.session_state.pop("_timeout_msg", False):
+        st.warning(
+            "⏱️  You were automatically logged out after 30 minutes of inactivity.  "
+            "Please log in again."
+        )
+    if st.session_state.pop("_displaced_msg", False):
+        st.warning(
+            "🔒  Your session was ended because the same account was opened on another "
+            "device or browser.  If this was not you, contact your Zone officer."
+        )
+
     assets = _assets()
     _login_css(assets.get("login_bg") or "")
 
@@ -1322,7 +1334,13 @@ def show_login():
             with st.spinner("Verifying credentials…"):
                 result = sheets.check_login(loc_code.strip(), password)
             if result["ok"]:
+                import uuid as _uuid, time as _time
+                _token = str(_uuid.uuid4())
+                sheets.register_session(result["userId"], _token)
+                result["_session_token"] = _token
                 st.session_state.user = result
+                st.session_state["last_activity"]      = _time.time()
+                st.session_state["_last_session_check"] = _time.time()
                 st.session_state.page = (
                     "change_password" if result["isFirstLogin"] else "dashboard"
                 )
@@ -1463,7 +1481,14 @@ def show_change_password():
         """, unsafe_allow_html=True)
 
         if user.get("isFirstLogin"):
-            st.info("**First Login detected.** You must set a new password to continue.")
+            _is_default = user.get("_password", "") == user.get("userId", "")
+            if _is_default:
+                st.warning(
+                    "🔑  Your current password is the **default password (same as your User ID)**.  "
+                    "You must set a new password before you can access the portal."
+                )
+            else:
+                st.info("**First Login detected.** You must set a new password to continue.")
 
         with st.form("chgpass_form"):
             curr = st.text_input("Current Password",     type="password")
@@ -1485,6 +1510,9 @@ def show_change_password():
                 st.error(res["msg"])
 
         if st.button("← Back to Login", key="back_btn"):
+            _lo_uid = (st.session_state.get("user") or {}).get("userId", "")
+            if _lo_uid:
+                sheets.clear_session(_lo_uid)
             st.session_state.user = None
             st.session_state.page = "login"
             st.rerun()
@@ -3585,6 +3613,9 @@ def show_dashboard():
     with col_logout:
         st.markdown("<div style='padding-top:27px;'></div>", unsafe_allow_html=True)
         if st.button("🚪 Logout", use_container_width=True):
+            _lo_uid = (st.session_state.get("user") or {}).get("userId", "")
+            if _lo_uid:
+                sheets.clear_session(_lo_uid)
             st.session_state.clear(); st.rerun()
     with col_fy:
         sel_fy = st.selectbox("Financial Year", list(fy_map.keys()), key="sel_fy")
@@ -3698,6 +3729,9 @@ def _month_selector_bar(user: dict, role_color: str):
     with col_logout:
         st.markdown("<div style='padding-top:27px;'></div>", unsafe_allow_html=True)
         if st.button("🚪 Logout", use_container_width=True):
+            _lo_uid = (st.session_state.get("user") or {}).get("userId", "")
+            if _lo_uid:
+                sheets.clear_session(_lo_uid)
             st.session_state.clear()
             st.rerun()
     with col_fy:
@@ -7394,6 +7428,39 @@ def main():
     _base_css()
     st.session_state.setdefault("page", "login")
     st.session_state.setdefault("user", None)
+
+    # ── Security checks (only when user is on the dashboard) ─────────────────
+    import time as _tm
+    _INACTIVITY_TIMEOUT = 1800   # 30 minutes
+    _SESSION_CHECK_INTERVAL = 300  # verify token every 5 minutes
+
+    if (st.session_state.get("user") and
+            st.session_state.get("page") == "dashboard"):
+
+        # 1. Inactivity timeout
+        _last_act = st.session_state.get("last_activity", _tm.time())
+        if _tm.time() - _last_act > _INACTIVITY_TIMEOUT:
+            _uid = st.session_state.user.get("userId", "")
+            if _uid:
+                sheets.clear_session(_uid)
+            st.session_state.user = None
+            st.session_state.page = "login"
+            st.session_state["_timeout_msg"] = True
+            st.rerun()
+        else:
+            st.session_state["last_activity"] = _tm.time()
+
+        # 2. Simultaneous login detection (checked every 5 min)
+        _last_chk = st.session_state.get("_last_session_check", 0)
+        if _tm.time() - _last_chk > _SESSION_CHECK_INTERVAL:
+            st.session_state["_last_session_check"] = _tm.time()
+            _uid   = st.session_state.user.get("userId", "")
+            _token = st.session_state.user.get("_session_token", "")
+            if _uid and _token and not sheets.check_session_valid(_uid, _token):
+                st.session_state.user = None
+                st.session_state.page = "login"
+                st.session_state["_displaced_msg"] = True
+                st.rerun()
 
     page = st.session_state.page
     user = st.session_state.user
