@@ -4701,20 +4701,36 @@ def show_email_review(user: dict):
     except Exception as exc:
         st.error(f"Could not load zone accounts: {exc}")
         zone_accts = []
+    try:
+        chk_accts = sheets.get_all_checker_credentials()
+    except Exception as exc:
+        st.error(f"Could not load checker accounts: {exc}")
+        chk_accts = []
 
     em_map = _em.LOCATION_EMAIL_MAP
-    loc_rows = []
-    for a in sorted(all_accts, key=lambda x: x.get("zone", "") + x.get("userId", "")):
-        email = em_map.get(a["userId"], "")
-        loc_rows.append({
-            "Zone":     a.get("zone", ""),
-            "Code":     a["userId"],
-            "Location": a.get("locName", ""),
-            "Email":    email or "— NO EMAIL —",
-            "Password": a.get("password", ""),
-            "_has_email": bool(email),
-        })
+
+    def _build_loc_rows(accts):
+        rows = []
+        for a in sorted(accts, key=lambda x: x.get("zone", "") + x.get("userId", "")):
+            # Checker userId is like "1424C" — strip trailing C to look up email
+            base_code = a["userId"].rstrip("Cc")
+            email = em_map.get(a["userId"], "") or em_map.get(base_code, "")
+            rows.append({
+                "Zone":     a.get("zone", ""),
+                "Code":     a["userId"],
+                "Location": a.get("locName", ""),
+                "Email":    email or "— NO EMAIL —",
+                "Password": a.get("password", ""),
+                "_has_email": bool(email),
+            })
+        return rows
+
+    loc_rows = _build_loc_rows(all_accts)
+    chk_rows = _build_loc_rows(chk_accts)
+
     df_loc = _pd.DataFrame(loc_rows) if loc_rows else _pd.DataFrame(
+        columns=["Zone", "Code", "Location", "Email", "Password", "_has_email"])
+    df_chk = _pd.DataFrame(chk_rows) if chk_rows else _pd.DataFrame(
         columns=["Zone", "Code", "Location", "Email", "Password", "_has_email"])
 
     zone_rows_data = []
@@ -4732,22 +4748,26 @@ def show_email_review(user: dict):
         columns=["Zone", "User ID", "Password", "To Email", "CC", "_has_email"])
 
     # ── KPI strip ─────────────────────────────────────────────────────────────
-    loc_ok  = df_loc["_has_email"].sum()  if not df_loc.empty  else 0
-    loc_tot = len(df_loc)
-    zone_ok = df_zone["_has_email"].sum() if not df_zone.empty else 0
+    loc_ok   = int(df_loc["_has_email"].sum())  if not df_loc.empty  else 0
+    loc_tot  = len(df_loc)
+    chk_ok   = int(df_chk["_has_email"].sum())  if not df_chk.empty  else 0
+    chk_tot  = len(df_chk)
+    zone_ok  = int(df_zone["_has_email"].sum()) if not df_zone.empty else 0
     zone_tot = len(df_zone)
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Locations — with email", f"{loc_ok} / {loc_tot}")
-    k2.metric("Locations — no email (skip)", loc_tot - loc_ok)
-    k3.metric("Zones — with email", f"{zone_ok} / {zone_tot}")
-    k4.metric("Zones — no email (skip)", zone_tot - zone_ok)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Makers — with email",   f"{loc_ok} / {loc_tot}")
+    k2.metric("Makers — no email",     loc_tot - loc_ok)
+    k3.metric("Checkers — with email", f"{chk_ok} / {chk_tot}")
+    k4.metric("Checkers — no email",   chk_tot - chk_ok)
+    k5.metric("Zones — with email",    f"{zone_ok} / {zone_tot}")
 
     st.markdown("---")
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab_loc, tab_zone, tab_prev = st.tabs([
-        "📍 Location Credentials", "🏢 Zone OD Credentials", "👁️ Email Preview"
+    tab_loc, tab_chk, tab_zone, tab_prev = st.tabs([
+        "📍 Maker Credentials", "✅ Checker Credentials",
+        "🏢 Zone OD Credentials", "👁️ Email Preview"
     ])
 
     # ══ Tab 1 — Location credentials ═════════════════════════════════════════
@@ -4824,7 +4844,84 @@ def show_email_review(user: dict):
                     if _errs:
                         st.error("\n".join(_errs[:8]))
 
-    # ══ Tab 2 — Zone OD credentials ══════════════════════════════════════════
+    # ══ Tab 2 — Checker credentials ══════════════════════════════════════════
+    with tab_chk:
+        col_ctbl, col_cctrl = st.columns([3, 1])
+
+        with col_ctbl:
+            st.markdown("##### Recipient List — Checker Accounts")
+            st.caption("Checker userId = location code + 'C' (e.g. 1424C). "
+                       "Email is the same location email as the Maker.")
+            _chk_zone_opts = ["All Zones"] + sorted(df_chk["Zone"].unique().tolist()) if not df_chk.empty else ["All Zones"]
+            _chk_sel_zone  = st.selectbox("Filter by Zone", _chk_zone_opts, key="er_chk_zone")
+            df_chk_view = df_chk if _chk_sel_zone == "All Zones" else df_chk[df_chk["Zone"] == _chk_sel_zone]
+
+            if df_chk_view.empty:
+                st.info("No Checker accounts found. Run 'Sync Missing Location Accounts' from Admin sidebar first.")
+            else:
+                chk_missing = df_chk_view[~df_chk_view["_has_email"]]["Code"].tolist()
+                if chk_missing:
+                    st.warning(f"No email for: {', '.join(chk_missing)} — will be skipped.")
+                st.dataframe(
+                    df_chk_view[["Zone", "Code", "Location", "Email"]].assign(
+                        Status=df_chk_view["_has_email"].map({True: "✅", False: "❌"})
+                    ),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Status": st.column_config.TextColumn("", width="small"),
+                        "Code":   st.column_config.TextColumn("Code", width="small"),
+                    },
+                )
+
+        with col_cctrl:
+            st.markdown("##### Send Controls")
+            _chk_test = st.toggle("🔒 Test mode", value=True, key="er_chk_test")
+            if _chk_test:
+                st.success(f"✅ Test: email → {_em.SENDER_EMAIL}")
+            else:
+                st.error("⚠️ LIVE MODE\nWill send to real location emails")
+
+            _chk_with_email = [
+                (r, r["Email"]) for _, r in df_chk_view.iterrows() if r["_has_email"]
+            ] if not df_chk_view.empty else []
+            st.caption(f"{len(_chk_with_email)} checker emails will be sent.")
+
+            if st.button("✅ Send Checker Credentials", key="btn_er_send_chk",
+                         use_container_width=True, type="primary"):
+                if not _chk_test and not st.session_state.get("_er_chk_confirmed"):
+                    st.session_state["_er_chk_confirmed"] = True
+                    st.warning("⚠️ LIVE send to real recipients. Click again to confirm.")
+                    st.stop()
+                st.session_state.pop("_er_chk_confirmed", None)
+                ok_e, reason = _em.email_configured()
+                if not ok_e:
+                    st.error(f"Outlook not accessible: {reason}\nOpen Outlook and retry.")
+                else:
+                    sent, failed, skipped = 0, 0, 0
+                    _errs = []
+                    _bar = st.progress(0, text="Sending…")
+                    total = len(_chk_with_email)
+                    for i, (row, to_email) in enumerate(_chk_with_email):
+                        _res = _em.send_credential_email(
+                            to_email=to_email,
+                            loc_name=row["Location"],
+                            loc_code=row["Code"],
+                            password=row["Password"],
+                            test_mode=_chk_test,
+                            test_email=_em.SENDER_EMAIL,
+                        )
+                        if _res["ok"]:
+                            sent += 1
+                        else:
+                            failed += 1
+                            _errs.append(f"{row['Code']}: {_res['msg']}")
+                        _bar.progress((i + 1) / max(total, 1), text=f"Sent {i+1}/{total}…")
+                    _bar.empty()
+                    st.success(f"✅ Sent: {sent}  |  ❌ Failed: {failed}  |  ⏭ Skipped: {skipped}")
+                    if _errs:
+                        st.error("\n".join(_errs[:8]))
+
+    # ══ Tab 3 — Zone OD credentials ══════════════════════════════════════════
     with tab_zone:
         col_ztbl, col_zctrl = st.columns([3, 1])
 
@@ -4902,11 +4999,12 @@ def show_email_review(user: dict):
 
         p_col1, p_col2 = st.columns([1, 2])
         with p_col1:
-            prev_type = st.radio("Preview type", ["Location", "Zone"], horizontal=True,
+            prev_type = st.radio("Preview type", ["Maker", "Checker", "Zone"], horizontal=True,
                                  key="er_prev_type")
-            if prev_type == "Location":
+            if prev_type in ("Maker", "Checker"):
+                src_df = df_loc if prev_type == "Maker" else df_chk
                 loc_options = {f"{r['Code']} — {r['Location']}": r
-                               for _, r in df_loc.iterrows() if r["_has_email"]}
+                               for _, r in src_df.iterrows() if r["_has_email"]}
                 if loc_options:
                     sel_loc_key = st.selectbox("Select location", list(loc_options.keys()),
                                                key="er_prev_loc")
@@ -4920,7 +5018,7 @@ def show_email_review(user: dict):
                         prev_name, prev_code, prev_pass
                     )
                 else:
-                    st.info("No locations with email to preview.")
+                    st.info(f"No {prev_type} accounts with email to preview.")
                     prev_html = ""
                     prev_to = prev_subject = ""
             else:

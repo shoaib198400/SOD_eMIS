@@ -1395,6 +1395,26 @@ def get_all_maker_credentials() -> list:
         return []
 
 
+def get_all_checker_credentials() -> list:
+    """Return list of {userId, locName, zone, password} for all Checker accounts."""
+    try:
+        ws   = _ws(TABS["USER_ACCESS"])
+        rows = ws.get_all_values()
+        out  = []
+        for r in rows[1:]:
+            r = (r + [""] * 8)[:8]
+            if r[4].strip() == "Checker" and r[0].strip():
+                out.append({
+                    "userId":  r[0].strip(),
+                    "locName": r[1].strip(),
+                    "zone":    r[2].strip(),
+                    "password": r[3].strip(),
+                })
+        return out
+    except Exception:
+        return []
+
+
 def get_all_zone_credentials() -> list:
     """Return list of {userId, locName, zone, password} for all Zone accounts.
     Deduplicates by zone name — keeps the first occurrence to prevent double emails.
