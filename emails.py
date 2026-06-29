@@ -613,6 +613,74 @@ def send_credential_email(
 ADMIN_EMAIL = "shoaibrehman@hpcl.in"
 
 
+# ── HelpDesk response email ────────────────────────────────────────────────────
+
+def _build_helpdesk_response_html(
+    location_code: str,
+    issue_type: str,
+    issue_desc: str,
+    admin_response: str,
+    status: str,
+) -> str:
+    status_color = "#1b5e20" if status == "Resolved" else "#e65100"
+    status_bg    = "#e8f5e9" if status == "Resolved" else "#fff3e0"
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
+        "<body style='font-family:Arial,sans-serif;margin:0;padding:0;background:#f4f6fb;'>"
+        "<div style='max-width:620px;margin:30px auto;background:white;border-radius:14px;"
+        "box-shadow:0 2px 12px rgba(0,0,0,0.10);overflow:hidden;'>"
+        "<div style='background:#002B8F;padding:22px 30px;'>"
+        "<div style='color:white;font-size:20px;font-weight:700;letter-spacing:0.5px;'>"
+        "HPCL SOD &mdash; MIS Portal</div>"
+        "<div style='color:#a8bfe8;font-size:12px;margin-top:4px;'>"
+        "Supply, Operations &amp; Distribution &nbsp;&middot;&nbsp; Help Desk Response</div>"
+        "</div>"
+        "<div style='padding:28px 30px;'>"
+        f"<p style='font-size:15px;color:#333;margin-top:0;'>Dear <strong>Location {location_code}</strong>,</p>"
+        "<p style='font-size:14px;color:#444;line-height:1.8;'>"
+        "Your support request has been reviewed. Please find the details and Admin response below.</p>"
+        "<table style='width:100%;border-collapse:collapse;margin:18px 0;border-radius:8px;overflow:hidden;'>"
+        "<tr style='background:#002B8F;'>"
+        "<th style='padding:10px 16px;color:white;text-align:left;font-size:13px;width:36%;'>Field</th>"
+        "<th style='padding:10px 16px;color:white;text-align:left;font-size:13px;'>Detail</th></tr>"
+        "<tr style='background:#f5f7ff;'>"
+        "<td style='padding:10px 16px;font-size:13px;font-weight:600;color:#002B8F;'>Issue Type</td>"
+        f"<td style='padding:10px 16px;font-size:13px;'>{issue_type}</td></tr>"
+        "<tr style='background:#ffffff;'>"
+        "<td style='padding:10px 16px;font-size:13px;font-weight:600;color:#002B8F;'>Your Request</td>"
+        f"<td style='padding:10px 16px;font-size:13px;'>{issue_desc}</td></tr>"
+        f"<tr style='background:{status_bg};'>"
+        "<td style='padding:10px 16px;font-size:13px;font-weight:600;color:#002B8F;'>Status</td>"
+        f"<td style='padding:10px 16px;font-size:13px;font-weight:700;color:{status_color};'>{status}</td></tr>"
+        "<tr style='background:#f5f7ff;'>"
+        "<td style='padding:10px 16px;font-size:13px;font-weight:600;color:#002B8F;'>Admin Response</td>"
+        f"<td style='padding:10px 16px;font-size:14px;color:#222;line-height:1.7;'>{admin_response}</td></tr>"
+        "</table>"
+        "<p style='font-size:14px;color:#333;margin-top:16px;line-height:1.8;'>"
+        "If you have further questions, please raise a new ticket from within the portal "
+        f"or contact <a href='mailto:{ADMIN_EMAIL}' style='color:#0033A0;'>{ADMIN_EMAIL}</a>.</p>"
+        "</div></div></body></html>"
+    )
+
+
+def send_helpdesk_response_email(
+    to_email: str,
+    location_code: str,
+    issue_type: str,
+    issue_desc: str,
+    admin_response: str,
+    status: str = "Resolved",
+) -> dict:
+    """Email Admin's HelpDesk response to the location in-charge."""
+    subject = (
+        f"HPCL SOD MIS — Your {issue_type} is {status} | Location {location_code}"
+    )
+    html = _build_helpdesk_response_html(
+        location_code, issue_type, issue_desc, admin_response, status
+    )
+    return _send_outlook(to_email, subject, html)
+
+
 def send_forgot_password_email(user_id: str, issue_text: str) -> dict:
     """Send a password reset / help request email to Admin via Outlook."""
     subject = f"SOD e-MIS: Password Reset Request — User ID {user_id}"

@@ -530,6 +530,55 @@ def request_password_reset(location_code: str) -> dict:
         return {"ok": False, "msg": f"System error: {e}"}
 
 
+_HELPDESK_HEADERS = [
+    "timestamp", "location_code", "issue_type",
+    "issue_desc", "status", "admin_response", "responded_at",
+]
+
+
+@st.cache_data(ttl=30)
+def get_helpdesk_tickets() -> list:
+    """Return all helpdesk tickets (newest first).
+
+    Each ticket dict includes a 'row' key = 1-based sheet row so
+    respond_to_helpdesk_ticket() can update the correct row.
+    """
+    try:
+        ws   = _ensure_ws(TABS["HELPDESK"], _HELPDESK_HEADERS)
+        rows = ws.get_all_values()
+        out  = []
+        for i, row in enumerate(rows[1:], start=2):
+            row = (row + [""] * 7)[:7]
+            out.append({
+                "row":            i,
+                "timestamp":      row[0],
+                "location_code":  row[1],
+                "issue_type":     row[2],
+                "issue_desc":     row[3],
+                "status":         row[4] or "Pending",
+                "admin_response": row[5],
+                "responded_at":   row[6],
+            })
+        return list(reversed(out))
+    except Exception:
+        return []
+
+
+def respond_to_helpdesk_ticket(row: int, response: str,
+                                status: str, updated_by: str) -> dict:
+    """Write admin response + status + timestamp back to the sheet row."""
+    try:
+        ws  = _ensure_ws(TABS["HELPDESK"], _HELPDESK_HEADERS)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.update(f"E{row}:G{row}", [[status, response, now]])
+        get_helpdesk_tickets.clear()
+        audit_log(updated_by, "HelpDesk Response",
+                  f"Row {row} → {status}: {response[:80]}")
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
 def log_help_request(location_code: str, issue_desc: str,
                      issue_type: str = "Help Request") -> dict:
     try:

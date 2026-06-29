@@ -4006,6 +4006,18 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 st.session_state["selected_section"] = "email_review"
                 st.rerun()
 
+            # HelpDesk button with pending count badge
+            _hd_pending = sum(
+                1 for t in sheets.get_helpdesk_tickets() if t["status"] == "Pending"
+            )
+            _hd_label = (
+                f"🎫  Help Desk  ({_hd_pending} pending)"
+                if _hd_pending else "🎫  Help Desk"
+            )
+            if st.button(_hd_label, key="btn_helpdesk_nav", use_container_width=True):
+                st.session_state["selected_section"] = "helpdesk"
+                st.rerun()
+
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
@@ -4712,6 +4724,160 @@ def show_analytics_page(user: dict):
       <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Analytics Dashboard</span>
     </div>""", unsafe_allow_html=True)
+
+
+def show_helpdesk_admin(user: dict):
+    """Admin-only HelpDesk page: view tickets, respond, and email the maker."""
+    import emails as _em
+
+    c_title, c_back = st.columns([5, 1])
+    with c_title:
+        st.markdown(
+            '<div style="font-size:24px;font-weight:800;color:#001F5E;margin-bottom:2px;">'
+            '🎫 Help Desk — Location Issues &amp; Requests</div>'
+            '<div style="font-size:13px;color:#666;margin-bottom:6px;">'
+            'Review maker submissions, add your response, and notify the location by email.</div>',
+            unsafe_allow_html=True,
+        )
+    with c_back:
+        if st.button("← Dashboard", key="btn_hd_back", use_container_width=True):
+            st.session_state.pop("selected_section", None)
+            st.rerun()
+
+    st.markdown("---")
+
+    tickets = sheets.get_helpdesk_tickets()
+
+    if not tickets:
+        st.info("No helpdesk tickets yet.")
+        return
+
+    # ── Summary KPIs ──────────────────────────────────────────────────────────
+    pending  = sum(1 for t in tickets if t["status"] == "Pending")
+    resolved = sum(1 for t in tickets if t["status"] == "Resolved")
+    inprog   = len(tickets) - pending - resolved
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Tickets",  len(tickets))
+    k2.metric("Pending",        pending,  delta=f"-{pending}" if pending else None,
+              delta_color="inverse")
+    k3.metric("In Progress",    inprog)
+    k4.metric("Resolved",       resolved)
+
+    st.markdown("---")
+
+    # ── Filter ────────────────────────────────────────────────────────────────
+    fc1, fc2 = st.columns([2, 4])
+    with fc1:
+        filter_status = st.selectbox(
+            "Filter by status", ["All", "Pending", "In Progress", "Resolved"],
+            key="hd_filter_status"
+        )
+    with fc2:
+        filter_loc = st.text_input("Filter by Location Code", placeholder="e.g. 1292",
+                                   key="hd_filter_loc")
+
+    shown = [
+        t for t in tickets
+        if (filter_status == "All" or t["status"] == filter_status)
+        and (not filter_loc or filter_loc.strip() in t["location_code"])
+    ]
+
+    if not shown:
+        st.warning("No tickets match the filter.")
+        return
+
+    em_map = _em.get_location_email_map()
+
+    # ── Ticket list ───────────────────────────────────────────────────────────
+    for t in shown:
+        loc   = t["location_code"]
+        email = em_map.get(loc, "")
+        s     = t["status"]
+        icon  = "🔴" if s == "Pending" else "🟡" if s == "In Progress" else "🟢"
+        ts    = t["timestamp"][:16].replace("T", " ") if t["timestamp"] else "—"
+
+        label = f"{icon} [{s}] &nbsp; **{loc}** — {t['issue_type']} &nbsp;·&nbsp; _{ts}_"
+
+        with st.expander(label, expanded=(s == "Pending")):
+            st.markdown(f"**Location Code:** `{loc}`")
+            st.markdown(f"**Email on file:** `{email or '— NOT FOUND —'}`")
+            st.markdown(f"**Issue Type:** {t['issue_type']}")
+            st.markdown("**Issue / Request:**")
+            st.info(t["issue_desc"] or "—")
+
+            if t["admin_response"]:
+                st.markdown("**Previous Admin Response:**")
+                st.success(t["admin_response"])
+                if t["responded_at"]:
+                    st.caption(f"Responded at: {t['responded_at']}")
+
+            st.markdown("---")
+            with st.form(key=f"hd_form_{t['row']}"):
+                new_response = st.text_area(
+                    "Your Response",
+                    value=t["admin_response"],
+                    height=100,
+                    placeholder="Type your response here…",
+                    key=f"hd_resp_{t['row']}",
+                )
+                new_status = st.selectbox(
+                    "Update Status",
+                    ["Pending", "In Progress", "Resolved"],
+                    index=["Pending", "In Progress", "Resolved"].index(s)
+                    if s in ["Pending", "In Progress", "Resolved"] else 0,
+                    key=f"hd_status_{t['row']}",
+                )
+                send_email = st.checkbox(
+                    f"📧  Email response to location {loc}"
+                    + (f" ({email})" if email else " (no email on file)"),
+                    value=bool(email),
+                    disabled=not bool(email),
+                    key=f"hd_email_{t['row']}",
+                )
+
+                submitted = st.form_submit_button(
+                    "💾  Save Response" + (" & Send Email" if email else ""),
+                    use_container_width=True, type="primary"
+                )
+
+            if submitted:
+                if not new_response.strip():
+                    st.warning("Please type a response before saving.")
+                else:
+                    _r = sheets.respond_to_helpdesk_ticket(
+                        t["row"], new_response.strip(), new_status, user["userId"]
+                    )
+                    if _r["ok"]:
+                        if send_email and email:
+                            ok_e, _ = _em.email_configured()
+                            if ok_e:
+                                _er = _em.send_helpdesk_response_email(
+                                    to_email=email,
+                                    location_code=loc,
+                                    issue_type=t["issue_type"],
+                                    issue_desc=t["issue_desc"],
+                                    admin_response=new_response.strip(),
+                                    status=new_status,
+                                )
+                                if _er["ok"]:
+                                    st.success(
+                                        f"✅ Response saved & email sent to {email}."
+                                    )
+                                else:
+                                    st.warning(
+                                        f"Response saved but email failed: {_er['msg']}"
+                                    )
+                            else:
+                                st.warning(
+                                    "Response saved, but Outlook is not available. "
+                                    "Open Outlook and retry from here to send the email."
+                                )
+                        else:
+                            st.success("✅ Response saved.")
+                        st.rerun()
+                    else:
+                        st.error(f"Could not save: {_r['msg']}")
 
 
 def show_email_review(user: dict):
@@ -7946,6 +8112,8 @@ def main():
                             st.session_state.get("current_month_label", ""))
             elif sec == "email_review" and role == "Admin":
                 show_email_review(user)
+            elif sec == "helpdesk" and role == "Admin":
+                show_helpdesk_admin(user)
             else:
                 show_hqo_dashboard(user)
         else:
