@@ -254,7 +254,7 @@ def build_preview_html(zone_name: str, month_year: str,
 
 def get_zone_recipients(zone_name: str) -> dict:
     """Return {"to": ..., "cc": ..., "bcc": ...} for a zone, or empty strings."""
-    c = ZONE_EMAIL_MAP.get(zone_name, {})
+    c = _get_zone_map().get(zone_name, {})
     return {
         "to":  c.get("to", ""),
         "cc":  c.get("cc", ""),
@@ -270,7 +270,7 @@ def send_zone_reminder(zone_name: str, month_year: str,
                        test_mode: bool = False,
                        test_email: str = "") -> dict:
     """Send one reminder email for a zone via PowerShell + Outlook."""
-    contacts = ZONE_EMAIL_MAP.get(zone_name)
+    contacts = _get_zone_map().get(zone_name)
     if not contacts:
         return {"ok": False, "msg": f"No email contacts configured for: {zone_name}"}
 
@@ -352,7 +352,7 @@ def send_all_reminders(month_year: str,
                 "errors": errors, "msg": msg}
 
     for zone_name, locs in zones_to_send:
-        if zone_name not in ZONE_EMAIL_MAP:
+        if zone_name not in _get_zone_map():
             errors.append(f"{zone_name}: no email config")
             failed_count += 1
             continue
@@ -503,6 +503,42 @@ LOCATION_EMAIL_MAP = {
 # Credential emails for zone accounts (BLRMIS, BHOMIS, etc.) go to these recipients.
 
 ZONE_CREDENTIAL_MAP = {k: v for k, v in ZONE_EMAIL_MAP.items()}
+
+
+# ── Dynamic email maps (sheet-backed with hardcoded fallback) ─────────────────
+
+def _get_loc_map() -> dict:
+    """Location email map — sheet first, hardcoded fallback."""
+    try:
+        import sheets as _sh
+        loc, _ = _sh.get_email_master_maps()
+        if loc:
+            return loc
+    except Exception:
+        pass
+    return LOCATION_EMAIL_MAP
+
+
+def _get_zone_map() -> dict:
+    """Zone email map — sheet first, hardcoded fallback."""
+    try:
+        import sheets as _sh
+        _, zone = _sh.get_email_master_maps()
+        if zone:
+            return zone
+    except Exception:
+        pass
+    return ZONE_EMAIL_MAP
+
+
+def get_location_email_map() -> dict:
+    """Public accessor for the location→email dict (dynamic)."""
+    return _get_loc_map()
+
+
+def get_zone_email_map() -> dict:
+    """Public accessor for the zone→{to,cc} dict (dynamic)."""
+    return _get_zone_map()
 
 
 def build_credentials_email_html(

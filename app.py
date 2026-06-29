@@ -1251,6 +1251,35 @@ def _dashboard_css():
     """, unsafe_allow_html=True)
 
 
+# ── Maintenance page ──────────────────────────────────────────────────────────
+
+def show_maintenance_page():
+    """Shown to non-Admin users when maintenance_mode setting is TRUE."""
+    st.markdown("""
+<style>
+.maint-wrap{display:flex;flex-direction:column;align-items:center;
+            justify-content:center;min-height:70vh;text-align:center;}
+.maint-icon{font-size:72px;margin-bottom:18px;}
+.maint-title{font-size:32px;font-weight:800;color:#001F5E;margin-bottom:10px;}
+.maint-sub{font-size:16px;color:#555;max-width:480px;line-height:1.7;}
+.maint-badge{display:inline-block;margin-top:22px;background:#002B8F;color:white;
+             font-size:13px;font-weight:700;padding:8px 22px;border-radius:20px;
+             letter-spacing:0.5px;}
+</style>
+<div class="maint-wrap">
+  <div class="maint-icon">🔧</div>
+  <div class="maint-title">App Under Upgrade</div>
+  <div class="maint-sub">
+    The HPCL SOD MIS Portal is currently undergoing scheduled maintenance.<br><br>
+    We will be back shortly. Please try again in some time.<br>
+    For urgent matters, contact
+    <a href="mailto:shoaibrehman@hpcl.in" style="color:#002B8F;">shoaibrehman@hpcl.in</a>.
+  </div>
+  <div class="maint-badge">HPCL SOD — Supply, Operations &amp; Distribution</div>
+</div>
+""", unsafe_allow_html=True)
+
+
 # ── Login page ────────────────────────────────────────────────────────────────
 
 def show_login():
@@ -3995,6 +4024,24 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 else:
                     st.error(res.get("msg", "Could not save setting."))
 
+            # ── Maintenance mode toggle (Admin only) ──────────────────────
+            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+            maint_on  = sheets.get_setting("maintenance_mode", "FALSE") == "TRUE"
+            maint_new = st.toggle(
+                "🔧  Maintenance Mode",
+                value=maint_on,
+                key="maint_mode_toggle",
+                help="When ON, non-Admin users see an 'App Under Upgrade' page",
+            )
+            if maint_new != maint_on:
+                res2 = sheets.set_setting("maintenance_mode",
+                                          "TRUE" if maint_new else "FALSE",
+                                          user["userId"])
+                if res2["ok"]:
+                    st.success("Maintenance mode " + ("ON 🔧" if maint_new else "OFF ✅"))
+                else:
+                    st.error(res2.get("msg", "Could not save setting."))
+
         # ── Chatbot nav button (Zone + Admin when enabled) ────────────────
         if sheets.get_setting("chatbot_enabled", "FALSE") == "TRUE":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
@@ -4707,7 +4754,7 @@ def show_email_review(user: dict):
         st.error(f"Could not load checker accounts: {exc}")
         chk_accts = []
 
-    em_map = _em.LOCATION_EMAIL_MAP
+    em_map = _em.get_location_email_map()
 
     def _build_loc_rows(accts):
         rows = []
@@ -4735,7 +4782,7 @@ def show_email_review(user: dict):
 
     zone_rows_data = []
     for a in zone_accts:
-        cfg = _em.ZONE_CREDENTIAL_MAP.get(a.get("zone", ""), {})
+        cfg = _em.get_zone_email_map().get(a.get("zone", ""), {})
         zone_rows_data.append({
             "Zone":     a.get("zone", ""),
             "User ID":  a.get("userId", ""),
@@ -4761,6 +4808,46 @@ def show_email_review(user: dict):
     k3.metric("Checkers — with email", f"{chk_ok} / {chk_tot}")
     k4.metric("Checkers — no email",   chk_tot - chk_ok)
     k5.metric("Zones — with email",    f"{zone_ok} / {zone_tot}")
+
+    # ── Email Master management strip ─────────────────────────────────────────
+    with st.expander("⚙️  Email Master — Manage email IDs without code changes", expanded=False):
+        st.caption(
+            "Email addresses are read from the **EmailMaster** Google Sheet tab "
+            "(refreshed every 5 min). Edit the sheet directly to change any email. "
+            "Use **Seed** once to migrate all current IDs into the sheet."
+        )
+        _src_info = "🟢 Live: reading from **EmailMaster** sheet" \
+            if sheets.get_email_master_maps()[0] else \
+            "🟡 Fallback: EmailMaster sheet is empty — using hardcoded defaults"
+        st.info(_src_info)
+
+        _mc1, _mc2, _mc3 = st.columns([2, 2, 3])
+        with _mc1:
+            if st.button("🌱  Seed EmailMaster from code", use_container_width=True,
+                         help="Populate the EmailMaster sheet with current hardcoded emails. "
+                              "Safe to run again — overwrites existing data."):
+                with st.spinner("Writing email data to Google Sheet…"):
+                    _seed_res = sheets.seed_email_master(
+                        _em.LOCATION_EMAIL_MAP, _em.ZONE_EMAIL_MAP
+                    )
+                if _seed_res["ok"]:
+                    st.success(f"✅ Seeded {_seed_res['count']} rows into EmailMaster. "
+                               "Edit the sheet to update any address.")
+                else:
+                    st.error(f"Seed failed: {_seed_res['msg']}")
+        with _mc2:
+            if st.button("🔄  Refresh email maps now", use_container_width=True,
+                         help="Force-clear the 5-min cache and reload from the sheet."):
+                sheets.get_email_master_maps.clear()
+                st.success("Cache cleared — reload the page to see updated addresses.")
+        with _mc3:
+            st.markdown(
+                "<div style='font-size:12px;color:#666;padding-top:6px;'>"
+                "To change an email: open <b>EmailMaster</b> tab in Google Sheets → "
+                "find the row (Location or Zone) → edit the <b>email</b> column → "
+                "click Refresh above (or wait 5 min).</div>",
+                unsafe_allow_html=True,
+            )
 
     st.markdown("---")
 
@@ -7819,6 +7906,12 @@ def main():
     user = st.session_state.user
 
     role = (user or {}).get("role", "")
+
+    # ── Maintenance mode: block non-Admin users ───────────────────────────────
+    _maint_on = sheets.get_setting("maintenance_mode", "FALSE").upper() == "TRUE"
+    if _maint_on and role not in ("Admin",) and (user is not None) and page != "login":
+        show_maintenance_page()
+        return
 
     if user is None or page == "login":
         show_login()

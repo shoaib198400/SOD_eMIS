@@ -72,6 +72,7 @@ TABS = {
     "MI_EXT_PIPELINE":      "MI_EXT_PIPELINE",
     "MI_TANK_STATUS":       "MI_TANK_STATUS",
     "TANK_MASTER":          "TankMaster",
+    "EMAIL_MASTER":         "EmailMaster",
 }
 
 # ── Header rows for auto-created tabs ────────────────────────────────────────
@@ -86,7 +87,8 @@ _RR_HEADERS = [
     "reason", "status", "actioned_by", "actioned_at", "notes", "created_at",
 ]
 
-_SETTINGS_HEADERS = ["key", "value", "updated_by", "updated_at"]
+_SETTINGS_HEADERS    = ["key", "value", "updated_by", "updated_at"]
+_EMAIL_MASTER_HEADERS = ["type", "code", "name", "email", "cc"]
 
 # Detail-table definitions: sheet_headers (Google Sheet columns) + data_keys (editable fields)
 _DETAIL_DEF = {
@@ -1618,6 +1620,59 @@ def set_setting(key: str, value: str, updated_by: str = "system") -> dict:
         ws.append_row([key, value, updated_by, now], value_input_option="RAW")
         get_setting.clear()
         return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+# ── EmailMaster: dynamic email maps ──────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def get_email_master_maps() -> tuple:
+    """Read EmailMaster sheet → (loc_map, zone_map).
+
+    Returns (None, None) if the tab is empty or missing — callers should
+    fall back to the hardcoded dicts in emails.py.
+    ttl=300 means email changes in the sheet take effect within 5 minutes.
+    """
+    try:
+        ws   = _ensure_ws(TABS["EMAIL_MASTER"], _EMAIL_MASTER_HEADERS)
+        rows = ws.get_all_values()
+        if len(rows) < 2:
+            return None, None
+        loc_map  = {}
+        zone_map = {}
+        for row in rows[1:]:
+            row = (row + [""] * 5)[:5]
+            t, code, _name, email, cc = [c.strip() for c in row]
+            if not code or not email:
+                continue
+            if t.lower() == "location":
+                loc_map[code] = email
+            elif t.lower() == "zone":
+                zone_map[code] = {"to": email, "cc": cc}
+        return (loc_map or None), (zone_map or None)
+    except Exception:
+        return None, None
+
+
+def seed_email_master(location_map: dict, zone_map: dict) -> dict:
+    """Populate (or overwrite) the EmailMaster tab from the given dicts.
+
+    Called once from the Mail Trigger page to migrate hardcoded data to the
+    sheet so the admin can edit it there going forward.
+    """
+    try:
+        ws = _ensure_ws(TABS["EMAIL_MASTER"], _EMAIL_MASTER_HEADERS)
+        ws.batch_clear(["A2:E2000"])
+        rows = []
+        for code, email in sorted(location_map.items()):
+            rows.append(["Location", code, "", email, ""])
+        for zone, v in sorted(zone_map.items()):
+            rows.append(["Zone", zone, zone, v.get("to", ""), v.get("cc", "")])
+        if rows:
+            ws.append_rows(rows, value_input_option="RAW")
+        get_email_master_maps.clear()
+        return {"ok": True, "count": len(rows)}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
