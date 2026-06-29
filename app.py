@@ -4836,6 +4836,14 @@ def show_helpdesk_admin(user: dict):
                     key=f"hd_email_{t['row']}",
                 )
 
+                if email:
+                    st.markdown(
+                        f"<div style='font-size:12px;color:#555;padding:4px 0 6px;'>"
+                        f"📤 &nbsp;<b>FROM:</b> shoaibrehman@hpcl.in &nbsp;&nbsp;"
+                        f"<b>TO:</b> {email}</div>",
+                        unsafe_allow_html=True,
+                    )
+
                 submitted = st.form_submit_button(
                     "💾  Save Response" + (" & Send Email" if email else ""),
                     use_container_width=True, type="primary"
