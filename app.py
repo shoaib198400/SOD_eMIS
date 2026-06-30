@@ -5996,7 +5996,7 @@ def show_reports_page(user: dict):
     if role == "Admin":
         pending_zones = sorted({
             r["zone"] for r in all_rows
-            if r.get("status") != "SUBMITTED" and r.get("zone") in _emails.ZONE_EMAIL_MAP
+            if r.get("status") != "SUBMITTED" and r.get("zone") in _emails.get_zone_email_map()
         })
 
         st.markdown(
