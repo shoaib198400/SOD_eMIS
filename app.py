@@ -7552,9 +7552,12 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
             for rid, row in zip(ids, saved):
                 pfx = f"mi_{T}_{uid}_{month_year}_{rid}"
                 tn  = row.get("tank_no", "")
-                st.session_state[f"{pfx}_tank"]  = (
-                    tn if tn in tank_opts else (tank_opts[0] if tank_opts else "Other Tanks")
-                )
+                if tn in tank_opts:
+                    st.session_state[f"{pfx}_tank"]       = tn
+                    st.session_state[f"{pfx}_tank_other"] = ""
+                else:
+                    st.session_state[f"{pfx}_tank"]       = "Other Tanks"
+                    st.session_state[f"{pfx}_tank_other"] = tn if tn not in ("", "NA") else ""
                 for df in ("cleaning_completed_date", "cleaning_due_date",
                            "inspection_date", "inspection_due_date",
                            "painting_date", "painting_due_date"):
@@ -7620,6 +7623,13 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
             tn_idx = tank_opts.index(tn_def) if tn_def in tank_opts else len(tank_opts) - 1
             st.selectbox("Tank No. *", tank_opts, index=tn_idx, key=f"{pfx}_tank",
                          help="Select tank number from Tank Master list")
+            if st.session_state.get(f"{pfx}_tank") == "Other Tanks":
+                st.text_input(
+                    "Specify Tank No. *",
+                    key=f"{pfx}_tank_other",
+                    placeholder="Enter tank number not in the list above",
+                    help="Type the SAP Tank No. or local name for this tank",
+                )
 
             # Cleaning dates (Y, Z)
             c1, c2 = st.columns(2)
@@ -7763,8 +7773,11 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
             rows_to_save = []
             errors = []
             for i, rid in enumerate(st.session_state.get(sk_rows, [])):
-                pfx    = f"mi_{T}_{uid}_{month_year}_{rid}"
-                tank   = st.session_state.get(f"{pfx}_tank", "")
+                pfx        = f"mi_{T}_{uid}_{month_year}_{rid}"
+                tank       = st.session_state.get(f"{pfx}_tank", "")
+                tank_other = (st.session_state.get(f"{pfx}_tank_other") or "").strip()
+                if tank == "Other Tanks":
+                    tank = tank_other  # use custom value as the saved tank_no
                 ext    = st.session_state.get(f"{pfx}_ext", "NA")
                 efn    = (st.session_state.get(f"{pfx}_efn") or "").strip()
                 status = st.session_state.get(f"{pfx}_status", "")
@@ -7779,7 +7792,10 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
                          for df in date_fields}
 
                 if not tank:
-                    errors.append(f"Tank {i+1}: Tank No. is required.")
+                    if st.session_state.get(f"{pfx}_tank") == "Other Tanks":
+                        errors.append(f"Tank {i+1}: Please specify the tank number in the text box below the dropdown.")
+                    else:
+                        errors.append(f"Tank {i+1}: Tank No. is required.")
                 if ext == "Yes" and not efn:
                     errors.append(f"Tank {i+1}: eFN# is required when Extension = Yes.")
                 if not status:
