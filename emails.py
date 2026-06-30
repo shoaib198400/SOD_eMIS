@@ -379,6 +379,188 @@ def send_all_reminders(month_year: str,
     }
 
 
+# ── Location pending reminder ──────────────────────────────────────────────────
+
+def build_location_pending_html(
+    loc_name: str,
+    loc_code: str,
+    month_year: str,
+    status: str,
+    completion_pct: float,
+    due_date: date,
+) -> str:
+    """Build HTML for an individual location's pending submission reminder email."""
+    today   = date.today()
+    overdue = today > due_date
+    due_str = due_date.strftime("%d %b %Y")
+    status_label = status.replace("_", " ").title()
+    pct = int(float(completion_pct))
+
+    overdue_banner = ""
+    if overdue:
+        overdue_banner = (
+            f"<div style='background:#fdecea;border:2px solid #e53935;border-radius:8px;"
+            f"padding:12px 18px;margin:16px 0;color:#b71c1c;font-weight:700;font-size:14px;'>"
+            f"&#9888;&nbsp; OVERDUE — Submission deadline was {due_str}. "
+            f"Immediate action is required.</div>"
+        )
+
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
+        "<body style='font-family:Arial,sans-serif;margin:0;padding:0;background:#f4f6fb;'>"
+        "<div style='max-width:620px;margin:30px auto;background:white;border-radius:14px;"
+        "box-shadow:0 2px 12px rgba(0,0,0,0.10);overflow:hidden;'>"
+        "<div style='background:#002B8F;padding:22px 30px;'>"
+        "<div style='color:white;font-size:20px;font-weight:700;letter-spacing:0.5px;'>"
+        "HPCL SOD &mdash; MIS Portal</div>"
+        "<div style='color:#a8bfe8;font-size:12px;margin-top:4px;'>"
+        "Supply, Operations &amp; Distribution &nbsp;&middot;&nbsp; MIS Submission Reminder</div>"
+        "</div>"
+        "<div style='padding:28px 30px;'>"
+        f"<p style='font-size:15px;color:#333;margin-top:0;'>Dear <strong>{loc_name} Team</strong>,</p>"
+        f"<p style='font-size:14px;color:#444;line-height:1.8;'>"
+        f"This is a reminder that your MIS data submission for <strong>{month_year}</strong> "
+        f"is <strong>pending</strong>. Please log in and complete your submission at the earliest.</p>"
+        f"{overdue_banner}"
+        "<table style='width:100%;border-collapse:collapse;margin:18px 0;'>"
+        "<tr style='background:#002B8F;'>"
+        "<th style='padding:10px 16px;color:white;text-align:left;font-size:13px;width:45%;'>Detail</th>"
+        "<th style='padding:10px 16px;color:white;text-align:left;font-size:13px;'>Value</th></tr>"
+        "<tr style='background:#f5f7ff;'>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Location</td>"
+        f"<td style='padding:10px 16px;font-size:14px;'>{loc_name} ({loc_code})</td></tr>"
+        "<tr style='background:#ffffff;'>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Month</td>"
+        f"<td style='padding:10px 16px;font-size:14px;'>{month_year}</td></tr>"
+        "<tr style='background:#f5f7ff;'>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Status</td>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:700;color:#b71c1c;'>{status_label}</td></tr>"
+        "<tr style='background:#ffffff;'>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Completion</td>"
+        f"<td style='padding:10px 16px;font-size:14px;'>{pct}%</td></tr>"
+        "<tr style='background:#fdecea;'>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:600;color:#002B8F;'>Submission Deadline</td>"
+        f"<td style='padding:10px 16px;font-size:14px;font-weight:700;color:#b71c1c;'>{due_str}</td></tr>"
+        "</table>"
+        f"<p style='font-size:14px;color:#333;margin-top:16px;line-height:1.8;'>"
+        f"For assistance contact "
+        f"<a href='mailto:{SENDER_EMAIL}' style='color:#0033A0;'>{SENDER_EMAIL}</a>.</p>"
+        "</div></div></body></html>"
+    )
+
+
+def send_location_pending_reminder(
+    to_email: str,
+    loc_name: str,
+    loc_code: str,
+    month_year: str,
+    status: str,
+    completion_pct: float,
+    due_date: date,
+    test_mode: bool = False,
+    test_email: str = "",
+) -> dict:
+    """Send a pending MIS submission reminder email to one location in-charge."""
+    today   = date.today()
+    overdue = today > due_date
+    pfx     = "[TEST] " if test_mode else ""
+    subject = (
+        f"{pfx}OVERDUE — MIS Submission Pending | {loc_name} | {month_year}"
+        if overdue else
+        f"{pfx}Reminder — MIS Submission Pending | {loc_name} | {month_year}"
+    )
+    html_body  = build_location_pending_html(
+        loc_name, loc_code, month_year, status, completion_pct, due_date
+    )
+    actual_to  = (test_email or SENDER_EMAIL) if test_mode else to_email
+    actual_bcc = "" if test_mode else SENDER_EMAIL
+    return _send_outlook(actual_to, subject, html_body, "", actual_bcc)
+
+
+def send_all_location_reminders(
+    month_year: str,
+    all_location_rows: list,
+    due_date: date,
+    test_mode: bool = False,
+    test_email: str = "",
+) -> dict:
+    """Send individual pending-submission reminders to all non-submitted locations."""
+    ok, err = email_configured()
+    if not ok:
+        return {"ok": False, "sent": 0, "skipped": 0, "failed": 0, "msg": err}
+
+    loc_email_map = _get_loc_map()
+    pending = [r for r in all_location_rows if r.get("status") != "SUBMITTED"]
+    if not pending:
+        return {
+            "ok": True, "sent": 0, "skipped": 0, "failed": 0,
+            "msg": "All locations submitted. No location reminders sent.",
+        }
+
+    sent, skipped, failed, errors = 0, 0, 0, []
+
+    if test_mode:
+        r = pending[0]
+        loc_code = str(r.get("userId", ""))
+        to_email = loc_email_map.get(loc_code)
+        if not to_email:
+            return {
+                "ok": False, "sent": 0, "skipped": 1, "failed": 0,
+                "msg": f"[TEST] First pending location ({r.get('locName', '')}) has no email configured.",
+            }
+        res = send_location_pending_reminder(
+            to_email, r.get("locName", ""), loc_code,
+            month_year, r.get("status", "NOT_STARTED"),
+            float(r.get("completion_pct", 0)), due_date,
+            test_mode=True, test_email=test_email or SENDER_EMAIL,
+        )
+        n_with_email = len([x for x in pending if loc_email_map.get(str(x.get("userId", "")))])
+        mode = res.get("mode", "sent")
+        if res["ok"]:
+            return {
+                "ok": True, "sent": 1, "skipped": 0, "failed": 0,
+                "msg": (
+                    f"[TEST] Location email {mode} to {test_email or SENDER_EMAIL} "
+                    f"(sample: {r.get('locName', '')}). "
+                    f"In production would send to {n_with_email} location(s), "
+                    f"skip {len(pending)-n_with_email} (no email)."
+                ),
+            }
+        return {"ok": False, "sent": 0, "skipped": 0, "failed": 1,
+                "msg": f"[TEST] {res.get('msg', '')}"}
+
+    for r in pending:
+        loc_code = str(r.get("userId", ""))
+        to_email = loc_email_map.get(loc_code)
+        if not to_email:
+            skipped += 1
+            continue
+        res = send_location_pending_reminder(
+            to_email, r.get("locName", ""), loc_code,
+            month_year, r.get("status", "NOT_STARTED"),
+            float(r.get("completion_pct", 0)), due_date,
+        )
+        if res["ok"]:
+            sent += 1
+        else:
+            failed += 1
+            errors.append(f"{r.get('locName', loc_code)}: {res.get('msg', '')}")
+
+    all_ok = (failed == 0)
+    parts = [f"Sent to {sent} location(s)"]
+    if skipped:
+        parts.append(f"{skipped} skipped (no email configured)")
+    if failed:
+        parts.append(f"{failed} failed")
+    msg = ". ".join(parts) + "."
+    if errors:
+        msg += " Errors: " + "; ".join(errors[:3])
+    return {
+        "ok": all_ok, "sent": sent, "skipped": skipped,
+        "failed": failed, "errors": errors, "msg": msg,
+    }
+
+
 # ── Location credential email map ─────────────────────────────────────────────
 # Source: SOD Location In-charges.msg (Outlook contact group, extracted 2026-06)
 # Keys = Plant Code (str), Values = Location In-charge email

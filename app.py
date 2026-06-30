@@ -2,6 +2,7 @@
 
 import base64
 import os
+import platform
 from datetime import date
 
 import pandas as pd
@@ -5994,191 +5995,267 @@ def show_reports_page(user: dict):
 
     # ── Email reminders (Admin only) ──────────────────────────────────────────
     if role == "Admin":
+        import streamlit.components.v1 as _components
+
+        _zone_map  = _emails.get_zone_email_map()
+        _loc_map   = _emails.get_location_email_map()
+
         pending_zones = sorted({
             r["zone"] for r in all_rows
-            if r.get("status") != "SUBMITTED" and r.get("zone") in _emails.get_zone_email_map()
+            if r.get("status") != "SUBMITTED" and r.get("zone") in _zone_map
         })
+        pending_loc_rows = [r for r in all_rows if r.get("status") != "SUBMITTED"]
+        n_loc_with_email = sum(
+            1 for r in pending_loc_rows if _loc_map.get(str(r.get("userId", "")))
+        )
 
+        # ── Section header with Refresh button ────────────────────────────────
+        hdr_col, ref_col = st.columns([5, 1])
+        with hdr_col:
+            st.markdown(
+                '<div style="background:linear-gradient(90deg,#001a6e,#0033A0,#0050d0);color:white;'
+                'font-size:14px;font-weight:700;padding:11px 20px;border-radius:10px;margin:18px 0 8px;">'
+                'Email Reminders</div>',
+                unsafe_allow_html=True,
+            )
+        with ref_col:
+            st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+            if st.button("🔄 Refresh Email Maps", key="rpt_refresh_emailmaps",
+                         use_container_width=True,
+                         help="Force-refresh email changes from EmailMaster sheet"):
+                try:
+                    import sheets as _sh
+                    _sh.get_email_master_maps.clear()
+                    st.toast("Email maps refreshed from sheet.", icon="✅")
+                    st.rerun()
+                except Exception as _re:
+                    st.toast(f"Refresh failed: {_re}", icon="❌")
+
+        # ── FROM / BCC banner ──────────────────────────────────────────────────
+        _bcc_str = "; ".join(_emails.BCC_EMAILS)
         st.markdown(
-            '<div style="background:linear-gradient(90deg,#001a6e,#0033A0,#0050d0);color:white;'
-            'font-size:14px;font-weight:700;padding:11px 20px;border-radius:10px;margin:18px 0 8px;">'
-            'Email Reminders</div>',
+            f'<div style="background:#e8f4fd;border:1.5px solid #1565C0;border-radius:10px;'
+            f'padding:12px 18px;margin-bottom:10px;font-size:13px;color:#0d47a1;line-height:1.9;">'
+            f'<strong>FROM:</strong>&nbsp; {_emails.SENDER_EMAIL}<br>'
+            f'<strong>BCC&nbsp; :</strong>&nbsp; {_bcc_str}</div>',
             unsafe_allow_html=True,
         )
 
         _email_ok, _email_err = _emails.email_configured()
         if not _email_ok:
-            if _email_err == "local_only":
-                # Running on cloud / Linux — email is a local-only feature
-                st.markdown(
-                    '<div style="background:#e8f4fd;border:1.5px solid #1565C0;border-radius:12px;'
-                    'padding:14px 20px;margin-bottom:12px;">'
-                    '<div style="font-size:13px;font-weight:700;color:#0d47a1;margin-bottom:6px;">'
-                    '&#x2709;&nbsp; Email via Outlook — Local Feature</div>'
-                    '<div style="font-size:13px;color:#1a237e;line-height:1.8;">'
-                    'Reminder emails are sent through <strong>Microsoft Outlook</strong> running on '
-                    'your Windows PC. To send emails, run the app <strong>locally</strong> with '
-                    'Outlook open and signed in as <strong>shoaibrehman@hpcl.in</strong>.<br><br>'
-                    'No email configuration is needed — emails go automatically from your HPCL '
-                    'Outlook account.'
-                    '</div></div>',
-                    unsafe_allow_html=True,
+            if platform.system() != "Windows":
+                st.info(
+                    "Reminder emails are sent through **Microsoft Outlook** on your Windows PC. "
+                    "Run the app **locally** with Outlook open and signed in as "
+                    f"**{_emails.SENDER_EMAIL}** to enable this feature."
                 )
             else:
-                st.markdown(
-                    f'<div style="background:#fff8e1;border:1.5px solid #f59e0b;border-radius:12px;'
-                    f'padding:14px 20px;margin-bottom:12px;">'
-                    f'<div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:6px;">'
-                    f'&#9888;&nbsp; Outlook Not Available</div>'
-                    f'<div style="font-size:13px;color:#78350f;line-height:1.7;">'
-                    f'{_email_err}<br><br>'
-                    f'Make sure <strong>Microsoft Outlook is open</strong> and '
-                    f'<strong>pywin32</strong> is installed (<code>pip install pywin32</code>).'
-                    f'</div></div>',
-                    unsafe_allow_html=True,
+                st.warning(
+                    f"Outlook not reachable: {_email_err}  \n"
+                    "Make sure **Outlook is open** and **pywin32** is installed (`pip install pywin32`)."
                 )
         else:
-            st.markdown(
-                f'<div style="background:#fffde7;border:1.5px solid #f59e0b;border-radius:14px;'
-                f'padding:16px 22px;margin-bottom:12px;">'
-                f'<div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:8px;">'
-                f'Send Reminder Emails to Non-Submitting Locations</div>'
-                f'<div style="font-size:13px;color:#78350f;">'
-                f'{len(pending_zones)} zone(s) with pending locations will receive emails via '
-                f'Outlook ({_emails.SENDER_EMAIL}).'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-
-            email_key   = f"_rpt_email_open_{month_year}"
-            confirm_key = f"_rpt_email_confirm_{month_year}"
-            if not st.session_state.get(email_key):
-                if st.button("Show Email Options", key="rpt_email_toggle", use_container_width=False):
-                    st.session_state[email_key] = True
-                    st.session_state[confirm_key] = False
-                    st.rerun()
+            # ── Zone recipients table (always visible) ─────────────────────────
+            if pending_zones:
+                st.markdown(
+                    f"**Zone Reminder Emails — {len(pending_zones)} zone(s) with pending locations**"
+                )
+                zone_rec_rows = []
+                for z in pending_zones:
+                    rcp = _emails.get_zone_recipients(z)
+                    n_pending_here = sum(
+                        1 for r in all_rows
+                        if r.get("zone") == z and r.get("status") != "SUBMITTED"
+                    )
+                    zone_rec_rows.append({
+                        "Zone": z,
+                        "TO (Zone Head)": rcp["to"] or "—",
+                        "CC": rcp["cc"] or "—",
+                        "# Pending": str(n_pending_here),
+                    })
+                st.markdown(
+                    _rpt_table(zone_rec_rows, center_cols={"# Pending"}),
+                    unsafe_allow_html=True,
+                )
             else:
-                # ── Zones to receive emails ───────────────────────────────────
-                st.warning(
-                    "You are about to send reminder emails to zone teams. "
-                    "Verify recipients, preview the email, then confirm before sending."
-                )
-                if pending_zones:
-                    st.markdown(f"**{len(pending_zones)} zone(s) with pending locations:**")
-                else:
-                    st.info("All zones have submitted. No emails to send.")
+                st.success("All zones have submitted. No zone reminder emails to send.")
 
-                # Recipients table
-                with st.expander("Show Email Recipients per Zone", expanded=False):
-                    rec_rows = []
-                    for z in sorted(pending_zones):
-                        rcp = _emails.get_zone_recipients(z)
-                        rec_rows.append({
-                            "Zone": z,
-                            "To (Zone Head)": rcp["to"] or "—",
-                            "CC": rcp["cc"] or "—",
-                            "BCC (HQO)": rcp["bcc"],
-                        })
-                    if rec_rows:
-                        st.markdown(
-                            _rpt_table(rec_rows, center_cols=set()),
-                            unsafe_allow_html=True,
+            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+
+            # ── Also notify individual locations ───────────────────────────────
+            notify_locs = st.checkbox(
+                f"Also send reminder to individual pending locations "
+                f"({n_loc_with_email} of {len(pending_loc_rows)} have email configured)",
+                key=f"rpt_notify_locs_{month_year}",
+                value=False,
+            )
+            if notify_locs and pending_loc_rows:
+                loc_rec_rows = []
+                for r in pending_loc_rows:
+                    lc = str(r.get("userId", ""))
+                    loc_rec_rows.append({
+                        "Code": lc,
+                        "Location": r.get("locName", ""),
+                        "Zone": r.get("zone", ""),
+                        "TO": _loc_map.get(lc) or "⚠ No email",
+                    })
+                with st.expander(
+                    f"Location Recipients — {n_loc_with_email} will receive, "
+                    f"{len(pending_loc_rows)-n_loc_with_email} skipped (no email)",
+                    expanded=True,
+                ):
+                    st.markdown(
+                        _rpt_table(loc_rec_rows, center_cols={"Code"}),
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+
+            # ── Email content + Preview ────────────────────────────────────────
+            _intro_key = f"rpt_custom_intro_{month_year}"
+            custom_intro = st.session_state.get(_intro_key, "")
+
+            with st.expander("Edit / Preview Email Content", expanded=False):
+                custom_intro = st.text_area(
+                    "Opening message in Zone reminder email (leave blank for default)",
+                    key=_intro_key,
+                    height=90,
+                    placeholder=(
+                        "Default: \"This is a reminder that the MIS submission for [Month] "
+                        "is pending for the following locations in your zone. "
+                        "Please ensure submissions are completed at the earliest.\""
+                    ),
+                )
+                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+
+                prev_tab1, prev_tab2 = st.tabs(
+                    ["📧 Zone Email Preview", "📩 Location Email Preview"]
+                )
+
+                with prev_tab1:
+                    sample_zone = pending_zones[0] if pending_zones else ""
+                    if sample_zone:
+                        sample_locs = [
+                            r for r in all_rows
+                            if r.get("zone") == sample_zone
+                            and r.get("status") != "SUBMITTED"
+                        ]
+                        rcp = _emails.get_zone_recipients(sample_zone)
+                        st.caption(
+                            f"**FROM:** {_emails.SENDER_EMAIL}  "
+                            f"**|  TO:** {rcp['to'] or '—'}  "
+                            f"**|  CC:** {rcp['cc'] or '—'}  "
+                            f"**|  BCC:** {'; '.join(_emails.BCC_EMAILS)}"
                         )
-
-                # ── Test Mode ─────────────────────────────────────────────────
-                st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-                test_mode = st.toggle(
-                    f"Test Mode — send only to {_emails.SENDER_EMAIL} (no actual zone emails)",
-                    key=f"rpt_test_mode_{month_year}",
-                    value=False,
-                )
-                if test_mode:
-                    st.info(
-                        f"**Test Mode ON** — One sample email (first pending zone) will be sent "
-                        f"to **{_emails.SENDER_EMAIL}** only. No zone teams will receive anything."
-                    )
-
-                # ── Edit email content ─────────────────────────────────────────
-                _intro_key = f"rpt_custom_intro_{month_year}"
-                # Read current value from session state (persists whether expander is open or not)
-                custom_intro = st.session_state.get(_intro_key, "")
-
-                with st.expander("Edit Email Content (optional)", expanded=False):
-                    custom_intro = st.text_area(
-                        "Opening message in email body",
-                        key=_intro_key,
-                        height=90,
-                        placeholder=(
-                            "Leave blank to use the default message:\n"
-                            "\"This is a reminder that the MIS submission for [Month] "
-                            "is pending for the following locations in your zone. "
-                            "Please ensure submissions are completed at the earliest.\""
-                        ),
-                    )
-
-                    # Email preview
-                    if st.button("Preview Email", key="rpt_preview_btn"):
-                        sample_zone = pending_zones[0] if pending_zones else ""
-                        if sample_zone:
-                            sample_locs = [
-                                r for r in all_rows
-                                if r.get("zone") == sample_zone
-                                and r.get("status") != "SUBMITTED"
-                            ]
-                            preview_html = _emails.build_preview_html(
+                        st.caption(
+                            f"Sample: **{sample_zone}** "
+                            f"({len(sample_locs)} pending location(s))"
+                        )
+                        _components.html(
+                            _emails.build_preview_html(
                                 sample_zone, month_year, sample_locs,
                                 due_date, custom_intro,
-                            )
-                            st.caption(f"Preview: email for **{sample_zone}**")
-                            import streamlit.components.v1 as components
-                            components.html(preview_html, height=580, scrolling=True)
-                        else:
-                            st.info("No pending zones — nothing to preview.")
+                            ),
+                            height=540, scrolling=True,
+                        )
+                    else:
+                        st.info("No pending zones to preview.")
 
-                # ── Confirmation checkbox ─────────────────────────────────────
-                label = (
-                    f"I confirm — send **TEST** email to {_emails.SENDER_EMAIL} for {month_year}."
-                    if test_mode else
-                    f"I confirm I have reviewed the list above and want to send reminder emails "
-                    f"for **{month_year}** via Microsoft Outlook."
+                with prev_tab2:
+                    sample_loc_row = pending_loc_rows[0] if pending_loc_rows else None
+                    if sample_loc_row:
+                        slc = str(sample_loc_row.get("userId", ""))
+                        sl_email = _loc_map.get(slc, "")
+                        st.caption(
+                            f"**FROM:** {_emails.SENDER_EMAIL}  "
+                            f"**|  TO:** {sl_email or '⚠ No email configured'}  "
+                            f"**|  BCC:** {_emails.SENDER_EMAIL}"
+                        )
+                        st.caption(
+                            f"Sample: **{sample_loc_row.get('locName', '')}** ({slc})"
+                        )
+                        _components.html(
+                            _emails.build_location_pending_html(
+                                sample_loc_row.get("locName", ""), slc,
+                                month_year,
+                                sample_loc_row.get("status", "NOT_STARTED"),
+                                float(sample_loc_row.get("completion_pct", 0)),
+                                due_date,
+                            ),
+                            height=480, scrolling=True,
+                        )
+                    else:
+                        st.info("No pending locations to preview.")
+
+            # ── Test Mode ──────────────────────────────────────────────────────
+            test_mode_em = st.toggle(
+                f"Test Mode — send only to {_emails.SENDER_EMAIL} (no actual emails go out)",
+                key=f"rpt_test_mode_{month_year}",
+                value=False,
+            )
+            if test_mode_em:
+                st.info(
+                    f"**Test Mode ON** — One sample zone email + one sample location email "
+                    f"sent to **{_emails.SENDER_EMAIL}** only."
                 )
-                confirmed = st.checkbox(label, key=confirm_key)
 
-                em_col1, em_col2 = st.columns([2, 1])
-                with em_col1:
-                    btn_label  = "Send Test Email" if test_mode else "Send Reminder Emails"
-                    send_clicked = pending_zones and st.button(
-                        btn_label, key="rpt_send_emails",
-                        type="primary", use_container_width=True,
-                    )
-                    if send_clicked:
-                        if not confirmed:
-                            st.warning("Please tick the confirmation checkbox before sending.")
-                        else:
-                            spinner_msg = (
-                                "Sending test email via Outlook…"
-                                if test_mode else
-                                "Sending emails via Outlook…"
-                            )
-                            with st.spinner(spinner_msg):
-                                result = _emails.send_all_reminders(
+            # ── Confirmation + Send ────────────────────────────────────────────
+            confirm_key = f"_rpt_email_confirm_{month_year}"
+            loc_label_part = " + location reminders" if notify_locs else ""
+            label = (
+                f"I confirm — send **TEST** zone{loc_label_part} email to "
+                f"{_emails.SENDER_EMAIL} for {month_year}."
+                if test_mode_em else
+                f"I confirm I have reviewed the recipients above and want to send zone "
+                f"reminder emails{loc_label_part} for **{month_year}** via Microsoft Outlook."
+            )
+            confirmed = st.checkbox(label, key=confirm_key)
+
+            em_col1, em_col2 = st.columns([2, 1])
+            with em_col1:
+                btn_label = "Send Test Email(s)" if test_mode_em else "Send Reminder Emails"
+                can_send  = bool(pending_zones or (notify_locs and pending_loc_rows))
+                send_clicked = can_send and st.button(
+                    btn_label, key="rpt_send_emails",
+                    type="primary", use_container_width=True,
+                )
+                if send_clicked:
+                    if not confirmed:
+                        st.warning("Please tick the confirmation checkbox before sending.")
+                    else:
+                        # ── Zone emails ────────────────────────────────────────
+                        if pending_zones:
+                            with st.spinner("Sending zone reminder emails via Outlook…"):
+                                z_result = _emails.send_all_reminders(
                                     month_year, all_rows, due_date,
                                     custom_intro=custom_intro,
-                                    test_mode=test_mode,
+                                    test_mode=test_mode_em,
                                     test_email=_emails.SENDER_EMAIL,
                                 )
-                            if result["ok"]:
-                                st.success(result["msg"])
+                            if z_result["ok"]:
+                                st.success(f"Zone emails: {z_result['msg']}")
                             else:
-                                st.error(result["msg"])
-                            if not test_mode:
-                                st.session_state.pop(email_key, None)
-                                st.session_state.pop(confirm_key, None)
-                with em_col2:
-                    if st.button("Cancel", key="rpt_email_cancel", use_container_width=True):
-                        st.session_state.pop(email_key, None)
-                        st.session_state.pop(confirm_key, None)
-                        st.rerun()
+                                st.error(f"Zone emails: {z_result['msg']}")
+
+                        # ── Individual location emails ──────────────────────────
+                        if notify_locs and pending_loc_rows:
+                            with st.spinner("Sending location reminder emails via Outlook…"):
+                                l_result = _emails.send_all_location_reminders(
+                                    month_year, all_rows, due_date,
+                                    test_mode=test_mode_em,
+                                    test_email=_emails.SENDER_EMAIL,
+                                )
+                            if l_result["ok"]:
+                                st.success(f"Location emails: {l_result['msg']}")
+                            else:
+                                st.error(f"Location emails: {l_result['msg']}")
+
+                        if not test_mode_em:
+                            st.session_state.pop(confirm_key, None)
+            with em_col2:
+                if st.button("Cancel / Reset", key="rpt_email_cancel", use_container_width=True):
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
 
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
