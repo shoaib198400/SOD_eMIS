@@ -3373,7 +3373,7 @@ def sync_tank_master_to_sheet() -> dict:
         zone_map: dict = {}
         try:
             ua_ws  = _ws(TABS["USER_ACCESS"])
-            ua_rows = ua_ws.get_all_values()
+            ua_rows = _api_call(ua_ws.get_all_values)
             for row in ua_rows[1:]:
                 row = (row + [""] * 6)[:6]
                 loc_code, _loc_name, zone = row[0].strip(), row[1].strip(), row[2].strip()
@@ -3419,10 +3419,11 @@ def sync_tank_master_to_sheet() -> dict:
         if len(all_existing) > 1:
             tm_ws.delete_rows(2, len(all_existing) - 1)
 
-        # Batch write (500 rows at a time)
+        # Batch write (500 rows at a time) — RAW keeps date strings as-is
+        # so Google Sheets does not auto-convert DD/MM/YYYY to date serials.
         BATCH = 500
         for start in range(0, len(data_rows), BATCH):
-            tm_ws.append_rows(data_rows[start:start + BATCH], value_input_option="USER_ENTERED")
+            tm_ws.append_rows(data_rows[start:start + BATCH], value_input_option="RAW")
 
         _tm_all_rows.clear()          # clears shared row cache
         get_tank_master.clear()       # clears derived dict cache
@@ -3443,25 +3444,80 @@ _TM_DATE_COLS = {
 }
 
 
-def _normalize_tm_date(val: str) -> str:
-    """Convert DD.MM.YY or DD.MM.YYYY → DD/MM/YYYY; leave other values unchanged."""
+def _normalize_tm_date(val) -> str:
+    """Normalise any common date representation → DD/MM/YYYY string.
+
+    Handles:
+      DD/MM/YYYY, D/M/YYYY          (already correct or single-digit parts)
+      DD.MM.YYYY, DD.MM.YY          (dot-separated)
+      DD-MM-YYYY, DD-MM-YY          (dash-separated, day-first)
+      YYYY-MM-DD                    (ISO / Google Sheets auto-format)
+      YYYY-MM-DD HH:MM:SS           (ISO with time component)
+      datetime / date objects       (from openpyxl data_only reads)
+    All other values are returned unchanged.
+    """
     import re as _re
-    if not val or not isinstance(val, str):
-        return val
+    from datetime import datetime as _dt, date as _date
+
+    if val is None:
+        return ""
+    # datetime / date objects (openpyxl returns these for date cells)
+    if isinstance(val, (_dt, _date)):
+        return val.strftime("%d/%m/%Y")
+
+    if not isinstance(val, str):
+        return str(val)
+
     v = val.strip()
-    m = _re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(\d{2})', v)
+    if not v:
+        return v
+
+    # Strip time component from ISO datetime strings
+    v_date = v.split(" ")[0].split("T")[0]
+
+    # YYYY-MM-DD  (Google Sheets ISO / standard ISO)
+    m = _re.fullmatch(r'(\d{4})-(\d{1,2})-(\d{1,2})', v_date)
     if m:
-        d, mo, y = m.groups()
-        return f"{d.zfill(2)}/{mo.zfill(2)}/20{y}"
-    m = _re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(\d{4})', v)
-    if m:
-        d, mo, y = m.groups()
+        y, mo, d = m.groups()
         return f"{d.zfill(2)}/{mo.zfill(2)}/{y}"
+
+    # DD/MM/YYYY or D/M/YYYY
     m = _re.fullmatch(r'(\d{1,2})/(\d{1,2})/(\d{4})', v)
     if m:
         d, mo, y = m.groups()
         return f"{d.zfill(2)}/{mo.zfill(2)}/{y}"
-    return val
+
+    # DD/MM/YY or D/M/YY
+    m = _re.fullmatch(r'(\d{1,2})/(\d{1,2})/(\d{2})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/20{y}"
+
+    # DD.MM.YYYY or D.M.YYYY
+    m = _re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(\d{4})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/{y}"
+
+    # DD.MM.YY or D.M.YY
+    m = _re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(\d{2})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/20{y}"
+
+    # DD-MM-YYYY or D-M-YYYY  (day-first dash)
+    m = _re.fullmatch(r'(\d{1,2})-(\d{1,2})-(\d{4})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/{y}"
+
+    # DD-MM-YY or D-M-YY
+    m = _re.fullmatch(r'(\d{1,2})-(\d{1,2})-(\d{2})', v)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d.zfill(2)}/{mo.zfill(2)}/20{y}"
+
+    return val  # unrecognised — return as-is
 
 
 @st.cache_data(ttl=7200, show_spinner=False)
