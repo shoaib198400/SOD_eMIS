@@ -3454,7 +3454,7 @@ def _normalize_tm_date(val: str) -> str:
     return val
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_full_tank_master_excel(
     location_code: str | None = None,
     zone: str | None = None,
