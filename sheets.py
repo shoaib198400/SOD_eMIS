@@ -3292,18 +3292,26 @@ _TM_HEADERS = [
 ]
 
 
+@st.cache_data(ttl=7200, show_spinner=False)
+def _tm_all_rows() -> list:
+    """Read TankMaster sheet ONCE — single cache entry shared by all 111 locations.
+
+    Both get_tank_master() and get_full_tank_master_excel() call this instead
+    of hitting the API independently.  No parameters → one cache entry → one
+    API read per 2 h regardless of how many concurrent users/locations are active.
+    Raises RuntimeError on failure so callers can handle gracefully.
+    """
+    ws   = _ws(TABS["TANK_MASTER"])
+    rows = _api_call(ws.get_all_values)
+    return rows or []
+
+
 @st.cache_data(ttl=7200)
 def get_tank_master() -> dict:
-    """Return {location_code: [sap_tank_no, ...]} — tries Google Sheet first, then Excel.
-
-    Uses _api_call so 429 quota errors are retried with exponential backoff
-    (up to 6 attempts, max ~63 s total) instead of silently returning {}.
-    TTL raised to 2 h — Tank Master changes only when admin re-seeds.
-    """
-    # Try Google Sheet (with retry on 429)
+    """Return {location_code: [sap_tank_no, ...]} — uses shared _tm_all_rows() cache."""
+    # Try Google Sheet via shared row cache
     try:
-        ws   = _ws(TABS["TANK_MASTER"])
-        rows = _api_call(ws.get_all_values)
+        rows = _tm_all_rows()
         if len(rows) >= 2:
             hdr = rows[0]
             try:
@@ -3416,7 +3424,9 @@ def sync_tank_master_to_sheet() -> dict:
         for start in range(0, len(data_rows), BATCH):
             tm_ws.append_rows(data_rows[start:start + BATCH], value_input_option="USER_ENTERED")
 
-        get_tank_master.clear()
+        _tm_all_rows.clear()          # clears shared row cache
+        get_tank_master.clear()       # clears derived dict cache
+        get_full_tank_master_excel.clear()   # clears per-location Excel cache
         return {"ok": True, "rows": len(data_rows),
                 "msg": f"Tank Master synced: {len(data_rows)} rows written to Google Sheet."}
     except Exception as exc:
@@ -3466,8 +3476,7 @@ def get_full_tank_master_excel(
     from openpyxl.utils import get_column_letter
 
     try:
-        ws_sheet = _ws(TABS["TANK_MASTER"])
-        all_rows = _api_call(ws_sheet.get_all_values)
+        all_rows = _tm_all_rows()        # shared cache — no extra API call
     except Exception as exc:
         raise ValueError(f"Cannot read Tank Master: {exc}") from exc
 
