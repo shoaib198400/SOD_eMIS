@@ -536,7 +536,7 @@ _HELPDESK_HEADERS = [
 ]
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120)
 def get_helpdesk_tickets() -> list:
     """Return all helpdesk tickets (newest first).
 
@@ -545,7 +545,7 @@ def get_helpdesk_tickets() -> list:
     """
     try:
         ws   = _ensure_ws(TABS["HELPDESK"], _HELPDESK_HEADERS)
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         out  = []
         for i, row in enumerate(rows[1:], start=2):
             row = (row + [""] * 7)[:7]
@@ -610,12 +610,12 @@ def log_help_request(location_code: str, issue_desc: str,
 
 # ── Submission status ─────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120)
 def _mis_submitted_keys() -> set:
-    """Return set of (user_id, month_year) that physically exist in MIS_Submitted (30 s cache)."""
+    """Return set of (user_id, month_year) that physically exist in MIS_Submitted (120 s cache)."""
     try:
         ws   = _ws(TABS["MIS_SUBMITTED"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         if len(rows) < 2:
             return set()
         hdr   = rows[0]
@@ -638,11 +638,11 @@ def _revert_if_deleted(user_id: str, month_year: str, status: str,
     return status
 
 
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=60)
 def get_month_status(user_id: str, month_year: str) -> dict:
     try:
         ws   = _ws(TABS["SUBMISSION_STATUS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         if len(rows) >= 2:
             for row in rows[1:]:
                 row = (row + [""] * 9)[:9]
@@ -671,7 +671,7 @@ def get_fy_months(user_id: str, fy_start_year: int) -> dict:
         pct_map:    dict = {}
         try:
             ws   = _ws(TABS["SUBMISSION_STATUS"])
-            rows = ws.get_all_values()
+            rows = _api_call(ws.get_all_values)
             if len(rows) >= 2:
                 for row in rows[1:]:
                     row = (row + [""] * 4)[:4]
@@ -714,7 +714,7 @@ def get_available_months(user_id: str) -> dict:
         status_map: dict = {}
         try:
             ws   = _ws(TABS["SUBMISSION_STATUS"])
-            rows = ws.get_all_values()
+            rows = _api_call(ws.get_all_values)
             if len(rows) >= 2:
                 for row in rows[1:]:
                     row = (row + [""] * 3)[:3]
@@ -1430,7 +1430,7 @@ def get_all_maker_credentials() -> list:
     """Return list of {userId, locName, zone, password} for all Maker accounts."""
     try:
         ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         out  = []
         for r in rows[1:]:
             r = (r + [""] * 8)[:8]
@@ -1450,7 +1450,7 @@ def get_all_checker_credentials() -> list:
     """Return list of {userId, locName, zone, password} for all Checker accounts."""
     try:
         ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         out  = []
         for r in rows[1:]:
             r = (r + [""] * 8)[:8]
@@ -1472,7 +1472,7 @@ def get_all_zone_credentials() -> list:
     """
     try:
         ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         out  = []
         seen_zones = set()
         for r in rows[1:]:
@@ -1685,7 +1685,7 @@ def get_email_master_maps() -> tuple:
     """
     try:
         ws   = _ensure_ws(TABS["EMAIL_MASTER"], _EMAIL_MASTER_HEADERS)
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         if len(rows) < 2:
             return None, None
         loc_map  = {}
@@ -3292,13 +3292,18 @@ _TM_HEADERS = [
 ]
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=7200)
 def get_tank_master() -> dict:
-    """Return {location_code: [sap_tank_no, ...]} — tries Google Sheet first, then Excel."""
-    # Try Google Sheet
+    """Return {location_code: [sap_tank_no, ...]} — tries Google Sheet first, then Excel.
+
+    Uses _api_call so 429 quota errors are retried with exponential backoff
+    (up to 6 attempts, max ~63 s total) instead of silently returning {}.
+    TTL raised to 2 h — Tank Master changes only when admin re-seeds.
+    """
+    # Try Google Sheet (with retry on 429)
     try:
-        ws  = _ws(TABS["TANK_MASTER"])
-        rows = ws.get_all_values()
+        ws   = _ws(TABS["TANK_MASTER"])
+        rows = _api_call(ws.get_all_values)
         if len(rows) >= 2:
             hdr = rows[0]
             try:
