@@ -269,7 +269,12 @@ def send_zone_reminder(zone_name: str, month_year: str,
                        custom_intro: str = "",
                        test_mode: bool = False,
                        test_email: str = "") -> dict:
-    """Send one reminder email for a zone via PowerShell + Outlook."""
+    """Send one reminder email for a zone.
+
+    TO  = Zone OD + all pending location in-charges (that have email configured).
+    CC  = Zone IC/OND.
+    BCC = none.
+    """
     contacts = _get_zone_map().get(zone_name)
     if not contacts:
         return {"ok": False, "msg": f"No email contacts configured for: {zone_name}"}
@@ -286,13 +291,20 @@ def send_zone_reminder(zone_name: str, month_year: str,
                                   due_date, custom_intro)
 
     if test_mode:
-        to_str, cc_str, bcc_str = test_email or SENDER_EMAIL, "", ""
+        to_str, cc_str = test_email or SENDER_EMAIL, ""
     else:
-        to_str  = contacts["to"]
-        cc_str  = contacts["cc"]
-        bcc_str = "; ".join(BCC_EMAILS)
+        # Build TO: Zone OD + pending location emails
+        loc_email_map = _get_loc_map()
+        loc_emails = [
+            loc_email_map[str(loc.get("userId", ""))]
+            for loc in pending_locs
+            if loc_email_map.get(str(loc.get("userId", "")))
+        ]
+        zone_od = contacts.get("to", "")
+        to_str  = "; ".join(filter(None, [zone_od] + loc_emails))
+        cc_str  = contacts.get("cc", "")
 
-    return _send_outlook(to_str, subject, html_body, cc_str, bcc_str)
+    return _send_outlook(to_str, subject, html_body, cc_str, "")
 
 
 # ── All-zones batch sender ────────────────────────────────────────────────────
@@ -328,7 +340,6 @@ def send_all_reminders(month_year: str,
     zones_to_send = sorted(pending_by_zone.items())
 
     if test_mode:
-        # Send only the first zone's email to the test address
         first_zone, first_locs = zones_to_send[0]
         res = send_zone_reminder(
             first_zone, month_year, first_locs, due_date,
@@ -340,9 +351,10 @@ def send_all_reminders(month_year: str,
             sent_count = 1
             mode = res.get("mode", "sent")
             msg = (
-                f"[TEST] Email {mode} to {test_email or SENDER_EMAIL} "
+                f"[TEST] Zone email {mode} to {test_email or SENDER_EMAIL} "
                 f"(sample: {first_zone}, {len(first_locs)} location(s)). "
-                f"In production this would send to {len(zones_to_send)} zone(s)."
+                f"In production would send to {len(zones_to_send)} zone(s) "
+                f"with location emails in TO."
             )
         else:
             failed_count = 1
@@ -366,7 +378,8 @@ def send_all_reminders(month_year: str,
 
     all_ok = (failed_count == 0)
     msg = (
-        f"Emails sent to {sent_count} zone(s) via Outlook ({SENDER_EMAIL})."
+        f"Zone reminder emails sent to {sent_count} zone(s) "
+        f"(Zone OD + location in-charges in TO, Zone IC in CC)."
         if all_ok else
         f"Sent: {sent_count}. Failed: {failed_count}. " + "; ".join(errors)
     )
@@ -377,6 +390,140 @@ def send_all_reminders(month_year: str,
         "errors": errors,
         "msg": msg,
     }
+
+
+# ── Consolidated HQO summary email ────────────────────────────────────────────
+
+def build_consolidated_html(month_year: str,
+                            all_location_rows: list,
+                            due_date: date) -> str:
+    """Build one HTML email listing all pending locations across all zones."""
+    today   = date.today()
+    overdue = today > due_date
+    due_str = due_date.strftime("%d %b %Y")
+
+    pending_by_zone: dict = {}
+    for loc in all_location_rows:
+        if loc.get("status") != "SUBMITTED":
+            zone = loc.get("zone", "Unknown")
+            pending_by_zone.setdefault(zone, []).append(loc)
+
+    total_pending = sum(len(v) for v in pending_by_zone.values())
+
+    zones_html = ""
+    for zone_name in sorted(pending_by_zone.keys()):
+        locs = pending_by_zone[zone_name]
+        rows_html = ""
+        for loc in locs:
+            uid    = loc.get("userId", "")
+            name   = loc.get("locName", "")
+            status = loc.get("status", "NOT_STARTED").replace("_", " ").title()
+            pct    = int(float(loc.get("completion_pct", 0)))
+            bg     = "#fff8f8" if overdue else "#ffffff"
+            rows_html += (
+                f"<tr style='background:{bg};'>"
+                f"<td style='padding:7px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{uid}</td>"
+                f"<td style='padding:7px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{name}</td>"
+                f"<td style='padding:7px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{status}</td>"
+                f"<td style='padding:7px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;"
+                f"text-align:center;'>{pct}%</td>"
+                f"</tr>"
+            )
+        zones_html += (
+            f"<div style='margin-bottom:22px;'>"
+            f"<div style='background:#003580;color:white;padding:8px 14px;"
+            f"font-size:13px;font-weight:700;border-radius:6px 6px 0 0;'>"
+            f"{zone_name} — {len(locs)} location(s) pending</div>"
+            f"<table style='width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='background:#dde4f0;'>"
+            f"<th style='padding:7px 11px;text-align:left;font-size:12px;color:#333;'>Code</th>"
+            f"<th style='padding:7px 11px;text-align:left;font-size:12px;color:#333;'>Location</th>"
+            f"<th style='padding:7px 11px;text-align:left;font-size:12px;color:#333;'>Status</th>"
+            f"<th style='padding:7px 11px;text-align:center;font-size:12px;color:#333;'>Done%</th>"
+            f"</tr></thead>"
+            f"<tbody>{rows_html}</tbody>"
+            f"</table></div>"
+        )
+
+    overdue_banner = ""
+    if overdue:
+        overdue_banner = (
+            f"<div style='background:#fdecea;border:2px solid #e53935;border-radius:8px;"
+            f"padding:12px 18px;margin:16px 0;color:#b71c1c;font-weight:700;font-size:14px;'>"
+            f"&#9888;&nbsp; OVERDUE — Deadline was {due_str}. "
+            f"Pending across {len(pending_by_zone)} zone(s).</div>"
+        )
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family:Arial,sans-serif;margin:0;padding:0;background:#f4f6fb;">
+  <div style="max-width:760px;margin:30px auto;background:white;border-radius:14px;
+              box-shadow:0 2px 12px rgba(0,0,0,0.10);overflow:hidden;">
+    <div style="background:#002B8F;padding:22px 30px;">
+      <div style="color:white;font-size:20px;font-weight:700;letter-spacing:0.5px;">
+        HPCL SOD &mdash; MIS Portal</div>
+      <div style="color:#a8bfe8;font-size:12px;margin-top:4px;">
+        Supply, Operations &amp; Distribution &nbsp;&middot;&nbsp; Consolidated Pending Report
+      </div>
+    </div>
+    <div style="padding:28px 30px;">
+      <p style="font-size:15px;color:#333;margin-top:0;">Dear Team,</p>
+      <p style="font-size:14px;color:#444;line-height:1.8;">
+        Consolidated MIS submission status for <strong>{month_year}</strong>:
+        <strong>{total_pending} location(s)</strong> across
+        <strong>{len(pending_by_zone)} zone(s)</strong> have not yet submitted.
+      </p>
+      {overdue_banner}
+      {zones_html}
+      <p style="font-size:14px;color:#333;margin-top:16px;">
+        Submission deadline: <strong>{due_str}</strong>
+      </p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def send_consolidated_reminder(month_year: str,
+                               all_location_rows: list,
+                               due_date: date,
+                               test_mode: bool = False,
+                               test_email: str = "") -> dict:
+    """Send one consolidated pending-report email.
+
+    TO  = shoaibrehman@hpcl.in
+    CC  = SOD.OPNS.HQO, bhsgk, shubham.tayal  (former BCC recipients)
+    BCC = none
+    """
+    today   = date.today()
+    overdue = today > due_date
+    pfx     = "[TEST] " if test_mode else ""
+
+    pending = [r for r in all_location_rows if r.get("status") != "SUBMITTED"]
+    zones   = sorted({r.get("zone", "") for r in pending})
+    subject = (
+        f"{pfx}OVERDUE — Consolidated MIS Pending Report | {month_year} | "
+        f"{len(pending)} location(s) across {len(zones)} zone(s)"
+        if overdue else
+        f"{pfx}Consolidated MIS Pending Report | {month_year} | "
+        f"{len(pending)} location(s) across {len(zones)} zone(s)"
+    )
+    html_body = build_consolidated_html(month_year, all_location_rows, due_date)
+
+    if test_mode:
+        to_str, cc_str = test_email or SENDER_EMAIL, ""
+    else:
+        to_str = SENDER_EMAIL
+        cc_str = "; ".join(BCC_EMAILS)
+
+    res = _send_outlook(to_str, subject, html_body, cc_str, "")
+    if "msg" not in res:
+        res["msg"] = (
+            f"Consolidated report {'sent' if res.get('mode') == 'sent' else res.get('mode','sent')} "
+            f"to {to_str}" + (f" (CC: {cc_str})" if cc_str else "") + "."
+        )
+    return res
 
 
 # ── Location pending reminder ──────────────────────────────────────────────────

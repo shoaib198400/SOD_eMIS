@@ -5997,17 +5997,14 @@ def show_reports_page(user: dict):
     if role == "Admin":
         import streamlit.components.v1 as _components
 
-        _zone_map  = _emails.get_zone_email_map()
-        _loc_map   = _emails.get_location_email_map()
+        _zone_map = _emails.get_zone_email_map()
+        _loc_map  = _emails.get_location_email_map()
 
-        pending_zones = sorted({
+        pending_zones    = sorted({
             r["zone"] for r in all_rows
             if r.get("status") != "SUBMITTED" and r.get("zone") in _zone_map
         })
         pending_loc_rows = [r for r in all_rows if r.get("status") != "SUBMITTED"]
-        n_loc_with_email = sum(
-            1 for r in pending_loc_rows if _loc_map.get(str(r.get("userId", "")))
-        )
 
         # ── Section header with Refresh button ────────────────────────────────
         hdr_col, ref_col = st.columns([5, 1])
@@ -6031,13 +6028,16 @@ def show_reports_page(user: dict):
                 except Exception as _re:
                     st.toast(f"Refresh failed: {_re}", icon="❌")
 
-        # ── FROM / BCC banner ──────────────────────────────────────────────────
-        _bcc_str = "; ".join(_emails.BCC_EMAILS)
+        # ── FROM banner ────────────────────────────────────────────────────────
+        _cc_str = "; ".join(_emails.BCC_EMAILS)
         st.markdown(
             f'<div style="background:#e8f4fd;border:1.5px solid #1565C0;border-radius:10px;'
-            f'padding:12px 18px;margin-bottom:10px;font-size:13px;color:#0d47a1;line-height:1.9;">'
-            f'<strong>FROM:</strong>&nbsp; {_emails.SENDER_EMAIL}<br>'
-            f'<strong>BCC&nbsp; :</strong>&nbsp; {_bcc_str}</div>',
+            f'padding:12px 18px;margin-bottom:10px;font-size:13px;color:#0d47a1;line-height:2.0;">'
+            f'<strong>FROM&nbsp;&nbsp;&nbsp;:</strong>&nbsp; {_emails.SENDER_EMAIL}<br>'
+            f'<strong>Zone TO :</strong>&nbsp; Zone OD + all pending location in-charges (per zone)<br>'
+            f'<strong>Zone CC :</strong>&nbsp; Zone IC / OND<br>'
+            f'<strong>Consol.&nbsp;:</strong>&nbsp; TO: {_emails.SENDER_EMAIL} &nbsp;|&nbsp; '
+            f'CC: {_cc_str}</div>',
             unsafe_allow_html=True,
         )
 
@@ -6055,64 +6055,42 @@ def show_reports_page(user: dict):
                     "Make sure **Outlook is open** and **pywin32** is installed (`pip install pywin32`)."
                 )
         else:
-            # ── Zone recipients table (always visible) ─────────────────────────
+            # ── Zone recipients table ──────────────────────────────────────────
             if pending_zones:
                 st.markdown(
-                    f"**Zone Reminder Emails — {len(pending_zones)} zone(s) with pending locations**"
+                    f"**{len(pending_zones)} zone(s) with pending locations**  "
+                    f"*(location in-charges added to TO automatically)*"
                 )
                 zone_rec_rows = []
                 for z in pending_zones:
                     rcp = _emails.get_zone_recipients(z)
-                    n_pending_here = sum(
-                        1 for r in all_rows
+                    locs_in_zone = [
+                        r for r in all_rows
                         if r.get("zone") == z and r.get("status") != "SUBMITTED"
+                    ]
+                    n_with_em = sum(
+                        1 for r in locs_in_zone
+                        if _loc_map.get(str(r.get("userId", "")))
                     )
                     zone_rec_rows.append({
                         "Zone": z,
-                        "TO (Zone Head)": rcp["to"] or "—",
-                        "CC": rcp["cc"] or "—",
-                        "# Pending": str(n_pending_here),
+                        "Zone OD (TO)": rcp["to"] or "—",
+                        "Zone IC (CC)": rcp["cc"] or "—",
+                        "# Pending": str(len(locs_in_zone)),
+                        "Locations w/ email": str(n_with_em),
                     })
                 st.markdown(
-                    _rpt_table(zone_rec_rows, center_cols={"# Pending"}),
+                    _rpt_table(zone_rec_rows,
+                               center_cols={"# Pending", "Locations w/ email"}),
                     unsafe_allow_html=True,
                 )
             else:
                 st.success("All zones have submitted. No zone reminder emails to send.")
 
-            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-            # ── Also notify individual locations ───────────────────────────────
-            notify_locs = st.checkbox(
-                f"Also send reminder to individual pending locations "
-                f"({n_loc_with_email} of {len(pending_loc_rows)} have email configured)",
-                key=f"rpt_notify_locs_{month_year}",
-                value=False,
-            )
-            if notify_locs and pending_loc_rows:
-                loc_rec_rows = []
-                for r in pending_loc_rows:
-                    lc = str(r.get("userId", ""))
-                    loc_rec_rows.append({
-                        "Code": lc,
-                        "Location": r.get("locName", ""),
-                        "Zone": r.get("zone", ""),
-                        "TO": _loc_map.get(lc) or "⚠ No email",
-                    })
-                with st.expander(
-                    f"Location Recipients — {n_loc_with_email} will receive, "
-                    f"{len(pending_loc_rows)-n_loc_with_email} skipped (no email)",
-                    expanded=True,
-                ):
-                    st.markdown(
-                        _rpt_table(loc_rec_rows, center_cols={"Code"}),
-                        unsafe_allow_html=True,
-                    )
-
-            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-
-            # ── Email content + Preview ────────────────────────────────────────
-            _intro_key = f"rpt_custom_intro_{month_year}"
+            # ── Edit / Preview ─────────────────────────────────────────────────
+            _intro_key   = f"rpt_custom_intro_{month_year}"
             custom_intro = st.session_state.get(_intro_key, "")
 
             with st.expander("Edit / Preview Email Content", expanded=False):
@@ -6129,7 +6107,7 @@ def show_reports_page(user: dict):
                 st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
                 prev_tab1, prev_tab2 = st.tabs(
-                    ["📧 Zone Email Preview", "📩 Location Email Preview"]
+                    ["📧 Zone Email Preview", "📋 Consolidated Email Preview"]
                 )
 
                 with prev_tab1:
@@ -6141,15 +6119,23 @@ def show_reports_page(user: dict):
                             and r.get("status") != "SUBMITTED"
                         ]
                         rcp = _emails.get_zone_recipients(sample_zone)
+                        # Show TO = Zone OD + location emails
+                        _sloc_emails = [
+                            _loc_map[str(r.get("userId", ""))]
+                            for r in sample_locs
+                            if _loc_map.get(str(r.get("userId", "")))
+                        ]
+                        _to_preview = "; ".join(
+                            filter(None, [rcp["to"]] + _sloc_emails[:3])
+                        ) + ("…" if len(_sloc_emails) > 3 else "")
                         st.caption(
                             f"**FROM:** {_emails.SENDER_EMAIL}  "
-                            f"**|  TO:** {rcp['to'] or '—'}  "
-                            f"**|  CC:** {rcp['cc'] or '—'}  "
-                            f"**|  BCC:** {'; '.join(_emails.BCC_EMAILS)}"
+                            f"**|  TO:** {_to_preview or '—'}  "
+                            f"**|  CC:** {rcp['cc'] or '—'}  |  No BCC"
                         )
                         st.caption(
-                            f"Sample: **{sample_zone}** "
-                            f"({len(sample_locs)} pending location(s))"
+                            f"Sample: **{sample_zone}** — {len(sample_locs)} pending "
+                            f"({len(_sloc_emails)} location email(s) in TO)"
                         )
                         _components.html(
                             _emails.build_preview_html(
@@ -6162,27 +6148,21 @@ def show_reports_page(user: dict):
                         st.info("No pending zones to preview.")
 
                 with prev_tab2:
-                    sample_loc_row = pending_loc_rows[0] if pending_loc_rows else None
-                    if sample_loc_row:
-                        slc = str(sample_loc_row.get("userId", ""))
-                        sl_email = _loc_map.get(slc, "")
+                    if pending_loc_rows:
                         st.caption(
                             f"**FROM:** {_emails.SENDER_EMAIL}  "
-                            f"**|  TO:** {sl_email or '⚠ No email configured'}  "
-                            f"**|  BCC:** {_emails.SENDER_EMAIL}"
+                            f"**|  TO:** {_emails.SENDER_EMAIL}  "
+                            f"**|  CC:** {_cc_str}  |  No BCC"
                         )
                         st.caption(
-                            f"Sample: **{sample_loc_row.get('locName', '')}** ({slc})"
+                            f"Covers {len(pending_loc_rows)} pending location(s) "
+                            f"across {len(pending_zones)} zone(s)"
                         )
                         _components.html(
-                            _emails.build_location_pending_html(
-                                sample_loc_row.get("locName", ""), slc,
-                                month_year,
-                                sample_loc_row.get("status", "NOT_STARTED"),
-                                float(sample_loc_row.get("completion_pct", 0)),
-                                due_date,
+                            _emails.build_consolidated_html(
+                                month_year, all_rows, due_date
                             ),
-                            height=480, scrolling=True,
+                            height=580, scrolling=True,
                         )
                     else:
                         st.info("No pending locations to preview.")
@@ -6195,26 +6175,25 @@ def show_reports_page(user: dict):
             )
             if test_mode_em:
                 st.info(
-                    f"**Test Mode ON** — One sample zone email + one sample location email "
+                    f"**Test Mode ON** — One sample zone email + one consolidated email "
                     f"sent to **{_emails.SENDER_EMAIL}** only."
                 )
 
             # ── Confirmation + Send ────────────────────────────────────────────
             confirm_key = f"_rpt_email_confirm_{month_year}"
-            loc_label_part = " + location reminders" if notify_locs else ""
             label = (
-                f"I confirm — send **TEST** zone{loc_label_part} email to "
+                f"I confirm — send **TEST** zone email + consolidated email to "
                 f"{_emails.SENDER_EMAIL} for {month_year}."
                 if test_mode_em else
                 f"I confirm I have reviewed the recipients above and want to send zone "
-                f"reminder emails{loc_label_part} for **{month_year}** via Microsoft Outlook."
+                f"reminder emails + consolidated report for **{month_year}** via Microsoft Outlook."
             )
             confirmed = st.checkbox(label, key=confirm_key)
 
             em_col1, em_col2 = st.columns([2, 1])
             with em_col1:
-                btn_label = "Send Test Email(s)" if test_mode_em else "Send Reminder Emails"
-                can_send  = bool(pending_zones or (notify_locs and pending_loc_rows))
+                btn_label  = "Send Test Email(s)" if test_mode_em else "Send Reminder Emails"
+                can_send   = bool(pending_zones or pending_loc_rows)
                 send_clicked = can_send and st.button(
                     btn_label, key="rpt_send_emails",
                     type="primary", use_container_width=True,
@@ -6223,7 +6202,7 @@ def show_reports_page(user: dict):
                     if not confirmed:
                         st.warning("Please tick the confirmation checkbox before sending.")
                     else:
-                        # ── Zone emails ────────────────────────────────────────
+                        # ── Zone emails (one per zone, TO = OD + locations) ────
                         if pending_zones:
                             with st.spinner("Sending zone reminder emails via Outlook…"):
                                 z_result = _emails.send_all_reminders(
@@ -6237,18 +6216,18 @@ def show_reports_page(user: dict):
                             else:
                                 st.error(f"Zone emails: {z_result['msg']}")
 
-                        # ── Individual location emails ──────────────────────────
-                        if notify_locs and pending_loc_rows:
-                            with st.spinner("Sending location reminder emails via Outlook…"):
-                                l_result = _emails.send_all_location_reminders(
+                        # ── Consolidated email (one, TO = shoaibrehman, CC = HQO) ─
+                        if pending_loc_rows:
+                            with st.spinner("Sending consolidated report email via Outlook…"):
+                                c_result = _emails.send_consolidated_reminder(
                                     month_year, all_rows, due_date,
                                     test_mode=test_mode_em,
                                     test_email=_emails.SENDER_EMAIL,
                                 )
-                            if l_result["ok"]:
-                                st.success(f"Location emails: {l_result['msg']}")
+                            if c_result["ok"]:
+                                st.success(f"Consolidated email: {c_result['msg']}")
                             else:
-                                st.error(f"Location emails: {l_result['msg']}")
+                                st.error(f"Consolidated email: {c_result['msg']}")
 
                         if not test_mode_em:
                             st.session_state.pop(confirm_key, None)
