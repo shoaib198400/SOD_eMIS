@@ -6000,11 +6000,13 @@ def show_reports_page(user: dict):
         _zone_map = _emails.get_zone_email_map()
         _loc_map  = _emails.get_location_email_map()
 
-        pending_zones    = sorted({
-            r["zone"] for r in all_rows
-            if r.get("status") != "SUBMITTED" and r.get("zone") in _zone_map
-        })
-        pending_loc_rows = [r for r in all_rows if r.get("status") != "SUBMITTED"]
+        # helper: compute due date (5th of next month) from "Apr-2026" string
+        def _due_from_my(my: str) -> date:
+            _MA = {m[:3]: i + 1 for i, m in enumerate(sheets.MONTHS_LONG)}
+            _p  = my.split("-")
+            _mn = _MA.get(_p[0], 1)
+            _yr = int(_p[1]) if len(_p) > 1 else today.year
+            return date(_yr + (1 if _mn == 12 else 0), 1 if _mn == 12 else _mn + 1, 5)
 
         # ── Section header with Refresh button ────────────────────────────────
         hdr_col, ref_col = st.columns([5, 1])
@@ -6028,16 +6030,16 @@ def show_reports_page(user: dict):
                 except Exception as _re:
                     st.toast(f"Refresh failed: {_re}", icon="❌")
 
-        # ── FROM banner ────────────────────────────────────────────────────────
+        # ── FROM / routing banner ──────────────────────────────────────────────
         _cc_str = "; ".join(_emails.BCC_EMAILS)
         st.markdown(
             f'<div style="background:#e8f4fd;border:1.5px solid #1565C0;border-radius:10px;'
             f'padding:12px 18px;margin-bottom:10px;font-size:13px;color:#0d47a1;line-height:2.0;">'
             f'<strong>FROM&nbsp;&nbsp;&nbsp;:</strong>&nbsp; {_emails.SENDER_EMAIL}<br>'
             f'<strong>Zone TO :</strong>&nbsp; Zone OD + all pending location in-charges (per zone)<br>'
-            f'<strong>Zone CC :</strong>&nbsp; Zone IC / OND<br>'
+            f'<strong>Zone CC :</strong>&nbsp; Zone IC / OND&nbsp;&nbsp;|&nbsp;&nbsp;No BCC<br>'
             f'<strong>Consol.&nbsp;:</strong>&nbsp; TO: {_emails.SENDER_EMAIL} &nbsp;|&nbsp; '
-            f'CC: {_cc_str}</div>',
+            f'CC: {_cc_str}&nbsp;&nbsp;|&nbsp;&nbsp;No BCC</div>',
             unsafe_allow_html=True,
         )
 
@@ -6055,186 +6057,268 @@ def show_reports_page(user: dict):
                     "Make sure **Outlook is open** and **pywin32** is installed (`pip install pywin32`)."
                 )
         else:
-            # ── Zone recipients table ──────────────────────────────────────────
-            if pending_zones:
-                st.markdown(
-                    f"**{len(pending_zones)} zone(s) with pending locations**  "
-                    f"*(location in-charges added to TO automatically)*"
-                )
-                zone_rec_rows = []
-                for z in pending_zones:
-                    rcp = _emails.get_zone_recipients(z)
-                    locs_in_zone = [
-                        r for r in all_rows
-                        if r.get("zone") == z and r.get("status") != "SUBMITTED"
-                    ]
-                    n_with_em = sum(
-                        1 for r in locs_in_zone
-                        if _loc_map.get(str(r.get("userId", "")))
-                    )
-                    zone_rec_rows.append({
-                        "Zone": z,
-                        "Zone OD (TO)": rcp["to"] or "—",
-                        "Zone IC (CC)": rcp["cc"] or "—",
-                        "# Pending": str(len(locs_in_zone)),
-                        "Locations w/ email": str(n_with_em),
-                    })
-                st.markdown(
-                    _rpt_table(zone_rec_rows,
-                               center_cols={"# Pending", "Locations w/ email"}),
-                    unsafe_allow_html=True,
-                )
+            # ── Month selection ────────────────────────────────────────────────
+            # Filter to non-future months (future months can't have pending submissions)
+            avail_months = [
+                m for m in months
+                if date(
+                    int(m["value"].split("-")[1]) if "-" in m["value"] else today.year,
+                    ({_m[:3]: i+1 for i, _m in enumerate(sheets.MONTHS_LONG)}.get(
+                        m["value"].split("-")[0], 1)),
+                    1
+                ) <= today
+            ]
+
+            st.markdown("**📅 Select months to include in the reminder emails:**")
+            em_month_opts  = {
+                m["value"]: m["label"] for m in avail_months
+            }
+            # Default: currently viewed month pre-checked
+            _sel_key = "rpt_em_sel_months"
+            if _sel_key not in st.session_state:
+                st.session_state[_sel_key] = [month_year] if month_year in em_month_opts else []
+
+            sel_cols = st.columns(min(len(avail_months), 6))
+            selected_months: list[str] = []
+            for i, m in enumerate(avail_months):
+                my    = m["value"]
+                label = m["label"]
+                _due  = _due_from_my(my)
+                _ov   = today > _due
+                _tag  = " ⚠" if _ov else ""
+                with sel_cols[i % len(sel_cols)]:
+                    if st.checkbox(
+                        f"{label}{_tag}",
+                        value=(my in st.session_state.get(_sel_key, [month_year])),
+                        key=f"rpt_em_chk_{my}",
+                    ):
+                        selected_months.append(my)
+
+            # Persist selection
+            st.session_state[_sel_key] = selected_months
+
+            if not selected_months:
+                st.warning("Select at least one month above to see the zone table and send reminders.")
             else:
-                st.success("All zones have submitted. No zone reminder emails to send.")
+                # ── Load data for all selected months ──────────────────────────
+                months_data: dict = {}   # {month_year: [all_loc_rows]}
+                due_dates:   dict = {}   # {month_year: date}
+                for my in selected_months:
+                    due_dates[my]   = _due_from_my(my)
+                    months_data[my] = sheets.get_all_status_for_month(my)
 
-            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+                # ── Combined pending per zone ──────────────────────────────────
+                # For table: unique pending location count per zone per month
+                all_pending_zones = sorted({
+                    r["zone"] for rows in months_data.values()
+                    for r in rows
+                    if r.get("status") != "SUBMITTED" and r.get("zone") in _zone_map
+                })
 
-            # ── Edit / Preview ─────────────────────────────────────────────────
-            _intro_key   = f"rpt_custom_intro_{month_year}"
-            custom_intro = st.session_state.get(_intro_key, "")
+                if all_pending_zones:
+                    st.markdown(
+                        f"**{len(all_pending_zones)} zone(s) have pending locations**  "
+                        f"*(location in-charges added to TO automatically)*"
+                    )
+                    zone_rec_rows = []
+                    for z in all_pending_zones:
+                        rcp = _emails.get_zone_recipients(z)
+                        row = {
+                            "Zone": z,
+                            "Zone OD (TO)": rcp["to"] or "—",
+                            "Zone IC (CC)": rcp["cc"] or "—",
+                        }
+                        for my in sorted(selected_months):
+                            n = sum(
+                                1 for r in months_data[my]
+                                if r.get("zone") == z and r.get("status") != "SUBMITTED"
+                            )
+                            row[my] = str(n) if n else "—"
+                        zone_rec_rows.append(row)
+                    st.markdown(
+                        _rpt_table(zone_rec_rows,
+                                   center_cols=set(selected_months)),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.success(
+                        "All locations have submitted for the selected month(s). "
+                        "No reminder emails to send."
+                    )
 
-            with st.expander("Edit / Preview Email Content", expanded=False):
-                custom_intro = st.text_area(
-                    "Opening message in Zone reminder email (leave blank for default)",
-                    key=_intro_key,
-                    height=90,
-                    placeholder=(
-                        "Default: \"This is a reminder that the MIS submission for [Month] "
-                        "is pending for the following locations in your zone. "
-                        "Please ensure submissions are completed at the earliest.\""
-                    ),
-                )
-                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-                prev_tab1, prev_tab2 = st.tabs(
-                    ["📧 Zone Email Preview", "📋 Consolidated Email Preview"]
-                )
+                # ── Edit / Preview ─────────────────────────────────────────────
+                _intro_key   = "rpt_custom_intro_multimonth"
+                custom_intro = st.session_state.get(_intro_key, "")
 
-                with prev_tab1:
-                    sample_zone = pending_zones[0] if pending_zones else ""
-                    if sample_zone:
-                        sample_locs = [
-                            r for r in all_rows
-                            if r.get("zone") == sample_zone
-                            and r.get("status") != "SUBMITTED"
-                        ]
-                        rcp = _emails.get_zone_recipients(sample_zone)
-                        # Show TO = Zone OD + location emails
-                        _sloc_emails = [
-                            _loc_map[str(r.get("userId", ""))]
-                            for r in sample_locs
-                            if _loc_map.get(str(r.get("userId", "")))
-                        ]
-                        _to_preview = "; ".join(
-                            filter(None, [rcp["to"]] + _sloc_emails[:3])
-                        ) + ("…" if len(_sloc_emails) > 3 else "")
-                        st.caption(
-                            f"**FROM:** {_emails.SENDER_EMAIL}  "
-                            f"**|  TO:** {_to_preview or '—'}  "
-                            f"**|  CC:** {rcp['cc'] or '—'}  |  No BCC"
-                        )
-                        st.caption(
-                            f"Sample: **{sample_zone}** — {len(sample_locs)} pending "
-                            f"({len(_sloc_emails)} location email(s) in TO)"
-                        )
-                        _components.html(
-                            _emails.build_preview_html(
-                                sample_zone, month_year, sample_locs,
-                                due_date, custom_intro,
-                            ),
-                            height=540, scrolling=True,
-                        )
-                    else:
-                        st.info("No pending zones to preview.")
+                with st.expander("Edit / Preview Email Content", expanded=False):
+                    custom_intro = st.text_area(
+                        "Opening message in Zone reminder email (leave blank for default)",
+                        key=_intro_key,
+                        height=90,
+                        placeholder=(
+                            "Default: \"This is a combined reminder for MIS data submission "
+                            "for [months]. The following locations in your zone have pending "
+                            "submissions. Please ensure all are completed at the earliest.\""
+                        ),
+                    )
+                    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
-                with prev_tab2:
-                    if pending_loc_rows:
-                        st.caption(
-                            f"**FROM:** {_emails.SENDER_EMAIL}  "
-                            f"**|  TO:** {_emails.SENDER_EMAIL}  "
-                            f"**|  CC:** {_cc_str}  |  No BCC"
-                        )
-                        st.caption(
-                            f"Covers {len(pending_loc_rows)} pending location(s) "
-                            f"across {len(pending_zones)} zone(s)"
-                        )
-                        _components.html(
-                            _emails.build_consolidated_html(
-                                month_year, all_rows, due_date
-                            ),
-                            height=580, scrolling=True,
-                        )
-                    else:
-                        st.info("No pending locations to preview.")
+                    prev_tab1, prev_tab2 = st.tabs(
+                        ["📧 Zone Email Preview", "📋 Consolidated Email Preview"]
+                    )
 
-            # ── Test Mode ──────────────────────────────────────────────────────
-            test_mode_em = st.toggle(
-                f"Test Mode — send only to {_emails.SENDER_EMAIL} (no actual emails go out)",
-                key=f"rpt_test_mode_{month_year}",
-                value=False,
-            )
-            if test_mode_em:
-                st.info(
-                    f"**Test Mode ON** — One sample zone email + one consolidated email "
-                    f"sent to **{_emails.SENDER_EMAIL}** only."
-                )
-
-            # ── Confirmation + Send ────────────────────────────────────────────
-            confirm_key = f"_rpt_email_confirm_{month_year}"
-            label = (
-                f"I confirm — send **TEST** zone email + consolidated email to "
-                f"{_emails.SENDER_EMAIL} for {month_year}."
-                if test_mode_em else
-                f"I confirm I have reviewed the recipients above and want to send zone "
-                f"reminder emails + consolidated report for **{month_year}** via Microsoft Outlook."
-            )
-            confirmed = st.checkbox(label, key=confirm_key)
-
-            em_col1, em_col2 = st.columns([2, 1])
-            with em_col1:
-                btn_label  = "Send Test Email(s)" if test_mode_em else "Send Reminder Emails"
-                can_send   = bool(pending_zones or pending_loc_rows)
-                send_clicked = can_send and st.button(
-                    btn_label, key="rpt_send_emails",
-                    type="primary", use_container_width=True,
-                )
-                if send_clicked:
-                    if not confirmed:
-                        st.warning("Please tick the confirmation checkbox before sending.")
-                    else:
-                        # ── Zone emails (one per zone, TO = OD + locations) ────
-                        if pending_zones:
-                            with st.spinner("Sending zone reminder emails via Outlook…"):
-                                z_result = _emails.send_all_reminders(
-                                    month_year, all_rows, due_date,
-                                    custom_intro=custom_intro,
-                                    test_mode=test_mode_em,
-                                    test_email=_emails.SENDER_EMAIL,
+                    with prev_tab1:
+                        sample_zone = all_pending_zones[0] if all_pending_zones else ""
+                        if sample_zone:
+                            rcp = _emails.get_zone_recipients(sample_zone)
+                            # Collect pending for sample zone per month
+                            sz_months_rows = {
+                                my: [
+                                    r for r in rows
+                                    if r.get("zone") == sample_zone
+                                    and r.get("status") != "SUBMITTED"
+                                ]
+                                for my, rows in months_data.items()
+                                if any(
+                                    r.get("zone") == sample_zone
+                                    and r.get("status") != "SUBMITTED"
+                                    for r in rows
                                 )
-                            if z_result["ok"]:
-                                st.success(f"Zone emails: {z_result['msg']}")
-                            else:
-                                st.error(f"Zone emails: {z_result['msg']}")
+                            }
+                            _all_loc_emails = list({
+                                _loc_map[str(r.get("userId", ""))]
+                                for locs in sz_months_rows.values()
+                                for r in locs
+                                if _loc_map.get(str(r.get("userId", "")))
+                            })
+                            _to_prev = "; ".join(
+                                filter(None, [rcp["to"]] + _all_loc_emails[:3])
+                            ) + ("…" if len(_all_loc_emails) > 3 else "")
+                            st.caption(
+                                f"**FROM:** {_emails.SENDER_EMAIL}  "
+                                f"**|  TO:** {_to_prev or '—'}  "
+                                f"**|  CC:** {rcp['cc'] or '—'}  |  No BCC"
+                            )
+                            st.caption(
+                                f"Sample: **{sample_zone}** — "
+                                f"{sum(len(v) for v in sz_months_rows.values())} pending "
+                                f"across {len(sz_months_rows)} month(s)"
+                            )
+                            _components.html(
+                                _emails.build_multimonth_zone_html(
+                                    sample_zone, sz_months_rows,
+                                    due_dates, custom_intro,
+                                ),
+                                height=560, scrolling=True,
+                            )
+                        else:
+                            st.info("No pending zones to preview.")
 
-                        # ── Consolidated email (one, TO = shoaibrehman, CC = HQO) ─
-                        if pending_loc_rows:
-                            with st.spinner("Sending consolidated report email via Outlook…"):
-                                c_result = _emails.send_consolidated_reminder(
-                                    month_year, all_rows, due_date,
-                                    test_mode=test_mode_em,
-                                    test_email=_emails.SENDER_EMAIL,
-                                )
-                            if c_result["ok"]:
-                                st.success(f"Consolidated email: {c_result['msg']}")
-                            else:
-                                st.error(f"Consolidated email: {c_result['msg']}")
+                    with prev_tab2:
+                        total_pending_all = sum(
+                            1 for rows in months_data.values()
+                            for r in rows if r.get("status") != "SUBMITTED"
+                        )
+                        if total_pending_all:
+                            st.caption(
+                                f"**FROM:** {_emails.SENDER_EMAIL}  "
+                                f"**|  TO:** {_emails.SENDER_EMAIL}  "
+                                f"**|  CC:** {_cc_str}  |  No BCC"
+                            )
+                            st.caption(
+                                f"Covers {total_pending_all} pending location-month(s) "
+                                f"across {len(selected_months)} month(s)"
+                            )
+                            _components.html(
+                                _emails.build_multimonth_consolidated_html(
+                                    months_data, due_dates
+                                ),
+                                height=600, scrolling=True,
+                            )
+                        else:
+                            st.info("No pending locations to preview.")
 
-                        if not test_mode_em:
-                            st.session_state.pop(confirm_key, None)
-            with em_col2:
-                if st.button("Cancel / Reset", key="rpt_email_cancel", use_container_width=True):
-                    st.session_state.pop(confirm_key, None)
-                    st.rerun()
+                # ── Test Mode ──────────────────────────────────────────────────
+                _my_label = ", ".join(sorted(selected_months))
+                test_mode_em = st.toggle(
+                    f"Test Mode — send only to {_emails.SENDER_EMAIL} (no actual emails go out)",
+                    key="rpt_test_mode_multi",
+                    value=False,
+                )
+                if test_mode_em:
+                    st.info(
+                        f"**Test Mode ON** — Sample zone email + consolidated email for "
+                        f"**{_my_label}** sent to **{_emails.SENDER_EMAIL}** only."
+                    )
+
+                # ── Confirmation + Send ────────────────────────────────────────
+                confirm_key = "rpt_email_confirm_multi"
+                label = (
+                    f"I confirm — send **TEST** emails to {_emails.SENDER_EMAIL} "
+                    f"covering **{_my_label}**."
+                    if test_mode_em else
+                    f"I confirm I have reviewed the recipients above and want to send "
+                    f"zone reminder emails + consolidated report for **{_my_label}** "
+                    f"via Microsoft Outlook."
+                )
+                confirmed = st.checkbox(label, key=confirm_key)
+
+                total_pending_all = sum(
+                    1 for rows in months_data.values()
+                    for r in rows if r.get("status") != "SUBMITTED"
+                )
+                em_col1, em_col2 = st.columns([2, 1])
+                with em_col1:
+                    btn_label    = "Send Test Email(s)" if test_mode_em else "Send Reminder Emails"
+                    can_send     = bool(all_pending_zones or total_pending_all)
+                    send_clicked = can_send and st.button(
+                        btn_label, key="rpt_send_emails",
+                        type="primary", use_container_width=True,
+                    )
+                    if send_clicked:
+                        if not confirmed:
+                            st.warning("Please tick the confirmation checkbox before sending.")
+                        else:
+                            # ── Zone emails ────────────────────────────────────
+                            if all_pending_zones:
+                                with st.spinner(
+                                    f"Sending zone reminder emails for {_my_label}…"
+                                ):
+                                    z_result = _emails.send_all_multimonth_reminders(
+                                        months_data, due_dates,
+                                        custom_intro=custom_intro,
+                                        test_mode=test_mode_em,
+                                        test_email=_emails.SENDER_EMAIL,
+                                    )
+                                if z_result["ok"]:
+                                    st.success(f"Zone emails: {z_result['msg']}")
+                                else:
+                                    st.error(f"Zone emails: {z_result['msg']}")
+
+                            # ── Consolidated email ─────────────────────────────
+                            if total_pending_all:
+                                with st.spinner(
+                                    "Sending consolidated report email via Outlook…"
+                                ):
+                                    c_result = _emails.send_multimonth_consolidated_reminder(
+                                        months_data, due_dates,
+                                        test_mode=test_mode_em,
+                                        test_email=_emails.SENDER_EMAIL,
+                                    )
+                                if c_result["ok"]:
+                                    st.success(f"Consolidated email: {c_result['msg']}")
+                                else:
+                                    st.error(f"Consolidated email: {c_result['msg']}")
+
+                            if not test_mode_em:
+                                st.session_state.pop(confirm_key, None)
+                with em_col2:
+                    if st.button("Cancel / Reset", key="rpt_email_cancel",
+                                 use_container_width=True):
+                        st.session_state.pop(confirm_key, None)
+                        st.rerun()
 
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
