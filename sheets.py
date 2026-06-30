@@ -2379,9 +2379,9 @@ def generate_mis_template(
                     type="list", formula1=_f1,
                     allow_blank=True, showErrorMessage=True,
                     errorStyle="warning",
-                    error="Select a tank number from your location's Tank Master list, or 'Other Tanks'",
+                    error="Select a tank from the list, or type the tank number directly if not listed.",
                     showInputMessage=True, promptTitle="Tank No.",
-                    prompt="Select tank from Tank Master list for this location")
+                    prompt="Select from list — OR type tank number directly if not listed (e.g. T-999).")
             elif key in dropdowns:
                 dv = DataValidation(
                     type="list", formula1=f'"{dropdowns[key]}"',
