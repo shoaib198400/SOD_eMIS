@@ -1648,11 +1648,20 @@ def clear_session(user_id: str) -> None:
     set_setting(f"sess_{user_id}", "", user_id)
 
 
-def get_setting(key: str, default: str = "FALSE") -> str:
-    """Read a single value from the Settings tab (cached 60 s)."""
+@st.cache_data(ttl=60, show_spinner=False)
+def _settings_rows() -> list:
+    """Read all Settings rows once, cached for 60 s. Single API call shared by all get_setting() lookups."""
     try:
-        ws   = _ensure_ws(TABS["SETTINGS"], _SETTINGS_HEADERS)
-        rows = ws.get_all_values()
+        ws = _ensure_ws(TABS["SETTINGS"], _SETTINGS_HEADERS)
+        return _api_call(ws.get_all_values) or []
+    except Exception:
+        return []
+
+
+def get_setting(key: str, default: str = "FALSE") -> str:
+    """Read a single value from the Settings tab (uses 60 s shared cache)."""
+    try:
+        rows = _settings_rows()
         for row in rows[1:]:
             row = (row + [""] * 4)[:4]
             if row[0].strip() == key:
@@ -1666,16 +1675,16 @@ def set_setting(key: str, value: str, updated_by: str = "system") -> dict:
     """Write/update a value in the Settings tab and clear the read cache."""
     try:
         ws   = _ensure_ws(TABS["SETTINGS"], _SETTINGS_HEADERS)
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for i, row in enumerate(rows[1:], start=2):
             row = (row + [""] * 4)[:4]
             if row[0].strip() == key:
-                ws.update(f"B{i}:D{i}", [[value, updated_by, now]])
-                get_setting.clear()
+                _api_call(lambda i=i: ws.update(f"B{i}:D{i}", [[value, updated_by, now]]))
+                _settings_rows.clear()
                 return {"ok": True}
-        ws.append_row([key, value, updated_by, now], value_input_option="RAW")
-        get_setting.clear()
+        _api_call(lambda: ws.append_row([key, value, updated_by, now], value_input_option="RAW"))
+        _settings_rows.clear()
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
