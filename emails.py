@@ -1090,9 +1090,9 @@ LOCATION_EMAIL_MAP = {
     "1689": "numa.top@hpcl.in",
     "1691": "silg.top@hpcl.in",            # RANGPO TOP-IOC
     "1693": "silg.top@hpcl.in",
-    "1698": "rahulchangmai@hpcl.in",       # Dimapur TOP-IOC
+    "1698": "rahulchangmai@hpcl.in",       # Dimapur TOP-IOC (non-operational; excluded via Settings)
     "1700": "silg.top@hpcl.in",            # RANGAPANI TOP-NRL
-    "1708": "rahulchangmai@hpcl.in",       # Dimapur Depot
+    "1708": "rahulchangmai@hpcl.in",       # Dimapur Depot (operational)
     "1711": "brni.irdic@hpcl.in",
     "1712": "brni.irdic@hpcl.in",
     "1723": "patna.irdic@hpcl.in",
