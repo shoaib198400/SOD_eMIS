@@ -830,8 +830,9 @@ def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HP
 # ── Draft CRUD ────────────────────────────────────────────────────────────────
 # MIS_Draft columns: user_id | month_year | sections_complete | last_updated | data_json
 
+@st.cache_data(ttl=30, show_spinner=False)
 def load_draft(user_id: str, month_year: str) -> dict:
-    """Return draft data dict for user+month, or empty dict."""
+    """Return draft data dict for user+month, or empty dict (30 s cache)."""
     try:
         ws   = _ws(TABS["MIS_DRAFT"])
         rows = _api_call(ws.get_all_values)
@@ -848,6 +849,40 @@ def load_draft(user_id: str, month_year: str) -> dict:
     except Exception:
         pass
     return {}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_submitted_fields(user_id: str, month_year: str) -> dict:
+    """Read field key→value dict from MIS_Submitted for a SUBMITTED location.
+
+    Fallback for generate_filled_mis_report when MIS_Draft is unavailable or empty.
+    MIS_Submitted stores every field value as a labelled column; we reverse-map
+    labels back to field keys (f1, f2 …) so the report generator can use them.
+    """
+    try:
+        ws   = _ws(TABS["MIS_SUBMITTED"])
+        rows = _api_call(ws.get_all_values)
+        if len(rows) < 2:
+            return {}
+        headers = rows[0]
+        DATA_START = 7  # skip: User ID, Location Name, Zone, Month-Year, Submitted At, Approved At, Approved By
+        rev_map = {v: k for k, v in _field_label_map().items()}
+        uid_c = next((headers.index(h) for h in ("User ID", "user_id") if h in headers), 0)
+        mon_c = next((headers.index(h) for h in ("Month-Year", "month_year") if h in headers), 3)
+        for row in rows[1:]:
+            row_e = (row + [""] * len(headers))[:len(headers)]
+            if row_e[uid_c].strip() == user_id and row_e[mon_c].strip() == month_year:
+                result = {}
+                for ci, h in enumerate(headers[DATA_START:], start=DATA_START):
+                    fkey = rev_map.get(h)
+                    if fkey and ci < len(row_e):
+                        val = row_e[ci].strip()
+                        if val:
+                            result[fkey] = val
+                return result
+        return {}
+    except Exception:
+        return {}
 
 
 def _update_submission_status(user_id: str, month_year: str, status: str, pct: float,
@@ -935,8 +970,9 @@ def save_draft(user_id: str, month_year: str,
         audit_log(user_id, f"SaveDraft {tag}",
                   f"month={month_year} secs={secs_str} pct={pct}")
 
-        # Invalidate dashboard cache so this user's next dashboard load is fresh
+        # Invalidate caches so next reads see fresh data
         get_dashboard_data.clear()
+        load_draft.clear()
         return {"ok": True, "pct": pct, "secs_done": sorted(secs_done)}
 
     except Exception as e:

@@ -2307,9 +2307,16 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
             _save_detail_tables(detail_dfs, user, month_year, is_locked)
         if res.get("ok"):
             st.session_state.pop(lock_cache_key, None)
-            pct    = int(res.get("pct", 0))
-            marker = " ✅ Section complete!" if section_num in res.get("secs_done", []) else ""
-            st.success(f"Draft saved! Overall completion: {pct}%{marker}")
+            pct = int(res.get("pct", 0))
+            if section_num in res.get("secs_done", []):
+                st.success(f"Draft saved! Overall completion: {pct}%  ✅ Section complete!")
+            else:
+                _missing = [f["label"] for f in fields
+                            if f.get("req") and not f.get("auto")
+                            and st.session_state.get(_sk(month_year, f["key"])) in (None, "")]
+                _warn = (f"  ⚠️ Required field(s) not filled: **{', '.join(_missing)}** "
+                         f"— section not marked complete yet.") if _missing else ""
+                st.success(f"Draft saved! Overall completion: {pct}%{_warn}")
         else:
             st.error(f"Save failed: {res.get('msg', 'Unknown error')}")
 
@@ -2647,10 +2654,15 @@ def show_review(user: dict, month_year: str, month_label: str):
                          use_container_width=True):
                 with st.spinner("Generating MIS Report…"):
                     try:
-                        loc_info = sheets.get_maker_info(maker_id)
-                        rpt = sheets.generate_filled_mis_report(
-                            maker_id, month_year, loc_info, draft)
-                        st.session_state[_rpt_key_ro] = rpt
+                        loc_info  = sheets.get_maker_info(maker_id)
+                        _rpt_data = draft if any(k for k in draft if not k.startswith("_")) \
+                                    else sheets.load_submitted_fields(maker_id, month_year)
+                        if not any(k for k in _rpt_data if not k.startswith("_")):
+                            st.warning("Report data not available yet — please try again in a few seconds.")
+                        else:
+                            rpt = sheets.generate_filled_mis_report(
+                                maker_id, month_year, loc_info, _rpt_data)
+                            st.session_state[_rpt_key_ro] = rpt
                     except Exception as _ex:
                         st.error(f"Report error: {_ex}")
             if st.session_state.get(_rpt_key_ro):
@@ -3094,11 +3106,16 @@ def _action_area(user: dict, data: dict, month_year: str):
                          use_container_width=True):
                 with st.spinner("Generating MIS Report…"):
                     try:
-                        draft = sheets.load_draft(user["userId"], month_year)
-                        rpt   = sheets.generate_filled_mis_report(
-                            user["userId"], month_year, user, draft
-                        )
-                        st.session_state[_rpt_key] = rpt
+                        _draft = sheets.load_draft(user["userId"], month_year)
+                        _rpt_data = _draft if any(k for k in _draft if not k.startswith("_")) \
+                                    else sheets.load_submitted_fields(user["userId"], month_year)
+                        if not any(k for k in _rpt_data if not k.startswith("_")):
+                            st.warning("Report data not available yet — please try again in a few seconds.")
+                        else:
+                            rpt = sheets.generate_filled_mis_report(
+                                user["userId"], month_year, user, _rpt_data
+                            )
+                            st.session_state[_rpt_key] = rpt
                     except Exception as ex:
                         st.error(f"Report error: {ex}")
                         st.session_state[_rpt_key] = None
@@ -3197,11 +3214,16 @@ def _action_area(user: dict, data: dict, month_year: str):
                          use_container_width=True):
                 with st.spinner("Generating MIS Report…"):
                     try:
-                        draft = sheets.load_draft(target_id, month_year)
-                        rpt   = sheets.generate_filled_mis_report(
-                            target_id, month_year, user, draft
-                        )
-                        st.session_state[_rpt_key] = rpt
+                        _draft = sheets.load_draft(target_id, month_year)
+                        _rpt_data = _draft if any(k for k in _draft if not k.startswith("_")) \
+                                    else sheets.load_submitted_fields(target_id, month_year)
+                        if not any(k for k in _rpt_data if not k.startswith("_")):
+                            st.warning("Report data not available yet — please try again in a few seconds.")
+                        else:
+                            rpt = sheets.generate_filled_mis_report(
+                                target_id, month_year, user, _rpt_data
+                            )
+                            st.session_state[_rpt_key] = rpt
                     except Exception as ex:
                         st.error(f"Report error: {ex}")
                         st.session_state[_rpt_key] = None
@@ -4148,10 +4170,15 @@ def _loc_table(rows: list, month_year: str, viewer_role: str,
                                  use_container_width=True):
                         with st.spinner(f"Generating MIS for {uid}…"):
                             try:
-                                draft = sheets.load_draft(uid, month_year)
-                                rpt   = sheets.generate_filled_mis_report(
-                                    uid, month_year, loc, draft)
-                                st.session_state[_rpt_key] = rpt
+                                _draft    = sheets.load_draft(uid, month_year)
+                                _rpt_data = _draft if any(k for k in _draft if not k.startswith("_")) \
+                                            else sheets.load_submitted_fields(uid, month_year)
+                                if not any(k for k in _rpt_data if not k.startswith("_")):
+                                    st.warning(f"No MIS data found for {uid} — try again in a few seconds.")
+                                else:
+                                    rpt = sheets.generate_filled_mis_report(
+                                        uid, month_year, loc, _rpt_data)
+                                    st.session_state[_rpt_key] = rpt
                             except Exception as _ex:
                                 st.error(f"Report error: {_ex}")
                 if st.session_state.get(_rpt_key):
