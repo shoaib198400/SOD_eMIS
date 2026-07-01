@@ -1178,7 +1178,13 @@ def get_maker_info(user_id: str) -> dict:
 
 
 def get_submissions_for_locations(locs: list, month_year: str) -> list:
-    """Bulk-fetch submission status for a list of location dicts."""
+    """Bulk-fetch submission status for a list of location dicts.
+
+    Locations in the 'excluded_from_reports' Settings key (e.g. non-operational)
+    are silently omitted from the returned list.
+    """
+    excluded = get_excluded_report_codes()
+
     status_map: dict = {}
     try:
         ws   = _ws(TABS["SUBMISSION_STATUS"])
@@ -1198,6 +1204,8 @@ def get_submissions_for_locations(locs: list, month_year: str) -> list:
 
     results = []
     for loc in locs:
+        if loc["userId"] in excluded:
+            continue
         sd = status_map.get(loc["userId"],
                             {"status": "NOT_STARTED", "completion_pct": 0.0})
         results.append({**loc, **sd})
@@ -1671,6 +1679,53 @@ def set_setting(key: str, value: str, updated_by: str = "system") -> dict:
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
+
+
+# ── Location management helpers ───────────────────────────────────────────────
+
+def get_excluded_report_codes() -> set:
+    """Return set of location codes excluded from pending-submission reports.
+
+    Stored as comma-separated value under Settings key 'excluded_from_reports'.
+    Excluded locations (e.g. non-operational) still appear in the app but are
+    invisible to the Reports page, zone pending counts, and reminder emails.
+    """
+    val = get_setting("excluded_from_reports", "")
+    return {c.strip() for c in val.split(",") if c.strip()}
+
+
+def set_excluded_report_codes(codes: set, updated_by: str) -> dict:
+    """Persist the exclusion list to Settings sheet."""
+    val = ",".join(sorted(str(c) for c in codes))
+    return set_setting("excluded_from_reports", val, updated_by)
+
+
+def update_location_zone(loc_code: str, new_zone: str, updated_by: str) -> dict:
+    """Update zone assignment for a location in the UserAccess sheet.
+
+    Column layout: A=loc_code, B=loc_name, C=zone, D=password, E=role.
+    Updates every Maker row matching loc_code (handles duplicate entries).
+    """
+    try:
+        ws   = _ws(TABS["USER_ACCESS"])
+        rows = _api_call(ws.get_all_values)
+        updated_rows = []
+        for i, row in enumerate(rows[1:], start=2):
+            row_ext = (row + [""] * 8)[:8]
+            if row_ext[0].strip() == str(loc_code) and row_ext[4].strip() == "Maker":
+                _api_call(lambda ri=i: ws.update_cell(ri, 3, new_zone))
+                updated_rows.append(i)
+        if updated_rows:
+            _loc_name_map.clear()
+            audit_log(updated_by, "ZoneUpdate",
+                      f"loc={loc_code} new_zone={new_zone} rows={updated_rows}")
+            return {
+                "ok": True,
+                "msg": f"Zone updated to '{new_zone}' for {loc_code} ({len(updated_rows)} row(s)).",
+            }
+        return {"ok": False, "msg": f"Location code {loc_code} not found in UserAccess."}
+    except Exception as exc:
+        return {"ok": False, "msg": str(exc)}
 
 
 # ── EmailMaster: dynamic email maps ──────────────────────────────────────────

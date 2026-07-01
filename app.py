@@ -4019,6 +4019,12 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 st.session_state["selected_section"] = "helpdesk"
                 st.rerun()
 
+            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+            if st.button("🏭  Location Management", key="btn_locmgmt_nav",
+                         use_container_width=True):
+                st.session_state["selected_section"] = "loc_mgmt"
+                st.rerun()
+
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
@@ -4725,6 +4731,133 @@ def show_analytics_page(user: dict):
       <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Analytics Dashboard</span>
     </div>""", unsafe_allow_html=True)
+
+
+def show_location_management(user: dict):
+    """Admin-only page: zone corrections + non-operational exclusion list."""
+    _dashboard_css()
+    _zone_sidebar(user, "LOC_MGMT", "Location Management")
+
+    if st.sidebar.button("← Back", key="locmgmt_back", use_container_width=True):
+        st.session_state.selected_section = None
+        st.rerun()
+
+    _dash_header(user)
+
+    st.markdown(
+        '<div style="background:linear-gradient(90deg,#001a6e,#0033A0,#0050d0);color:white;'
+        'font-size:15px;font-weight:700;padding:12px 22px;border-radius:10px;margin-bottom:18px;">'
+        '🏭 Location Management — Zone Corrections &amp; Non-Operational Exclusions</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Section 1: Zone correction ─────────────────────────────────────────────
+    st.markdown("### Zone Correction")
+    st.caption(
+        "Use this to correct the zone assigned to a location in the UserAccess sheet. "
+        "Changes take effect immediately for all reports and emails."
+    )
+
+    with st.form("loc_zone_correction_form"):
+        zc_cols = st.columns([1, 2, 1])
+        with zc_cols[0]:
+            zc_code = st.text_input("Location Code *", placeholder="e.g. 1691")
+        with zc_cols[1]:
+            zone_options = [
+                "Bengaluru Zone", "Bhopal Zone", "Bhubneshwar Zone",
+                "Chandigarh Zone", "Cochin Zone", "East Zone", "Guwahati Zone",
+                "Jaipur Zone", "Noida (UP-West) Zone", "North Central Zone",
+                "North West Zone", "North Zone (NZ)", "Patna Zone",
+                "South Central Zone", "South Zone", "West Zone (WZ)",
+            ]
+            zc_zone = st.selectbox("New Zone *", zone_options)
+        with zc_cols[2]:
+            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+            zc_submit = st.form_submit_button("Update Zone", type="primary",
+                                              use_container_width=True)
+        if zc_submit:
+            if not zc_code.strip():
+                st.error("Enter a location code.")
+            else:
+                res = sheets.update_location_zone(
+                    zc_code.strip(), zc_zone, user["userId"]
+                )
+                if res["ok"]:
+                    st.success(res["msg"])
+                else:
+                    st.error(res["msg"])
+
+    st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+
+    # ── Section 2: Non-Operational / Excluded locations ────────────────────────
+    st.markdown("### Non-Operational Locations (Excluded from Reports)")
+    st.caption(
+        "Locations listed here are hidden from the pending-submission reports, zone emails, "
+        "and consolidated MIS reports. They can still log in and submit data. "
+        "Add one location code per line."
+    )
+
+    current_excluded = sheets.get_excluded_report_codes()
+
+    # Show current list with remove buttons
+    if current_excluded:
+        st.markdown(f"**Currently excluded: {len(current_excluded)} location(s)**")
+        exc_cols = st.columns(4)
+        for i, code in enumerate(sorted(current_excluded)):
+            # Resolve name
+            loc_info = sheets._loc_name_map().get(code.upper(), (code, "", ""))
+            label = f"{code} — {loc_info[0]}" if loc_info[0] != code else code
+            with exc_cols[i % 4]:
+                if st.button(f"❌ Remove {code}", key=f"rm_exc_{code}",
+                             use_container_width=True):
+                    new_set = current_excluded - {code}
+                    res = sheets.set_excluded_report_codes(new_set, user["userId"])
+                    if res["ok"]:
+                        st.success(f"Removed {code} from exclusion list.")
+                        st.rerun()
+                    else:
+                        st.error(res.get("msg", "Failed to update."))
+                st.caption(label)
+    else:
+        st.info("No locations currently excluded from reports.")
+
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    with st.form("add_exclusion_form"):
+        add_col1, add_col2 = st.columns([3, 1])
+        with add_col1:
+            new_codes_raw = st.text_input(
+                "Add location code(s) to exclude",
+                placeholder="1698, 1708  (comma-separated)",
+            )
+        with add_col2:
+            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+            add_sub = st.form_submit_button("Add to Exclusion List", type="primary",
+                                            use_container_width=True)
+        if add_sub:
+            new_codes = {c.strip() for c in new_codes_raw.split(",") if c.strip()}
+            if not new_codes:
+                st.error("Enter at least one location code.")
+            else:
+                combined = current_excluded | new_codes
+                res = sheets.set_excluded_report_codes(combined, user["userId"])
+                if res["ok"]:
+                    st.success(
+                        f"Added {', '.join(sorted(new_codes))} to exclusion list. "
+                        f"They will no longer appear in pending reports or reminder emails."
+                    )
+                    st.rerun()
+                else:
+                    st.error(res.get("msg", "Failed to update."))
+
+    st.markdown(
+        '<div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;'
+        'display:flex;justify-content:space-between;font-size:11px;color:#aaa;">'
+        '<span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>'
+        '<span>HPCL SOD &nbsp;·&nbsp; Location Management</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def show_helpdesk_admin(user: dict):
@@ -8278,6 +8411,8 @@ def main():
                 show_email_review(user)
             elif sec == "helpdesk" and role == "Admin":
                 show_helpdesk_admin(user)
+            elif sec == "loc_mgmt" and role == "Admin":
+                show_location_management(user)
             else:
                 show_hqo_dashboard(user)
         else:
