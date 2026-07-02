@@ -2448,12 +2448,16 @@ def generate_mis_template(
                 ws_mi.row_dimensions[ri].height = 20
             start_blank = 4 + len(saved_rows)
 
-        # Blank unlocked rows to row 150 — date columns forced to text format
+        # Blank unlocked rows to row 150.
+        # Use _cell() (not bare .protection) so protection + border are registered
+        # together in a single openpyxl style entry, ensuring applyProtection="1"
+        # is written to styles.xml and Excel honours the unlocked state.
         for ri in range(start_blank, 151):
             for ci in range(1, n_cols + 1):
-                ws_mi.cell(row=ri, column=ci).protection = UNLOCKED_CELL
+                c = _cell(ws_mi, ri, ci, value=None,
+                          font=NM_FONT, fill=WHITE_FILL, align=LEFT, lock=False)
                 if keys[ci - 1] in date_keys_tab:
-                    ws_mi.cell(row=ri, column=ci).number_format = "@"
+                    c.number_format = "@"
 
         # Data validations per column (DD/MM/YYYY formula for dates; list for dropdowns)
         for ci, (hdr, hint, key) in enumerate(zip(hdrs, hints, keys), 1):
@@ -2498,8 +2502,10 @@ def generate_mis_template(
             ws_mi.add_data_validation(dv)
 
         ws_mi.freeze_panes = ws_mi["A4"]
-        # S5A tabs are data-entry only (no formulas) — leave unprotected so
-        # users can freely type in all rows without needing to unlock the sheet.
+        ws_mi.protection.sheet           = True
+        ws_mi.protection.password        = PROTECT_PW
+        ws_mi.protection.selectLockedCells   = True   # prevent clicks on locked header rows
+        ws_mi.protection.selectUnlockedCells = False  # allow selecting/editing data rows
 
     buf = _io.BytesIO()
     wb.save(buf)
