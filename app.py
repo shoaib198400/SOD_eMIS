@@ -3095,6 +3095,12 @@ def _action_area(user: dict, data: dict, month_year: str):
                 "Please correct the data and resubmit."
             )
 
+        from form_defs import get_skip_sections
+        skip_secs     = get_skip_sections(user.get("locType", "HPCL"))
+        required_secs = {n for n in range(1, 11) if n not in skip_secs}
+        secs_done     = set(data.get("secs_done", []))
+        sections_ready = required_secs.issubset(secs_done)
+
         c1, c2 = st.columns(2)
         with c1:
             if st.button("✏️  Enter / Edit Data",
@@ -3104,7 +3110,7 @@ def _action_area(user: dict, data: dict, month_year: str):
                 st.rerun()
         with c2:
             can_submit = (
-                pct >= 100
+                sections_ready
                 and status not in ("PENDING_REVIEW", "SUBMITTED", "LOCKED")
             )
             if st.button("📤  Submit for Review",
@@ -3119,9 +3125,10 @@ def _action_area(user: dict, data: dict, month_year: str):
                 else:
                     st.error(res["msg"])
 
-        if not can_submit and pct < 100:
+        if not can_submit and not sections_ready:
             st.caption(
-                f"Complete all 10 sections (current: {int(pct)}%) to enable submission."
+                f"Complete all {len(required_secs)} section(s) "
+                f"({len(secs_done & required_secs)}/{len(required_secs)} done) to enable submission."
             )
 
         # ── Generate MIS Report — active when approved (SUBMITTED) ───────────
