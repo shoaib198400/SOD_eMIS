@@ -1053,13 +1053,23 @@ def save_detail_table(user_id: str, month_year: str, tab_key: str,
 def submit_for_review(user_id: str, month_year: str) -> dict:
     """Maker submits completed draft for Checker review."""
     try:
-        sd  = get_month_status(user_id, month_year)
-        pct = sd.get("completion_pct", 0)
-        if pct < 100:
+        from form_defs import get_skip_sections
+        loc_type      = get_loc_type(user_id)
+        skip_secs     = get_skip_sections(loc_type)
+        required_secs = {n for n in range(1, 11) if n not in skip_secs}
+
+        sd        = get_month_status(user_id, month_year)
+        pct       = sd.get("completion_pct", 0)
+        dash      = get_dashboard_data(user_id, month_year, loc_type)
+        secs_done = set(dash.get("secs_done", []))
+
+        if not required_secs.issubset(secs_done):
+            missing = sorted(required_secs - secs_done)
             return {"ok": False,
-                    "msg": (f"Cannot submit — completion is {int(pct)}%. "
-                            "All 10 sections must be saved first.")}
-        if not check_mi_complete(user_id, month_year):
+                    "msg": ("Cannot submit — sections "
+                            f"{', '.join('S' + str(n) for n in missing)} "
+                            "must be saved first.")}
+        if 5 not in skip_secs and not check_mi_complete(user_id, month_year):
             return {"ok": False,
                     "msg": ("Cannot submit — M&I MIS (S5A) is incomplete. "
                             "Please fill all 10 tabs in S5A and save each one.")}
