@@ -2743,7 +2743,7 @@ def generate_mis_pdf_report(
             self.set_text_color(180, 200, 235)
             self.set_x(10)
             self.cell(0, 11,
-                      f"Page {self.page_no()}  |  HPCL SOD MIS  |  CONFIDENTIAL — CHECKER USE ONLY",
+                      _s(f"Page {self.page_no()}  |  HPCL SOD MIS  |  CONFIDENTIAL — CHECKER USE ONLY"),
                       new_x=XPos.LMARGIN, new_y=YPos.TOP)
 
     pdf = _PDF(orientation="P", unit="mm", format="A4")
@@ -2891,7 +2891,7 @@ def generate_mis_pdf_report(
             pdf.set_fill_color(*BLUE)
             pdf.set_text_color(*WHITE)
             pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(W, 8, "  Section 5A  —  Maintenance & Inspection (M&I) MIS",
+            pdf.cell(W, 8, _s("  Section 5A  —  Maintenance & Inspection (M&I) MIS"),
                      fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(0.5)
             any_mi = True
@@ -3101,6 +3101,51 @@ def generate_mi_mis_report(
 
     buf = _io.BytesIO()
     wb.save(buf)
+    return buf.getvalue()
+
+
+def generate_mi_mis_bulk_zip(month_year: str, rows: list) -> bytes | None:
+    """Build a ZIP of M&I MIS Excel reports for every SUBMITTED location in `rows`.
+
+    `rows` is a list of location-status dicts (userId/locName/zone/status), e.g.
+    from get_all_status_for_month() or get_submissions_for_locations() — callers
+    pass in whatever scope/filter (zone, Admin zone-filter, etc.) is on screen.
+    TOP/HMEL locations are skipped since M&I MIS (S5) is not applicable to them.
+    Returns None if there is nothing to zip.
+    """
+    import io as _io
+    import zipfile
+    from form_defs import get_skip_sections
+
+    submitted = [r for r in rows if r.get("status") == "SUBMITTED"]
+    if not submitted:
+        return None
+
+    buf = _io.BytesIO()
+    any_written = False
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for r in submitted:
+            uid = r.get("userId", "").strip()
+            if not uid:
+                continue
+            loc_type = get_loc_type(uid)
+            if 5 in get_skip_sections(loc_type):
+                continue  # M&I MIS not applicable for TOP/HMEL locations
+            user_info = {
+                "userId":  uid,
+                "locName": r.get("locName", uid),
+                "zone":    r.get("zone", ""),
+            }
+            try:
+                xlsx_bytes = generate_mi_mis_report(uid, month_year, user_info)
+            except Exception:
+                continue
+            safe_name = uid.replace("/", "_")
+            zf.writestr(f"MI_MIS_{safe_name}_{month_year.replace('-','_')}.xlsx", xlsx_bytes)
+            any_written = True
+
+    if not any_written:
+        return None
     return buf.getvalue()
 
 

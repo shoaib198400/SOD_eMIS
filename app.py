@@ -6152,7 +6152,7 @@ def show_reports_page(user: dict):
         unsafe_allow_html=True,
     )
 
-    dl_col1, dl_col2 = st.columns(2)
+    dl_col1, dl_col2, dl_col3 = st.columns(3)
 
     with dl_col1:
         if st.button("⬇ Generate Submitted MIS Data (Excel)", key="rpt_gen_submitted",
@@ -6186,6 +6186,24 @@ def show_reports_page(user: dict):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="rpt_dl_pending",
             )
+
+    with dl_col3:
+        if st.button("⬇ Generate M&I MIS Reports (ZIP)", key="rpt_gen_mi_zip",
+                     use_container_width=True,
+                     help="One M&I MIS Excel report per submitted location "
+                          "(TOP/HMEL locations excluded — M&I is not applicable to them)"):
+            with st.spinner("Building M&I MIS reports…"):
+                mi_zip_bytes = sheets.generate_mi_mis_bulk_zip(month_year, display_rows)
+            if mi_zip_bytes:
+                st.download_button(
+                    label="Download M&I MIS Reports",
+                    data=mi_zip_bytes,
+                    file_name=f"MI_MIS_Reports_{month_year}.zip",
+                    mime="application/zip",
+                    key="rpt_dl_mi_zip",
+                )
+            else:
+                st.warning("No submitted locations with applicable M&I MIS data for this month.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
