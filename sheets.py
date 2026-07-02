@@ -2498,10 +2498,8 @@ def generate_mis_template(
             ws_mi.add_data_validation(dv)
 
         ws_mi.freeze_panes = ws_mi["A4"]
-        ws_mi.protection.sheet             = True
-        ws_mi.protection.password          = PROTECT_PW
-        ws_mi.protection.selectLockedCells   = False
-        ws_mi.protection.selectUnlockedCells = False
+        # S5A tabs are data-entry only (no formulas) — leave unprotected so
+        # users can freely type in all rows without needing to unlock the sheet.
 
     buf = _io.BytesIO()
     wb.save(buf)
