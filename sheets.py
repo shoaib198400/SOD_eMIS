@@ -2660,6 +2660,278 @@ def generate_filled_mis_report(
     return buf.getvalue()
 
 
+def generate_mis_pdf_report(
+    user_id: str,
+    month_year: str,
+    user_info: dict,
+    draft: dict,
+    status: str = "",
+) -> bytes:
+    """Generate a printer-friendly PDF review report for the Checker.
+
+    Renders all MIS sections (S1-S10) with field labels and filled values,
+    plus a summary of S5A M&I MIS tabs. Returns raw PDF bytes.
+    """
+    from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+    from form_defs import SECTION_FIELDS, SECTION_NAMES
+
+    _SECTIONS = [
+        (1, "Operations"),         (2, "Facilities & Planning"),
+        (3, "S&D"),                (4, "Biofuel"),
+        (5, "M&I"),                (6, "HSE"),
+        (7, "Operational Efficiency"), (8, "EM Lock"),
+        (9, "Transportation"),     (10, "Others"),
+    ]
+    _STATUS_LABELS = {
+        "PENDING_REVIEW": "Pending Checker Review",
+        "SUBMITTED":      "Approved & Locked",
+        "IN_PROGRESS":    "In Progress",
+        "REJECTED":       "Rejected",
+    }
+
+    BLUE   = (0,   51,  160)
+    LBLUE  = (224, 232, 255)
+    DARK   = (25,  25,  25)
+    MGREY  = (100, 100, 100)
+    LGREY  = (248, 248, 248)
+    WHITE  = (255, 255, 255)
+    GREEN  = (220, 245, 225)
+
+    loc_name  = user_info.get("locName", user_id)
+    zone_name = user_info.get("zone", "")
+
+    def _s(text):
+        """Sanitise to latin-1 for fpdf2 core fonts."""
+        if text is None:
+            return ""
+        return str(text).encode("latin-1", "replace").decode("latin-1")
+
+    def _val(v):
+        return _s(v) if v not in (None, "", "None") else "-"
+
+    class _PDF(FPDF):
+        def header(self):
+            self.set_fill_color(*BLUE)
+            self.rect(0, 0, 210, 12, "F")
+            self.set_font("Helvetica", "B", 9)
+            self.set_text_color(*WHITE)
+            self.set_xy(10, 2)
+            self.cell(130, 8, "HPCL SOD e-MIS  |  Checker Review Report",
+                      new_x=XPos.RIGHT, new_y=YPos.TOP)
+            self.set_font("Helvetica", "", 7.5)
+            self.set_text_color(180, 200, 235)
+            self.cell(60, 8,
+                      _s(f"{loc_name}  |  {month_year}"),
+                      align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        def footer(self):
+            self.set_y(-11)
+            self.set_fill_color(*BLUE)
+            self.rect(0, self.get_y(), 210, 11, "F")
+            self.set_font("Helvetica", "", 7)
+            self.set_text_color(180, 200, 235)
+            self.set_x(10)
+            self.cell(0, 11,
+                      f"Page {self.page_no()}  |  HPCL SOD MIS  |  CONFIDENTIAL — CHECKER USE ONLY",
+                      new_x=XPos.LMARGIN, new_y=YPos.TOP)
+
+    pdf = _PDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_margins(12, 16, 12)
+    pdf.add_page()
+
+    W      = 186   # usable width (210 - 12*2)
+    LW     = 100   # label column width
+    VW     = W - LW  # value column width
+    ROW_H  = 5.5   # standard row height
+    SUB_H  = 5.0   # sub-section bar height
+
+    # ── Cover card ───────────────────────────────────────────────────────────
+    pdf.set_fill_color(*BLUE)
+    pdf.set_text_color(*WHITE)
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.cell(W, 11, "  MIS REVIEW REPORT", fill=True,
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
+    pdf.ln(1)
+
+    pdf.set_fill_color(*LBLUE)
+    pdf.set_text_color(*BLUE)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(W, 8, _s(f"  {loc_name}  ({user_id})  |  {zone_name}  |  {month_year}"),
+             fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(1)
+
+    pdf.set_text_color(*DARK)
+    pdf.set_font("Helvetica", "", 8.5)
+    pdf.cell(W, 6, _s(f"  Submission Status:  {_STATUS_LABELS.get(status, status)}"),
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(4)
+
+    # ── Sections S1–S10 ──────────────────────────────────────────────────────
+    for sec_num, sec_short in _SECTIONS:
+        fields = SECTION_FIELDS.get(sec_num, [])
+        if not fields:
+            continue
+
+        # Check if this section has any data
+        has_data = any(draft.get(f["key"]) not in (None, "", "None") for f in fields
+                       if not f.get("auto"))
+
+        # Section header bar
+        pdf.set_fill_color(*BLUE)
+        pdf.set_text_color(*WHITE)
+        pdf.set_font("Helvetica", "B", 10)
+        sec_full = SECTION_NAMES.get(sec_num, sec_short)
+        pdf.cell(W, 8, _s(f"  Section {sec_num}  —  {sec_full}"),
+                 fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(0.5)
+
+        if not has_data:
+            pdf.set_text_color(*MGREY)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.cell(W, 5, "  (no data entered)",
+                     new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(2)
+            continue
+
+        current_sub = None
+        for f in fields:
+            sub = f.get("sub", "")
+            if sub != current_sub:
+                current_sub = sub
+                if sub:
+                    pdf.set_fill_color(*LBLUE)
+                    pdf.set_text_color(*BLUE)
+                    pdf.set_font("Helvetica", "B", 7.5)
+                    pdf.cell(W, SUB_H, _s(f"  {sub}"),
+                             fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.ln(0.3)
+
+            key   = f["key"]
+            label = f["label"]
+            val   = _val(draft.get(key))
+            is_auto = bool(f.get("auto"))
+            is_text = f.get("type") == "textarea"
+
+            pdf.set_text_color(*DARK)
+
+            if is_text:
+                # Label bar (full width, bold, light grey)
+                pdf.set_font("Helvetica", "B", 7.5)
+                pdf.set_fill_color(*LGREY)
+                pdf.cell(W, 4.5, _s(f"  {label}"),
+                         fill=True, border="T",
+                         new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                # Value — may wrap
+                pdf.set_font("Helvetica", "", 8.5)
+                pdf.set_fill_color(*WHITE)
+                pdf.multi_cell(W, 4.8, _s(f"  {val}"),
+                               fill=True, border="B",
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            else:
+                row_fill = GREEN if is_auto else WHITE
+                pdf.set_fill_color(*row_fill)
+                pdf.set_font("Helvetica", "B", 7.5)
+                pdf.cell(LW, ROW_H, _s(f"  {label}"),
+                         fill=True, border="T",
+                         new_x=XPos.RIGHT, new_y=YPos.TOP)
+                pdf.set_font("Helvetica", "", 8.5)
+                pdf.set_text_color(*BLUE if is_auto else DARK)
+                pdf.cell(VW, ROW_H, _s(f"  {val}"),
+                         fill=True, border="TL",
+                         new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        pdf.ln(3)
+
+    # ── S5A M&I MIS summary ──────────────────────────────────────────────────
+    _MI_TABS = [
+        ("MI_TANK_OUTAGE",    "S5A-1  Tank Outage",
+         ["tank_no","outage_for","planned_start","planned_end","actual_start","actual_end","current_status"]),
+        ("MI_MAJOR_REPAIR",   "S5A-2  Major Repair",
+         ["tank_no","nature_of_repair","etc_date","current_status"]),
+        ("MI_VRU",            "S5A-3  VRU",
+         ["vru_no","model","date_not_operating","current_status","remarks"]),
+        ("MI_AUDIT_2526",     "S5A-4  M&I Audit 25-26",
+         ["audit_no","title","audit_date","status","remarks"]),
+        ("MI_AUDIT_2627",     "S5A-5  M&I Audit 26-27",
+         ["audit_no","title","audit_date","status","remarks"]),
+        ("MI_TECH_AUDIT",     "S5A-6  Tech. Audit",
+         ["obs_no","title","audit_date","status","remarks"]),
+        ("MI_EQUIP_BREAKDOWN","S5A-7  Equip. Breakdown",
+         ["equipment","nature","start_date","proposed_date","actual_end_date","status"]),
+        ("MI_INT_PIPELINE",   "S5A-8  Int. Pipeline",
+         ["pipeline_no","last_ut_date","last_hydrotest_date","status"]),
+        ("MI_EXT_PIPELINE",   "S5A-9  Ext. Pipeline",
+         ["pipeline_no","last_ut_date","last_hydrotest_date","status"]),
+        ("MI_TANK_STATUS",    "S5A-10 Tank Status",
+         ["tank_no","tank_status","cleaning_completed_date","cleaning_due_date","inspection_date"]),
+    ]
+
+    any_mi = False
+    for tab_key, tab_name, disp_keys in _MI_TABS:
+        try:
+            rows = load_mi_data(tab_key, user_id, month_year)
+        except Exception:
+            rows = []
+        if not rows:
+            continue
+        is_na = (len(rows) == 1 and rows[0].get("na_flag") == "Y")
+        if not any_mi:
+            pdf.set_fill_color(*BLUE)
+            pdf.set_text_color(*WHITE)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(W, 8, "  Section 5A  —  Maintenance & Inspection (M&I) MIS",
+                     fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(0.5)
+            any_mi = True
+
+        # Tab sub-header
+        pdf.set_fill_color(*LBLUE)
+        pdf.set_text_color(*BLUE)
+        pdf.set_font("Helvetica", "B", 7.5)
+        suffix = "  —  Not Applicable" if is_na else \
+                 f"  —  {len(rows)} row{'s' if len(rows) > 1 else ''}"
+        pdf.cell(W, SUB_H, _s(f"  {tab_name}{suffix}"),
+                 fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(0.3)
+
+        if is_na:
+            continue
+
+        # Determine columns present in data (filter to disp_keys)
+        avail_keys = [k for k in disp_keys if any(r.get(k) for r in rows)]
+        if not avail_keys:
+            avail_keys = disp_keys
+        n_cols = len(avail_keys)
+        col_w  = min(W / n_cols, 38)
+
+        # Header row
+        pdf.set_fill_color(40, 70, 160)
+        pdf.set_text_color(*WHITE)
+        pdf.set_font("Helvetica", "B", 6.5)
+        pdf.set_x(12)
+        for k in avail_keys:
+            pdf.cell(col_w, 5, _s(k.replace("_", " ").title()[:18]),
+                     fill=True, border=1, new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.ln()
+
+        # Data rows (cap at 30)
+        pdf.set_text_color(*DARK)
+        pdf.set_font("Helvetica", "", 6.5)
+        for ri, row in enumerate(rows[:30]):
+            fill_c = LGREY if ri % 2 == 0 else WHITE
+            pdf.set_fill_color(*fill_c)
+            pdf.set_x(12)
+            for k in avail_keys:
+                pdf.cell(col_w, 4.5, _s(str(row.get(k, ""))[:22]),
+                         fill=True, border=1, new_x=XPos.RIGHT, new_y=YPos.TOP)
+            pdf.ln()
+        pdf.ln(2)
+
+    return bytes(pdf.output())
+
+
 def generate_mi_mis_report(
     user_id: str,
     month_year: str,

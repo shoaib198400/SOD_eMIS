@@ -2526,6 +2526,35 @@ def show_review(user: dict, month_year: str, month_label: str):
 
     draft = sheets.load_draft(maker_id, month_year)
 
+    # ── PDF download — available at top so checker can get hard copy without scrolling ──
+    _pdf_key = f"_chk_pdf_{maker_id}_{month_year}"
+    _pdf_col1, _pdf_col2 = st.columns([1, 1])
+    with _pdf_col1:
+        if st.button("📄  Download PDF Review Report", key="btn_chk_pdf",
+                     use_container_width=True,
+                     help="Generate a printer-friendly PDF of all submitted data for hard-copy review"):
+            with st.spinner("Generating PDF…"):
+                try:
+                    _pdf_draft = draft if any(k for k in draft if not k.startswith("_")) \
+                                 else sheets.load_submitted_fields(maker_id, month_year)
+                    _loc_info  = sheets.get_maker_info(maker_id)
+                    pdf_bytes  = sheets.generate_mis_pdf_report(
+                        maker_id, month_year, _loc_info, _pdf_draft, status)
+                    st.session_state[_pdf_key] = pdf_bytes
+                except Exception as _pex:
+                    st.error(f"PDF error: {_pex}")
+    with _pdf_col2:
+        if st.session_state.get(_pdf_key):
+            st.download_button(
+                label="⬇️  Save PDF",
+                data=st.session_state[_pdf_key],
+                file_name=f"MIS_Review_{maker_id}_{month_year.replace('-','_')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"dl_chk_pdf_{maker_id}_{month_year}",
+            )
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+
     # ── All 10 sections (inline — no expander to avoid Streamlit label artifacts) ─
     for sec_num, sec_name in SECTIONS:
         st.markdown(
