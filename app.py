@@ -5924,7 +5924,7 @@ def show_reports_page(user: dict):
 
     # ── Load data ─────────────────────────────────────────────────────────────
     with st.spinner("Loading submission data…"):
-        if role == "Admin":
+        if role in ("Admin", "Viewer"):
             all_rows = sheets.get_all_status_for_month(month_year)
         else:
             locs     = sheets.get_locations_by_zone(user["zone"])
@@ -5942,8 +5942,8 @@ def show_reports_page(user: dict):
 
     overdue_flag = today > due_date
 
-    # ── Zone filter (Admin only) ──────────────────────────────────────────────
-    if role == "Admin":
+    # ── Zone filter (Admin / Viewer — HQO-wide roles) ─────────────────────────
+    if role in ("Admin", "Viewer"):
         all_zones = sorted({r["zone"] for r in all_rows if r.get("zone")})
         zone_filter = st.selectbox("Filter by Zone", ["All Zones"] + all_zones, key="rpt_zone_filter")
         display_rows = all_rows if zone_filter == "All Zones" else [r for r in all_rows if r["zone"] == zone_filter]
@@ -6048,7 +6048,7 @@ def show_reports_page(user: dict):
         )
 
     # ── Zone-wise summary table ───────────────────────────────────────────────
-    if role == "Admin":
+    if role in ("Admin", "Viewer"):
         st.markdown(
             '<div style="background:linear-gradient(90deg,#001a6e,#0033A0,#0050d0);color:white;'
             'font-size:14px;font-weight:700;padding:11px 20px;border-radius:10px;margin:18px 0 8px;">'
