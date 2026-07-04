@@ -638,11 +638,25 @@ def _revert_if_deleted(user_id: str, month_year: str, status: str,
     return status
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def _submission_status_raw_rows() -> list:
+    """Shared cache of the full SUBMISSION_STATUS sheet (15 s TTL).
+
+    Every save/status/dashboard read used to do its own full-sheet fetch of
+    this tab — with 100+ locations all saving/navigating independently, that
+    multiplied into far more API reads than needed and tripped Sheets' per-
+    minute read quota. Sharing one short-lived cached copy across all readers
+    cuts that back down; every writer clears this immediately so no one sees
+    stale data from their own action.
+    """
+    ws = _ws(TABS["SUBMISSION_STATUS"])
+    return _api_call(ws.get_all_values)
+
+
 @st.cache_data(ttl=60)
 def get_month_status(user_id: str, month_year: str) -> dict:
     try:
-        ws   = _ws(TABS["SUBMISSION_STATUS"])
-        rows = _api_call(ws.get_all_values)
+        rows = _submission_status_raw_rows()
         if len(rows) >= 2:
             for row in rows[1:]:
                 row = (row + [""] * 9)[:9]
@@ -670,8 +684,7 @@ def get_fy_months(user_id: str, fy_start_year: int) -> dict:
         status_map: dict = {}
         pct_map:    dict = {}
         try:
-            ws   = _ws(TABS["SUBMISSION_STATUS"])
-            rows = _api_call(ws.get_all_values)
+            rows = _submission_status_raw_rows()
             if len(rows) >= 2:
                 for row in rows[1:]:
                     row = (row + [""] * 4)[:4]
@@ -713,8 +726,7 @@ def get_available_months(user_id: str) -> dict:
         # Fetch submission status — if tab missing just use empty map
         status_map: dict = {}
         try:
-            ws   = _ws(TABS["SUBMISSION_STATUS"])
-            rows = _api_call(ws.get_all_values)
+            rows = _submission_status_raw_rows()
             if len(rows) >= 2:
                 for row in rows[1:]:
                     row = (row + [""] * 3)[:3]
@@ -830,12 +842,20 @@ def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HP
 # ── Draft CRUD ────────────────────────────────────────────────────────────────
 # MIS_Draft columns: user_id | month_year | sections_complete | last_updated | data_json
 
+@st.cache_data(ttl=15, show_spinner=False)
+def _mis_draft_raw_rows() -> list:
+    """Shared cache of the full MIS_DRAFT sheet (15 s TTL) — see
+    _submission_status_raw_rows for why this exists. Every writer clears
+    this immediately so no one sees stale data from their own save."""
+    ws = _ws(TABS["MIS_DRAFT"])
+    return _api_call(ws.get_all_values)
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def load_draft(user_id: str, month_year: str) -> dict:
     """Return draft data dict for user+month, or empty dict (30 s cache)."""
     try:
-        ws   = _ws(TABS["MIS_DRAFT"])
-        rows = _api_call(ws.get_all_values)
+        rows = _mis_draft_raw_rows()
         for i, row in enumerate(rows[1:], start=2):
             row = (row + [""] * 5)[:5]
             if row[0].strip() == user_id and row[1].strip() == month_year:
@@ -891,7 +911,7 @@ def _update_submission_status(user_id: str, month_year: str, status: str, pct: f
     # _ensure_ws auto-creates the tab with headers if it doesn't exist yet.
     # Any exception propagates to save_draft which surfaces it as an error message.
     ws      = _ensure_ws(TABS["SUBMISSION_STATUS"], _SS_HEADERS)
-    rows    = _api_call(ws.get_all_values)
+    rows    = _submission_status_raw_rows()
     now_str = datetime.now().isoformat()
     for i, row in enumerate(rows[1:], start=2):
         row_e = (row + [""] * 9)[:9]
@@ -905,6 +925,7 @@ def _update_submission_status(user_id: str, month_year: str, status: str, pct: f
                 now_str,
             ]])
             get_month_status.clear()
+            _submission_status_raw_rows.clear()
             return
     _api_call(ws.append_row,
         [user_id, month_year, status, str(pct),
@@ -912,6 +933,7 @@ def _update_submission_status(user_id: str, month_year: str, status: str, pct: f
         value_input_option="RAW",
     )
     get_month_status.clear()
+    _submission_status_raw_rows.clear()
 
 
 def save_draft(user_id: str, month_year: str,
@@ -973,6 +995,7 @@ def save_draft(user_id: str, month_year: str,
         # Invalidate caches so next reads see fresh data
         get_dashboard_data.clear()
         load_draft.clear()
+        _mis_draft_raw_rows.clear()
         return {"ok": True, "pct": pct, "secs_done": sorted(secs_done)}
 
     except Exception as e:
@@ -1146,7 +1169,7 @@ def reset_draft(maker_id: str, month_year: str, checker_id: str, reason: str) ->
     """Checker resets a maker's draft — wipes all field data so maker can start fresh."""
     try:
         ws       = _ws(TABS["MIS_DRAFT"])
-        all_rows = ws.get_all_values()
+        all_rows = _mis_draft_raw_rows()
         now_str  = datetime.now().isoformat()
         for i, row in enumerate(all_rows[1:], start=2):
             r = (row + [""] * 5)[:5]
@@ -1154,6 +1177,8 @@ def reset_draft(maker_id: str, month_year: str, checker_id: str, reason: str) ->
                 ws.update(f"A{i}:E{i}",
                           [[maker_id, month_year, "", now_str, "{}"]])
                 break
+        _mis_draft_raw_rows.clear()
+        load_draft.clear()
         _update_submission_status(
             maker_id, month_year, "NOT_STARTED", 0.0,
             checker_notes=f"[RESET by {checker_id}] {reason}",
@@ -1233,8 +1258,7 @@ def get_submissions_for_locations(locs: list, month_year: str) -> list:
 
     status_map: dict = {}
     try:
-        ws   = _ws(TABS["SUBMISSION_STATUS"])
-        rows = _api_call(ws.get_all_values)
+        rows = _submission_status_raw_rows()
         for row in rows[1:]:
             row = (row + [""] * 9)[:9]
             if row[1].strip() == month_year:
@@ -3787,8 +3811,7 @@ def get_compliance_analytics(role: str, zone: str, fy_year: int) -> dict:
     loc_map  = {l["userId"]: l for l in locs}
     result   = {m: {} for m in months}
     try:
-        ws   = _ws(TABS["SUBMISSION_STATUS"])
-        rows = ws.get_all_values()
+        rows = _submission_status_raw_rows()
         for row in rows[1:]:
             row    = (row + [""] * 9)[:9]
             uid    = row[0].strip()
