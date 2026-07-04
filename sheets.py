@@ -2942,6 +2942,87 @@ def generate_mis_pdf_report(
     return bytes(pdf.output())
 
 
+# Shared by generate_mi_mis_report() (per-location) and
+# generate_mi_mis_consolidated_excel() (all-locations) so both stay in sync.
+# Each entry: (tab_key, sheet_name, display_headers, data_keys)
+_MI_SHEET_DEFS = [
+    ("MI_TANK_OUTAGE", "Tank Outage",
+     ["Tank No.", "Other Tank", "Planned Start", "Planned End",
+      "Actual Start", "Actual End", "Outage For", "Current Status"],
+     ["tank_no", "other_tank_desc", "planned_start", "planned_end",
+      "actual_start", "actual_end", "outage_for", "current_status"]),
+
+    ("MI_MAJOR_REPAIR", "Major Repair",
+     ["Tank No.", "Other Tank", "Nature of Repair",
+      "Revenue/Capex", "AR Code", "Status", "ETC Date"],
+     ["tank_no", "other_tank_desc", "nature_of_repair",
+      "revenue_capex", "ar_code", "current_status", "etc_date"]),
+
+    ("MI_VRU", "VRU",
+     ["VRU Operational", "Date Not Operating", "Action Taken", "ETC Date",
+      "MS Vol Recovered (KL)", "Inlet MFM Start", "Inlet MFM End",
+      "Outlet MFM Start", "Outlet MFM End", "Vapour Treated (m³)",
+      "VOC Value (mg/cc)", "Inlet Emission (mg/cc)",
+      "MS/Gasohol TT Vol", "HSD TT Vol", "MS/Gasohol TW Vol",
+      "HSD TW Vol", "VRU Uptime %"],
+     ["vru_operational", "date_not_operating", "action_taken", "etc_date",
+      "ms_vol_recovered_kl", "inlet_mfm_start_m3", "inlet_mfm_end_m3",
+      "outlet_mfm_start_m3", "outlet_mfm_end_m3", "vapour_treated_m3",
+      "voc_value_mgcc", "inlet_emission_mgcc",
+      "ms_gasohol_tt_vol_kl", "hsd_tt_vol_kl",
+      "ms_gasohol_tw_vol_kl", "hsd_tw_vol_kl", "vru_uptime_pct"]),
+
+    ("MI_AUDIT_2526", "Audit 25-26",
+     ["Audit Date", "No. of Recommendations", "No. Pending", "External Score"],
+     ["audit_date", "no_recommendations", "no_pending", "external_score"]),
+
+    ("MI_AUDIT_2627", "Audit 26-27",
+     ["Audit Carried Out", "Audit Date", "No. of Recommendations",
+      "No. Pending", "External Score"],
+     ["audit_carried_out", "audit_date", "no_recommendations",
+      "no_pending", "external_score"]),
+
+    ("MI_TECH_AUDIT", "Tech. Audit",
+     ["Audit Date", "No. of Recommendations", "No. Pending", "Ref. No."],
+     ["audit_date", "no_recommendations", "no_pending", "ref_no"]),
+
+    ("MI_EQUIP_BREAKDOWN", "Equip. Breakdown",
+     ["Equipment Name", "Equipment Other", "Equipment Details",
+      "Start Date", "Issue", "Proposed Date", "Actual End Date",
+      "Resolution Action"],
+     ["equipment_name", "equipment_name_other", "equipment_details",
+      "start_date", "issue", "proposed_date", "actual_end_date",
+      "resolution_action"]),
+
+    ("MI_INT_PIPELINE", "Int. Pipeline",
+     ["Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
+      "Last LRUT Date", "Other Testing"],
+     ["last_ut_date", "last_hydrotest_date", "last_dcvg_date",
+      "last_lrut_date", "other_testing"]),
+
+    ("MI_EXT_PIPELINE", "Ext. Pipeline",
+     ["Type", "Pipeline Details", "Length (m)", "Product", "Size (inch)",
+      "Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
+      "Last LRUT Date", "Other Testing"],
+     ["pipeline_type", "pipeline_details", "length_metres", "product", "size_inch",
+      "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
+      "last_lrut_date", "other_testing"]),
+
+    ("MI_TANK_STATUS", "Tank Status",
+     ["Zone", "Location", "Tank No.", "Cleaning Completed Date",
+      "Cleaning Due Date", "Extension Taken", "eFN No.",
+      "Inspection Date", "Inspection Due Date",
+      "Painting Date", "Painting Due Date",
+      "Tank Status", "Tank Status (Others)"],
+     ["zone", "loc_name", "tank_no",
+      "cleaning_completed_date", "cleaning_due_date",
+      "extension_taken", "extension_efn_no",
+      "inspection_date", "inspection_due_date",
+      "painting_date", "painting_due_date",
+      "tank_status", "tank_status_other"]),
+]
+
+
 def generate_mi_mis_report(
     user_id: str,
     month_year: str,
@@ -3024,128 +3105,134 @@ def generate_mi_mis_report(
         ws0.column_dimensions["B"].width = 50
 
     # ── 10 subsection sheets ───────────────────────────────────────────────
-    _sheet("MI_TANK_OUTAGE", "Tank Outage",
-           ["Tank No.", "Other Tank", "Planned Start", "Planned End",
-            "Actual Start", "Actual End", "Outage For", "Current Status"],
-           ["tank_no", "other_tank_desc", "planned_start", "planned_end",
-            "actual_start", "actual_end", "outage_for", "current_status"])
-
-    _sheet("MI_MAJOR_REPAIR", "Major Repair",
-           ["Tank No.", "Other Tank", "Nature of Repair",
-            "Revenue/Capex", "AR Code", "Status", "ETC Date"],
-           ["tank_no", "other_tank_desc", "nature_of_repair",
-            "revenue_capex", "ar_code", "current_status", "etc_date"])
-
-    _sheet("MI_VRU", "VRU",
-           ["VRU Operational", "Date Not Operating", "Action Taken", "ETC Date",
-            "MS Vol Recovered (KL)", "Inlet MFM Start", "Inlet MFM End",
-            "Outlet MFM Start", "Outlet MFM End", "Vapour Treated (m³)",
-            "VOC Value (mg/cc)", "Inlet Emission (mg/cc)",
-            "MS/Gasohol TT Vol", "HSD TT Vol", "MS/Gasohol TW Vol",
-            "HSD TW Vol", "VRU Uptime %"],
-           ["vru_operational", "date_not_operating", "action_taken", "etc_date",
-            "ms_vol_recovered_kl", "inlet_mfm_start_m3", "inlet_mfm_end_m3",
-            "outlet_mfm_start_m3", "outlet_mfm_end_m3", "vapour_treated_m3",
-            "voc_value_mgcc", "inlet_emission_mgcc",
-            "ms_gasohol_tt_vol_kl", "hsd_tt_vol_kl",
-            "ms_gasohol_tw_vol_kl", "hsd_tw_vol_kl", "vru_uptime_pct"])
-
-    _sheet("MI_AUDIT_2526", "Audit 25-26",
-           ["Audit Date", "No. of Recommendations", "No. Pending", "External Score"],
-           ["audit_date", "no_recommendations", "no_pending", "external_score"])
-
-    _sheet("MI_AUDIT_2627", "Audit 26-27",
-           ["Audit Carried Out", "Audit Date", "No. of Recommendations",
-            "No. Pending", "External Score"],
-           ["audit_carried_out", "audit_date", "no_recommendations",
-            "no_pending", "external_score"])
-
-    _sheet("MI_TECH_AUDIT", "Tech. Audit",
-           ["Audit Date", "No. of Recommendations", "No. Pending", "Ref. No."],
-           ["audit_date", "no_recommendations", "no_pending", "ref_no"])
-
-    _sheet("MI_EQUIP_BREAKDOWN", "Equip. Breakdown",
-           ["Equipment Name", "Equipment Other", "Equipment Details",
-            "Start Date", "Issue", "Proposed Date", "Actual End Date",
-            "Resolution Action"],
-           ["equipment_name", "equipment_name_other", "equipment_details",
-            "start_date", "issue", "proposed_date", "actual_end_date",
-            "resolution_action"])
-
-    _sheet("MI_INT_PIPELINE", "Int. Pipeline",
-           ["Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
-            "Last LRUT Date", "Other Testing"],
-           ["last_ut_date", "last_hydrotest_date", "last_dcvg_date",
-            "last_lrut_date", "other_testing"])
-
-    _sheet("MI_EXT_PIPELINE", "Ext. Pipeline",
-           ["Type", "Pipeline Details", "Length (m)", "Product", "Size (inch)",
-            "Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
-            "Last LRUT Date", "Other Testing"],
-           ["pipeline_type", "pipeline_details", "length_metres", "product", "size_inch",
-            "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
-            "last_lrut_date", "other_testing"])
-
-    _sheet("MI_TANK_STATUS", "Tank Status",
-           ["Zone", "Location", "Tank No.", "Cleaning Completed Date",
-            "Cleaning Due Date", "Extension Taken", "eFN No.",
-            "Inspection Date", "Inspection Due Date",
-            "Painting Date", "Painting Due Date",
-            "Tank Status", "Tank Status (Others)"],
-           ["zone", "loc_name", "tank_no",
-            "cleaning_completed_date", "cleaning_due_date",
-            "extension_taken", "extension_efn_no",
-            "inspection_date", "inspection_due_date",
-            "painting_date", "painting_due_date",
-            "tank_status", "tank_status_other"])
+    for tab_key, sheet_name, display_headers, data_keys in _MI_SHEET_DEFS:
+        _sheet(tab_key, sheet_name, display_headers, data_keys)
 
     buf = _io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def generate_mi_mis_bulk_zip(month_year: str, rows: list) -> bytes | None:
-    """Build a ZIP of M&I MIS Excel reports for every SUBMITTED location in `rows`.
+def generate_mi_mis_consolidated_excel(month_year: str, rows: list) -> bytes | None:
+    """Build ONE workbook with 10 sheets (S5A-1..S5A-10) — each sheet holds every
+    SUBMITTED location's rows for that subsection, stacked together and tagged
+    with Zone / Location Code / Location Name columns.
 
     `rows` is a list of location-status dicts (userId/locName/zone/status), e.g.
     from get_all_status_for_month() or get_submissions_for_locations() — callers
     pass in whatever scope/filter (zone, Admin zone-filter, etc.) is on screen.
     TOP/HMEL locations are skipped since M&I MIS (S5) is not applicable to them.
-    Returns None if there is nothing to zip.
+    Returns None if there is nothing to include.
     """
     import io as _io
-    import zipfile
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
+    from openpyxl.utils import get_column_letter
     from form_defs import get_skip_sections
 
-    submitted = [r for r in rows if r.get("status") == "SUBMITTED"]
-    if not submitted:
+    locations = []
+    for r in rows:
+        if r.get("status") != "SUBMITTED":
+            continue
+        uid = r.get("userId", "").strip()
+        if not uid:
+            continue
+        if 5 in get_skip_sections(get_loc_type(uid)):
+            continue  # M&I MIS not applicable for TOP/HMEL locations
+        locations.append({"userId": uid, "locName": r.get("locName", uid),
+                           "zone": r.get("zone", "")})
+    if not locations:
         return None
+    locations.sort(key=lambda l: l["locName"])
+
+    wb = Workbook()
+
+    _thin   = Side(style="thin", color="CCCCCC")
+    _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+
+    def _fill(h):
+        return PatternFill("solid", fgColor=h)
+    def _font(bold=False, color="000000", size=10, italic=False):
+        return Font(bold=bold, color=color, size=size, italic=italic)
+
+    BLUE_FILL  = _fill("1a1a6e")
+    HDR_FONT   = _font(bold=True, color="FFFFFF", size=9)
+    NM_FONT    = _font(size=10)
+    HT_FONT    = _font(italic=True, color="888888", size=8)
+    WHITE_FILL = _fill("FFFFFF")
+    ALT_FILL   = _fill("F5F5F5")
+    CENTER     = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT       = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+    LOCKED     = Protection(locked=True)
+
+    def _hdr_row(ws, headers, row=1):
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=row, column=ci, value=h)
+            c.font = HDR_FONT; c.fill = BLUE_FILL
+            c.alignment = CENTER; c.border = _border
+            c.protection = LOCKED
+            ws.column_dimensions[get_column_letter(ci)].width = 20
+        ws.row_dimensions[row].height = 28
+
+    def _data_row(ws, row, values, alt: bool):
+        for ci, v in enumerate(values, 1):
+            c = ws.cell(row=row, column=ci, value=v)
+            c.font = NM_FONT; c.fill = ALT_FILL if alt else WHITE_FILL
+            c.alignment = LEFT; c.border = _border
+            c.protection = LOCKED
+        ws.row_dimensions[row].height = 18
+
+    # ── Cover sheet ────────────────────────────────────────────────────────
+    ws0 = wb.active
+    ws0.title = "Cover"
+    cover_data = [
+        ("Report",    "Consolidated M&I MIS — Maintenance & Inspection Monthly Information System"),
+        ("Month",     month_year),
+        ("Locations", str(len(locations))),
+    ]
+    for ri, (k, v) in enumerate(cover_data, 1):
+        ws0.cell(row=ri, column=1, value=k).font = _font(bold=True, color="0033A0", size=11)
+        ws0.cell(row=ri, column=2, value=v).font = _font(size=11)
+    ws0.column_dimensions["A"].width = 18
+    ws0.column_dimensions["B"].width = 60
+
+    hdr_r = len(cover_data) + 2
+    ws0.cell(row=hdr_r, column=1, value="Zone").font = _font(bold=True, color="0033A0", size=10)
+    ws0.cell(row=hdr_r, column=2, value="Location").font = _font(bold=True, color="0033A0", size=10)
+    for ri, loc in enumerate(locations, start=hdr_r + 1):
+        ws0.cell(row=ri, column=1, value=loc["zone"])
+        ws0.cell(row=ri, column=2, value=f"{loc['locName']} ({loc['userId']})")
+
+    # ── 10 consolidated subsection sheets ────────────────────────────────────
+    lead_headers = ["Zone", "Location Code", "Location Name"]
+    for tab_key, sheet_name, display_headers, data_keys in _MI_SHEET_DEFS:
+        ws = wb.create_sheet(sheet_name)
+        _hdr_row(ws, lead_headers + display_headers)
+        ri = 2
+        for loc in locations:
+            mi_rows = load_mi_data(tab_key, loc["userId"], month_year)
+            if not mi_rows:
+                continue
+            lead_vals = [loc["zone"], loc["userId"], loc["locName"]]
+            if mi_rows[0].get("na_flag") == "Y":
+                _data_row(ws, ri, lead_vals + ["Not Applicable (marked NA)"] +
+                          [""] * (len(display_headers) - 1), ri % 2 == 0)
+                ri += 1
+                continue
+            for rec in mi_rows:
+                vals = lead_vals + [rec.get(k, "") for k in data_keys]
+                _data_row(ws, ri, vals, ri % 2 == 0)
+                ri += 1
+        if ri == 2:
+            ws.cell(row=2, column=1, value="No data for any submitted location this month.").font = HT_FONT
+        ws.freeze_panes = ws["A2"]
+        ws.protection.sheet   = True
+        ws.protection.password = "HPCL@MIS"
+        ws.protection.selectLockedCells   = False
+        ws.protection.selectUnlockedCells = False
 
     buf = _io.BytesIO()
-    any_written = False
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for r in submitted:
-            uid = r.get("userId", "").strip()
-            if not uid:
-                continue
-            loc_type = get_loc_type(uid)
-            if 5 in get_skip_sections(loc_type):
-                continue  # M&I MIS not applicable for TOP/HMEL locations
-            user_info = {
-                "userId":  uid,
-                "locName": r.get("locName", uid),
-                "zone":    r.get("zone", ""),
-            }
-            try:
-                xlsx_bytes = generate_mi_mis_report(uid, month_year, user_info)
-            except Exception:
-                continue
-            safe_name = uid.replace("/", "_")
-            zf.writestr(f"MI_MIS_{safe_name}_{month_year.replace('-','_')}.xlsx", xlsx_bytes)
-            any_written = True
-
-    if not any_written:
-        return None
+    wb.save(buf)
     return buf.getvalue()
 
 

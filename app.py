@@ -2553,6 +2553,35 @@ def show_review(user: dict, month_year: str, month_label: str):
                 use_container_width=True,
                 key=f"dl_chk_pdf_{maker_id}_{month_year}",
             )
+
+    # ── M&I MIS Excel download — only once the Maker has actually submitted ──
+    from form_defs import get_skip_sections
+    _loc_type_chk = sheets.get_loc_type(maker_id)
+    if status in ("PENDING_REVIEW", "SUBMITTED") and 5 not in get_skip_sections(_loc_type_chk):
+        _mi_key = f"_chk_mi_{maker_id}_{month_year}"
+        _mi_col1, _mi_col2 = st.columns([1, 1])
+        with _mi_col1:
+            if st.button("📊  Download M&I MIS Report (Excel)", key="btn_chk_mi",
+                         use_container_width=True,
+                         help="10-sheet M&I MIS workbook (Tank Outage, Major Repair, VRU, etc.) for this location"):
+                with st.spinner("Generating M&I MIS Report…"):
+                    try:
+                        _loc_info_mi = sheets.get_maker_info(maker_id)
+                        st.session_state[_mi_key] = sheets.generate_mi_mis_report(
+                            maker_id, month_year, _loc_info_mi)
+                    except Exception as _mex:
+                        st.error(f"M&I MIS report error: {_mex}")
+        with _mi_col2:
+            if st.session_state.get(_mi_key):
+                st.download_button(
+                    label="⬇️  Save M&I MIS Report",
+                    data=st.session_state[_mi_key],
+                    file_name=f"MI_MIS_{maker_id}_{month_year.replace('-','_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key=f"dl_chk_mi_{maker_id}_{month_year}",
+                )
+
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
     # ── All 10 sections (inline — no expander to avoid Streamlit label artifacts) ─
@@ -6188,18 +6217,19 @@ def show_reports_page(user: dict):
             )
 
     with dl_col3:
-        if st.button("⬇ Generate M&I MIS Reports (ZIP)", key="rpt_gen_mi_zip",
+        if st.button("⬇ Generate Consolidated M&I MIS (Excel)", key="rpt_gen_mi_zip",
                      use_container_width=True,
-                     help="One M&I MIS Excel report per submitted location "
+                     help="One workbook, 10 sheets (S5A-1..S5A-10) — every submitted "
+                          "location's rows stacked per sheet "
                           "(TOP/HMEL locations excluded — M&I is not applicable to them)"):
-            with st.spinner("Building M&I MIS reports…"):
-                mi_zip_bytes = sheets.generate_mi_mis_bulk_zip(month_year, display_rows)
-            if mi_zip_bytes:
+            with st.spinner("Building consolidated M&I MIS report…"):
+                mi_bytes = sheets.generate_mi_mis_consolidated_excel(month_year, display_rows)
+            if mi_bytes:
                 st.download_button(
-                    label="Download M&I MIS Reports",
-                    data=mi_zip_bytes,
-                    file_name=f"MI_MIS_Reports_{month_year}.zip",
-                    mime="application/zip",
+                    label="Download Consolidated M&I MIS",
+                    data=mi_bytes,
+                    file_name=f"MI_MIS_Consolidated_{month_year}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="rpt_dl_mi_zip",
                 )
             else:
