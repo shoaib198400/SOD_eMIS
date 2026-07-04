@@ -4130,6 +4130,23 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 else:
                     st.error(res.get("msg", "Could not save setting."))
 
+            # ── Live user counter (Admin only, helps decide on Maintenance Mode) ──
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
+            _active_sessions = sheets.get_active_sessions()
+            _active_count    = len(_active_sessions)
+            col_live, col_live_refresh = st.columns([3, 1])
+            with col_live:
+                st.metric("🟢 Live Users (active in last 30 min)", _active_count)
+            with col_live_refresh:
+                st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
+                if st.button("🔄 Refresh", key="refresh_live_users", use_container_width=True):
+                    sheets._settings_rows.clear()
+                    st.rerun()
+            if _active_count:
+                with st.expander(f"View {_active_count} active user ID(s)"):
+                    for uid, mins in sorted(_active_sessions, key=lambda x: x[1]):
+                        st.markdown(f"- **{uid}** — active {mins:.0f} min ago")
+
             # ── Maintenance mode toggle (Admin only) ──────────────────────
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
             maint_on  = sheets.get_setting("maintenance_mode", "FALSE") == "TRUE"

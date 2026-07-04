@@ -1718,6 +1718,37 @@ def clear_session(user_id: str) -> None:
     set_setting(f"sess_{user_id}", "", user_id)
 
 
+def get_active_sessions(threshold_min: float = 30) -> list:
+    """Return [(user_id, minutes_ago), ...] for session tokens younger than threshold_min.
+
+    Approximates "who's currently logged in" from the session tokens written
+    at login (Settings key sess_<user_id>). A token older than the app's own
+    30-minute inactivity timeout is stale — that user has already timed out
+    client-side even though the token record hasn't been cleared yet.
+    """
+    import time as _t
+    now = _t.time()
+    result = []
+    try:
+        rows = _settings_rows()
+        for row in rows[1:]:
+            row = (row + [""] * 4)[:4]
+            key, val = row[0].strip(), row[1].strip()
+            if not key.startswith("sess_") or not val or "|" not in val:
+                continue
+            uid = key[len("sess_"):]
+            try:
+                _, ts = val.rsplit("|", 1)
+                age_min = (now - float(ts)) / 60
+            except Exception:
+                continue
+            if age_min < threshold_min:
+                result.append((uid, age_min))
+    except Exception:
+        pass
+    return result
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def _settings_rows() -> list:
     """Read all Settings rows once, cached for 60 s. Single API call shared by all get_setting() lookups."""
