@@ -4145,7 +4145,7 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 f'<div style="margin:2px 8px;padding:10px 14px;border-radius:8px;'
                 f'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);">'
                 f'<div style="color:#8AABFF;font-size:9px;font-weight:700;'
-                f'letter-spacing:1px;text-transform:uppercase;">🟢 Live Users (last 30 min)</div>'
+                f'letter-spacing:1px;text-transform:uppercase;">🟢 Live Users</div>'
                 f'<div style="color:#ffffff;font-size:24px;font-weight:800;margin-top:2px;">'
                 f'{_active_count}</div></div>',
                 unsafe_allow_html=True,
