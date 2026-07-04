@@ -179,12 +179,12 @@ def _ensure_ws(tab_name: str, headers: list = None, force_headers: bool = False)
     if tab_name not in cache:
         ss = _spreadsheet()
         try:
-            cache[tab_name] = ss.worksheet(tab_name)
+            cache[tab_name] = _api_call(ss.worksheet, tab_name)
         except gspread.exceptions.WorksheetNotFound:
             cols = max(len(headers) if headers else 10, 26)
-            ws   = ss.add_worksheet(title=tab_name, rows=2000, cols=cols)
+            ws   = _api_call(ss.add_worksheet, title=tab_name, rows=2000, cols=cols)
             if headers:
-                ws.append_row(headers, value_input_option="RAW")
+                _api_call(ws.append_row, headers, value_input_option="RAW")
             cache[tab_name] = ws
     ws = cache[tab_name]
     if force_headers and headers:
@@ -1171,7 +1171,7 @@ def get_locations_by_zone(zone_name: str) -> list:
     """Return Maker location dicts for a given zone (reads UserAccess)."""
     try:
         ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         locs = []
         for row in rows[1:]:
             row = (row + [""] * 8)[:8]
@@ -1191,7 +1191,7 @@ def get_all_maker_locations() -> list:
     """Return all Maker location dicts across all zones (HQO view)."""
     try:
         ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         locs = []
         for row in rows[1:]:
             row = (row + [""] * 8)[:8]
@@ -1234,7 +1234,7 @@ def get_submissions_for_locations(locs: list, month_year: str) -> list:
     status_map: dict = {}
     try:
         ws   = _ws(TABS["SUBMISSION_STATUS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
         for row in rows[1:]:
             row = (row + [""] * 9)[:9]
             if row[1].strip() == month_year:
@@ -3225,6 +3225,174 @@ def generate_mi_mis_consolidated_excel(month_year: str, rows: list) -> bytes | N
                 ri += 1
         if ri == 2:
             ws.cell(row=2, column=1, value="No data for any submitted location this month.").font = HT_FONT
+        ws.freeze_panes = ws["A2"]
+        ws.protection.sheet   = True
+        ws.protection.password = "HPCL@MIS"
+        ws.protection.selectLockedCells   = False
+        ws.protection.selectUnlockedCells = False
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _load_mi_tab_index(tab_key: str) -> dict:
+    """Fetch one M&I tab ONCE (all rows, all users, all months) and index it by
+    (user_id, month_year) -> [row_dict, ...].
+
+    load_mi_data() does one full-tab API fetch per call, which is fine for a
+    single location+month but doesn't scale across many locations and months —
+    this is the bulk equivalent used by multi-month consolidated reports so each
+    of the 10 M&I tabs is only ever fetched once, regardless of scope.
+    """
+    headers  = _MI_TAB_HEADERS[tab_key]
+    ws       = _ensure_ws(TABS[tab_key], headers)
+    all_rows = _api_call(ws.get_all_values)
+    idx: dict = {}
+    if len(all_rows) < 2:
+        return idx
+    hdr = all_rows[0]
+    try:
+        uid_idx = hdr.index("user_id")
+        mon_idx = hdr.index("month_year")
+    except ValueError:
+        return idx
+    for row in all_rows[1:]:
+        row = (row + [""] * len(hdr))[:len(hdr)]
+        key = (row[uid_idx].strip(), row[mon_idx].strip())
+        idx.setdefault(key, []).append({hdr[i]: row[i] for i in range(len(hdr))})
+    return idx
+
+
+def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None:
+    """One workbook, 10 sheets, covering MULTIPLE months + all locations in one file.
+
+    `month_year_rows` is an ordered list of (month_year, rows) tuples — `rows`
+    being location-status dicts (userId/locName/zone/status) for that month, in
+    whatever scope the caller already has (Admin/Viewer: all locations; Zone:
+    own zone only), e.g. [(my, get_all_status_for_month(my)) for my in fy_months].
+    Rows within each sheet are grouped by Month (in the order given) then
+    Location (by name). TOP/HMEL locations are excluded (M&I not applicable).
+    Returns None if there is nothing to include.
+
+    Each of the 10 M&I tabs is fetched exactly once via _load_mi_tab_index(),
+    regardless of how many months/locations are in scope.
+    """
+    import io as _io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
+    from openpyxl.utils import get_column_letter
+    from form_defs import get_skip_sections
+
+    month_entries = []
+    for my, rows in month_year_rows:
+        locs = []
+        for r in rows:
+            if r.get("status") != "SUBMITTED":
+                continue
+            uid = r.get("userId", "").strip()
+            if not uid:
+                continue
+            if 5 in get_skip_sections(get_loc_type(uid)):
+                continue  # M&I MIS not applicable for TOP/HMEL locations
+            locs.append({"userId": uid, "locName": r.get("locName", uid),
+                         "zone": r.get("zone", "")})
+        locs.sort(key=lambda l: l["locName"])
+        if locs:
+            month_entries.append((my, locs))
+
+    if not month_entries:
+        return None
+
+    wb = Workbook()
+
+    _thin   = Side(style="thin", color="CCCCCC")
+    _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+
+    def _fill(h):
+        return PatternFill("solid", fgColor=h)
+    def _font(bold=False, color="000000", size=10, italic=False):
+        return Font(bold=bold, color=color, size=size, italic=italic)
+
+    BLUE_FILL  = _fill("1a1a6e")
+    HDR_FONT   = _font(bold=True, color="FFFFFF", size=9)
+    NM_FONT    = _font(size=10)
+    HT_FONT    = _font(italic=True, color="888888", size=8)
+    WHITE_FILL = _fill("FFFFFF")
+    ALT_FILL   = _fill("F5F5F5")
+    CENTER     = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT       = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+    LOCKED     = Protection(locked=True)
+
+    def _hdr_row(ws, headers, row=1):
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=row, column=ci, value=h)
+            c.font = HDR_FONT; c.fill = BLUE_FILL
+            c.alignment = CENTER; c.border = _border
+            c.protection = LOCKED
+            ws.column_dimensions[get_column_letter(ci)].width = 20
+        ws.row_dimensions[row].height = 28
+
+    def _data_row(ws, row, values, alt: bool):
+        for ci, v in enumerate(values, 1):
+            c = ws.cell(row=row, column=ci, value=v)
+            c.font = NM_FONT; c.fill = ALT_FILL if alt else WHITE_FILL
+            c.alignment = LEFT; c.border = _border
+            c.protection = LOCKED
+        ws.row_dimensions[row].height = 18
+
+    # ── Cover sheet ────────────────────────────────────────────────────────
+    ws0 = wb.active
+    ws0.title = "Cover"
+    total_loc_months = sum(len(locs) for _, locs in month_entries)
+    cover_data = [
+        ("Report",  "Consolidated M&I MIS — All Months, All Locations"),
+        ("Months",  ", ".join(my for my, _ in month_entries)),
+        ("Location-Months Included", str(total_loc_months)),
+    ]
+    for ri, (k, v) in enumerate(cover_data, 1):
+        ws0.cell(row=ri, column=1, value=k).font = _font(bold=True, color="0033A0", size=11)
+        ws0.cell(row=ri, column=2, value=v).font = _font(size=11)
+    ws0.column_dimensions["A"].width = 22
+    ws0.column_dimensions["B"].width = 60
+
+    hdr_r = len(cover_data) + 2
+    ws0.cell(row=hdr_r, column=1, value="Month").font = _font(bold=True, color="0033A0", size=10)
+    ws0.cell(row=hdr_r, column=2, value="Zone").font  = _font(bold=True, color="0033A0", size=10)
+    ws0.cell(row=hdr_r, column=3, value="Location").font = _font(bold=True, color="0033A0", size=10)
+    ri = hdr_r + 1
+    for my, locs in month_entries:
+        for loc in locs:
+            ws0.cell(row=ri, column=1, value=my)
+            ws0.cell(row=ri, column=2, value=loc["zone"])
+            ws0.cell(row=ri, column=3, value=f"{loc['locName']} ({loc['userId']})")
+            ri += 1
+    ws0.column_dimensions["C"].width = 40
+
+    # ── 10 consolidated subsection sheets ────────────────────────────────────
+    lead_headers = ["Month", "Zone", "Location Code", "Location Name"]
+    for tab_key, sheet_name, display_headers, data_keys in _MI_SHEET_DEFS:
+        ws  = wb.create_sheet(sheet_name)
+        _hdr_row(ws, lead_headers + display_headers)
+        idx = _load_mi_tab_index(tab_key)   # ONE fetch for this tab, reused for all months/locations
+        ri  = 2
+        for my, locs in month_entries:
+            for loc in locs:
+                mi_rows = idx.get((loc["userId"], my), [])
+                if not mi_rows:
+                    continue
+                lead_vals = [my, loc["zone"], loc["userId"], loc["locName"]]
+                if mi_rows[0].get("na_flag") == "Y":
+                    _data_row(ws, ri, lead_vals + ["Not Applicable (marked NA)"] +
+                              [""] * (len(display_headers) - 1), ri % 2 == 0)
+                    ri += 1
+                    continue
+                for rec in mi_rows:
+                    vals = lead_vals + [rec.get(k, "") for k in data_keys]
+                    _data_row(ws, ri, vals, ri % 2 == 0)
+                    ri += 1
+        if ri == 2:
+            ws.cell(row=2, column=1, value="No data for any submitted location in this range.").font = HT_FONT
         ws.freeze_panes = ws["A2"]
         ws.protection.sheet   = True
         ws.protection.password = "HPCL@MIS"
