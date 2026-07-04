@@ -4134,18 +4134,35 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
             st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
             _active_sessions = sheets.get_active_sessions()
             _active_count    = len(_active_sessions)
-            col_live, col_live_refresh = st.columns([3, 1])
-            with col_live:
-                st.metric("🟢 Live Users (active in last 30 min)", _active_count)
-            with col_live_refresh:
-                st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
-                if st.button("🔄 Refresh", key="refresh_live_users", use_container_width=True):
-                    sheets._settings_rows.clear()
-                    st.rerun()
+            st.markdown(
+                f'<div style="margin:2px 8px;padding:10px 14px;border-radius:8px;'
+                f'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);">'
+                f'<div style="color:#8AABFF;font-size:9px;font-weight:700;'
+                f'letter-spacing:1px;text-transform:uppercase;">🟢 Live Users (last 30 min)</div>'
+                f'<div style="color:#ffffff;font-size:24px;font-weight:800;margin-top:2px;">'
+                f'{_active_count}</div></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("🔄 Refresh", key="refresh_live_users", use_container_width=True):
+                sheets._settings_rows.clear()
+                st.rerun()
             if _active_count:
-                with st.expander(f"View {_active_count} active user ID(s)"):
-                    for uid, mins in sorted(_active_sessions, key=lambda x: x[1]):
-                        st.markdown(f"- **{uid}** — active {mins:.0f} min ago")
+                _show_active = st.session_state.get("_show_active_users", False)
+                _toggle_label = ("▲ Hide" if _show_active else "▼ Show") + f" {_active_count} active ID(s)"
+                if st.button(_toggle_label, key="toggle_active_users", use_container_width=True):
+                    st.session_state["_show_active_users"] = not _show_active
+                    st.rerun()
+                if st.session_state.get("_show_active_users", False):
+                    _rows_html = "".join(
+                        f'<div style="padding:2px 0;">• <b>{uid}</b> — {mins:.0f} min ago</div>'
+                        for uid, mins in sorted(_active_sessions, key=lambda x: x[1])
+                    )
+                    st.markdown(
+                        f'<div style="margin:2px 8px 6px;padding:8px 12px;border-radius:8px;'
+                        f'background:rgba(255,255,255,0.04);font-size:11px;color:#ffffff;">'
+                        f'{_rows_html}</div>',
+                        unsafe_allow_html=True,
+                    )
 
             # ── Maintenance mode toggle (Admin only) ──────────────────────
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
