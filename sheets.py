@@ -21,7 +21,7 @@ except Exception:
 
 import json
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import gspread
 import streamlit as st
@@ -278,16 +278,23 @@ def _audit_log_raw_rows() -> list:
     return _api_call(ws.get_all_values)
 
 
+_IST_OFFSET = timedelta(hours=5, minutes=30)
+
+
 def get_hourly_login_traffic(target_date: date) -> dict:
     """Return {"hours": [{"hour": 0..23, "users": n}, ...], "total_users": n}
-    -- distinct users who logged in during each hour of target_date, from the
-    AUDIT_LOG "Login" events, plus the distinct-user count for the whole day.
+    -- distinct users who logged in during each hour of target_date (IST), from
+    the AUDIT_LOG "Login" events, plus the distinct-user count for the whole day.
 
     Counts a user once per hour even if they logged in more than once in it --
     this answers "how many distinct users were on the portal that hour", not
     "how many login events fired". total_users is a separate day-wide distinct
     set (summing the per-hour counts would double-count anyone active in more
     than one hour).
+
+    AUDIT_LOG timestamps are written by datetime.now() on the deployed server,
+    which runs in UTC -- shift to IST before bucketing, otherwise every hour
+    (and the day boundary itself) is off by 5:30.
     """
     hour_users = {h: set() for h in range(24)}
     day_users: set = set()
@@ -299,7 +306,7 @@ def get_hourly_login_traffic(target_date: date) -> dict:
             if action != "Login" or not ts:
                 continue
             try:
-                dt = datetime.fromisoformat(ts)
+                dt = datetime.fromisoformat(ts) + _IST_OFFSET
             except Exception:
                 continue
             if dt.date() != target_date:
