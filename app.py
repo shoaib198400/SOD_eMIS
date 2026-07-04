@@ -8621,17 +8621,24 @@ def main():
         else:
             st.session_state["last_activity"] = _tm.time()
 
-        # 2. Simultaneous login detection (checked every 5 min)
+        # 2. Simultaneous login detection (checked every 5 min) -- also doubles
+        #    as a "still active" heartbeat: sess_<uid>'s timestamp is otherwise
+        #    only written once at login, so a long-running session that's still
+        #    genuinely in use would look stale to anything reading it (e.g. the
+        #    Admin "Live Users" count) even though it hasn't timed out.
         _last_chk = st.session_state.get("_last_session_check", 0)
         if _tm.time() - _last_chk > _SESSION_CHECK_INTERVAL:
             st.session_state["_last_session_check"] = _tm.time()
             _uid   = st.session_state.user.get("userId", "")
             _token = st.session_state.user.get("_session_token", "")
-            if _uid and _token and not sheets.check_session_valid(_uid, _token):
-                st.session_state.user = None
-                st.session_state.page = "login"
-                st.session_state["_displaced_msg"] = True
-                st.rerun()
+            if _uid and _token:
+                if not sheets.check_session_valid(_uid, _token):
+                    st.session_state.user = None
+                    st.session_state.page = "login"
+                    st.session_state["_displaced_msg"] = True
+                    st.rerun()
+                else:
+                    sheets.register_session(_uid, _token)
 
     page = st.session_state.page
     user = st.session_state.user
