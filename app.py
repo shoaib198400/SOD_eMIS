@@ -4112,6 +4112,13 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 st.session_state["selected_section"] = "loc_mgmt"
                 st.rerun()
 
+            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+            if st.button("📊  Portal Traffic", key="btn_traffic_nav",
+                         use_container_width=True,
+                         help="Hourly login traffic to spot peak usage before Maintenance Mode"):
+                st.session_state["selected_section"] = "portal_traffic"
+                st.rerun()
+
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
@@ -4856,6 +4863,95 @@ def show_analytics_page(user: dict):
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
       <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Analytics Dashboard</span>
+    </div>""", unsafe_allow_html=True)
+
+
+def show_portal_traffic(user: dict):
+    """Admin-only page: hourly login traffic chart, to spot peak usage before Maintenance Mode."""
+    import plotly.graph_objects as go
+
+    _dashboard_css()
+    _zone_sidebar(user, "TRAFFIC", "Portal Usage by Hour")
+
+    if st.sidebar.button("← Back", key="traffic_back", use_container_width=True):
+        st.session_state.pop("selected_section", None)
+        st.rerun()
+
+    c_title, c_refresh = st.columns([5, 1])
+    with c_title:
+        st.markdown(
+            '<div style="font-size:24px;font-weight:800;color:#001F5E;margin-bottom:2px;">'
+            '📊 Portal Traffic — Logins by Hour</div>'
+            '<div style="font-size:13px;color:#666;margin-bottom:6px;">'
+            'Distinct users logged in per hour — each user is counted once per '
+            'hour even if they logged in more than once.</div>',
+            unsafe_allow_html=True,
+        )
+    with c_refresh:
+        st.markdown('<div style="height:20px;"></div>', unsafe_allow_html=True)
+        if st.button("🔄 Refresh", key="traffic_refresh", use_container_width=True):
+            sheets._audit_log_raw_rows.clear()
+            st.rerun()
+
+    st.markdown("---")
+
+    sel_date = st.date_input("Date", value=date.today(), max_value=date.today(), key="traffic_date")
+
+    data   = sheets.get_hourly_login_traffic(sel_date)
+    hours  = data["hours"]
+    counts = [h["users"] for h in hours]
+
+    if not any(counts):
+        st.info(f"No login activity recorded for {sel_date.strftime('%d %b %Y')}.")
+        return
+
+    def _hour_label(h):
+        period = "AM" if h < 12 else "PM"
+        h12 = h % 12 or 12
+        return f"{h12} {period}"
+
+    peak_count = max(counts)
+    peak_hours = [h["hour"] for h in hours if h["users"] == peak_count]
+    labels     = [_hour_label(h["hour"]) for h in hours]
+    bar_colors = ["#001F5E" if h["hour"] in peak_hours else "#8FA8D6" for h in hours]
+    bar_text   = [str(c) if h["hour"] in peak_hours else "" for h, c in zip(hours, counts)]
+    y_step     = 1 if peak_count <= 8 else (2 if peak_count <= 20 else (5 if peak_count <= 50 else 10))
+
+    fig = go.Figure(go.Bar(
+        x=labels,
+        y=counts,
+        marker=dict(color=bar_colors, line=dict(width=0)),
+        text=bar_text,
+        textposition="outside",
+        textfont=dict(color="#001F5E", size=13, family="Segoe UI, system-ui, sans-serif"),
+        hovertemplate="%{x}: %{y} user(s)<extra></extra>",
+    ))
+    fig.update_layout(
+        height=380,
+        margin=dict(l=30, r=20, t=30, b=40),
+        plot_bgcolor="#fcfcfb",
+        paper_bgcolor="#fcfcfb",
+        font=dict(family="Segoe UI, system-ui, sans-serif", color="#52514e", size=12),
+        xaxis=dict(showgrid=False, tickangle=-45, color="#898781"),
+        yaxis=dict(showgrid=True, gridcolor="#e1e0d9", gridwidth=1, zeroline=False,
+                   color="#898781", dtick=y_step),
+        showlegend=False,
+        bargap=0.15,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    peak_label = ", ".join(_hour_label(h) for h in peak_hours)
+    st.caption(
+        f"Peak: **{peak_count} distinct user(s)** at **{peak_label}**  ·  "
+        f"**{data['total_users']}** distinct user(s) used the portal on "
+        f"{sel_date.strftime('%d %b %Y')} overall."
+    )
+
+    st.markdown("""
+    <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
+                display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
+      <span>HPCL SOD &nbsp;·&nbsp; Portal Traffic</span>
     </div>""", unsafe_allow_html=True)
 
 
@@ -8585,6 +8681,8 @@ def main():
                 show_helpdesk_admin(user)
             elif sec == "loc_mgmt" and role == "Admin":
                 show_location_management(user)
+            elif sec == "portal_traffic" and role == "Admin":
+                show_portal_traffic(user)
             else:
                 show_hqo_dashboard(user)
         else:

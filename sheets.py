@@ -271,6 +271,49 @@ def audit_log(loc_code: str, action: str, details: str = ""):
         pass
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _audit_log_raw_rows() -> list:
+    """Shared cache of the full AUDIT_LOG sheet (60 s TTL)."""
+    ws = _ws(TABS["AUDIT_LOG"])
+    return _api_call(ws.get_all_values)
+
+
+def get_hourly_login_traffic(target_date: date) -> dict:
+    """Return {"hours": [{"hour": 0..23, "users": n}, ...], "total_users": n}
+    -- distinct users who logged in during each hour of target_date, from the
+    AUDIT_LOG "Login" events, plus the distinct-user count for the whole day.
+
+    Counts a user once per hour even if they logged in more than once in it --
+    this answers "how many distinct users were on the portal that hour", not
+    "how many login events fired". total_users is a separate day-wide distinct
+    set (summing the per-hour counts would double-count anyone active in more
+    than one hour).
+    """
+    hour_users = {h: set() for h in range(24)}
+    day_users: set = set()
+    try:
+        rows = _audit_log_raw_rows()
+        for row in rows[1:]:
+            row = (row + [""] * 4)[:4]
+            ts, loc, action = row[0].strip(), row[1].strip(), row[2].strip()
+            if action != "Login" or not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                continue
+            if dt.date() != target_date:
+                continue
+            hour_users[dt.hour].add(loc)
+            day_users.add(loc)
+    except Exception:
+        pass
+    return {
+        "hours": [{"hour": h, "users": len(hour_users[h])} for h in range(24)],
+        "total_users": len(day_users),
+    }
+
+
 # ── Location name lookup from master ─────────────────────────────────────────
 
 @st.cache_data(ttl=3600)
