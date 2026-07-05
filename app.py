@@ -158,8 +158,60 @@ Format tables using markdown when comparing multiple locations or months."""
         contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
 
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=contents,
+            config=types.GenerateContentConfig(system_instruction=system_prompt),
+        )
+        return response.text
+
+    except Exception as e:
+        err = str(e)
+        if "API_KEY_INVALID" in err or "invalid" in err.lower() or "400" in err:
+            return "⚠️ Gemini API key appears to be invalid. Please generate a fresh key from aistudio.google.com and update secrets.toml."
+        return f"⚠️ Could not reach Gemini: {err}"
+
+
+def _gemini_insights_response(field_rows: list, months_label: str) -> str:
+    """Send real submitted MIS data (as CSV) to Gemini and return AI-narrated insights.
+
+    The data is embedded directly in the prompt so every figure the model cites
+    traces back to an actual submitted value -- it's told explicitly not to
+    estimate or invent numbers.
+    """
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return "⚠️ Gemini API key not configured. Please ask the administrator to add it to secrets.toml."
+    try:
+        from google import genai
+        from google.genai import types
+        import pandas as pd
+
+        df = pd.DataFrame(field_rows)
+        lead_cols  = ["loc_name", "zone_name", "month_year"]
+        other_cols = [c for c in df.columns if c not in lead_cols and c != "user_id"]
+        df = df[lead_cols + other_cols]
+        data_csv = df.to_csv(index=False)
+
+        system_prompt = f"""You are an analytics assistant for HPCL SOD (Supply Operations & Distribution).
+
+Below is REAL submitted MIS (Monthly Information System) data for {months_label}, one row
+per location per month, in CSV format. Analyse it and produce clear, plain-language insights:
+top and bottom performers, month-on-month trends, values above/below target, and any
+locations or zones that stand out (good or bad). Group findings under short headings.
+
+Every number you state must come directly from this data -- do not estimate, round
+misleadingly, or invent values. If a cell is blank, that value was not reported for that
+location/month -- say so rather than guessing it.
+
+DATA (CSV):
+{data_csv}"""
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(
+                text="Analyse the submitted MIS data above and give me the key insights."
+            )])],
             config=types.GenerateContentConfig(system_instruction=system_prompt),
         )
         return response.text
@@ -4119,6 +4171,13 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 st.session_state["selected_section"] = "portal_traffic"
                 st.rerun()
 
+            st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+            if st.button("🧠  AI Insights", key="btn_ai_insights_nav",
+                         use_container_width=True,
+                         help="AI-narrated insights from real submitted MIS data"):
+                st.session_state["selected_section"] = "ai_insights"
+                st.rerun()
+
         # ── Chatbot feature toggle (Admin only) ───────────────────────────
         if user.get("role") == "Admin":
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
@@ -4952,6 +5011,73 @@ def show_portal_traffic(user: dict):
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
       <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
       <span>HPCL SOD &nbsp;·&nbsp; Portal Traffic</span>
+    </div>""", unsafe_allow_html=True)
+
+
+def show_ai_insights_page(user: dict):
+    """Admin-only page: AI-narrated insights from real submitted MIS data.
+
+    Isolated, new page -- only reachable via an Admin-only nav button, so it
+    carries no risk to the existing Analytics/Chatbot pages other roles use.
+    """
+    _dashboard_css()
+    _zone_sidebar(user, "AI INSIGHTS", "Submitted Data Analysis")
+
+    if st.sidebar.button("← Back", key="ai_insights_back", use_container_width=True):
+        st.session_state.pop("selected_section", None)
+        st.rerun()
+
+    st.markdown(
+        '<div style="font-size:24px;font-weight:800;color:#001F5E;margin-bottom:2px;">'
+        '🧠 AI Insights — Submitted MIS Data</div>'
+        '<div style="font-size:13px;color:#666;margin-bottom:6px;">'
+        'AI-generated findings from real submitted data across all locations and months. '
+        'Every figure the AI cites is sourced from the table below — verify anything '
+        'important against it before acting on it.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+
+    today         = date.today()
+    fy_start_year = today.year if today.month >= 4 else today.year - 1
+    with st.spinner("Loading submitted data…"):
+        field_rows = sheets.get_analytics_field_data("Admin", "", fy_start_year)
+
+    if not field_rows:
+        st.info("No submitted MIS data available yet to analyse.")
+        return
+
+    months_present = sorted({r["month_year"] for r in field_rows})
+    st.caption(
+        f"Data available for: {', '.join(months_present)}  ·  "
+        f"{len(field_rows)} location-month record(s)"
+    )
+
+    if st.button("✨ Generate Insights", key="gen_ai_insights", type="primary"):
+        with st.spinner("Analysing submitted data with AI…"):
+            months_label = ", ".join(months_present)
+            st.session_state["_ai_insights_result"] = _gemini_insights_response(
+                field_rows, months_label
+            )
+
+    if st.session_state.get("_ai_insights_result"):
+        st.markdown(
+            '<div style="background:#f5f8ff;border-left:4px solid #001F5E;'
+            'border-radius:8px;padding:16px 18px;margin:12px 0;">',
+            unsafe_allow_html=True,
+        )
+        st.markdown(st.session_state["_ai_insights_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with st.expander("📄 View source data (verify any figure the AI cites against this)"):
+        import pandas as pd
+        st.dataframe(pd.DataFrame(field_rows), use_container_width=True)
+
+    st.markdown("""
+    <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
+                display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
+      <span>&#169; 2026 Hindustan Petroleum Corporation Limited.</span>
+      <span>HPCL SOD &nbsp;·&nbsp; AI Insights</span>
     </div>""", unsafe_allow_html=True)
 
 
@@ -8690,6 +8816,8 @@ def main():
                 show_location_management(user)
             elif sec == "portal_traffic" and role == "Admin":
                 show_portal_traffic(user)
+            elif sec == "ai_insights" and role == "Admin":
+                show_ai_insights_page(user)
             else:
                 show_hqo_dashboard(user)
         else:
