@@ -195,13 +195,16 @@ def _gemini_insights_response(field_rows: list, months_label: str) -> str:
         system_prompt = f"""You are an analytics assistant for HPCL SOD (Supply Operations & Distribution).
 
 Below is REAL submitted MIS (Monthly Information System) data for {months_label}, one row
-per location per month, in CSV format. Analyse it and produce clear, plain-language insights:
-top and bottom performers, month-on-month trends, values above/below target, and any
-locations or zones that stand out (good or bad). Group findings under short headings.
+per location per month, in CSV format. The detailed metrics are already shown to the reader
+as charts and a data table -- your job is ONLY a short executive summary: 3-5 sentences,
+plain language, calling out the single most important trend or two, and the one or two
+locations/zones that most stand out (good or bad). Do not itemize every metric or produce
+headed sections -- that level of detail is already covered elsewhere on the page.
 
 Every number you state must come directly from this data -- do not estimate, round
-misleadingly, or invent values. If a cell is blank, that value was not reported for that
-location/month -- say so rather than guessing it.
+misleadingly, or invent values. If a value looks like an implausible outlier (e.g. a
+percentage field over 1000%), call it out as a likely data-entry issue rather than citing
+it as a real finding.
 
 DATA (CSV):
 {data_csv}"""
@@ -210,7 +213,7 @@ DATA (CSV):
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[types.Content(role="user", parts=[types.Part(
-                text="Analyse the submitted MIS data above and give me the key insights."
+                text="Give me a short executive summary of the submitted MIS data above."
             )])],
             config=types.GenerateContentConfig(system_instruction=system_prompt),
         )
@@ -221,6 +224,117 @@ DATA (CSV):
         if "API_KEY_INVALID" in err or "invalid" in err.lower() or "400" in err:
             return "⚠️ Gemini API key appears to be invalid. Please generate a fresh key from aistudio.google.com and update secrets.toml."
         return f"⚠️ Could not reach Gemini: {err}"
+
+
+def _ai_target_delta_chart(rows: list, actual_col: str, target_col: str,
+                           title: str, higher_is_better: bool = True):
+    """Horizontal diverging bar: % difference from target per location, for one month.
+
+    Status colors (green=good, red=concerning) carry direction, not identity -- the
+    "good" side flips depending on whether higher (throughput) or lower (cost) is
+    the desired direction for this metric.
+    """
+    import plotly.graph_objects as go
+
+    CAP = 150  # a single wildly-off data point (likely a data-entry error) must not
+               # crush every other bar to invisibility -- clip the rendered bar length,
+               # but keep the real value visible in the tooltip and an on-bar label.
+
+    pts = []
+    for r in rows:
+        actual, target = r.get(actual_col), r.get(target_col)
+        if actual is None or target is None or target == 0:
+            continue
+        pts.append((r["loc_name"], (actual - target) / target * 100, actual, target))
+
+    if not pts:
+        return None
+
+    pts.sort(key=lambda x: x[1])
+    locs      = [p[0] for p in pts]
+    real_pcts = [p[1] for p in pts]
+    disp_pcts = [max(-CAP, min(CAP, pct)) for pct in real_pcts]
+    customd   = [(p[2], p[3], real) for p, real in zip(pts, real_pcts)]
+    clip_text = [f"{real:+,.0f}%" if abs(real) > CAP else "" for real in real_pcts]
+
+    GOOD, BAD = "#0ca30c", "#d03b3b"
+    colors = [
+        GOOD if ((pct >= 0) == higher_is_better) else BAD
+        for pct in real_pcts
+    ]
+
+    fig = go.Figure(go.Bar(
+        y=locs, x=disp_pcts, orientation="h",
+        marker=dict(color=colors, line=dict(width=0)),
+        customdata=customd,
+        text=clip_text, textposition="outside",
+        textfont=dict(size=10, color="#52514e"),
+        hovertemplate="<b>%{y}</b><br>Actual: %{customdata[0]:,.1f}<br>"
+                      "Target: %{customdata[1]:,.1f}<br>Delta: %{customdata[2]:+.1f}%<extra></extra>",
+    ))
+    fig.add_vline(x=0, line_width=1, line_color="#c3c2b7")
+
+    if any(abs(real) > CAP for real in real_pcts):
+        title = title + f"  (bars capped at ±{CAP}% — hover/label shows true value)"
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=13, color="#0b0b0b",
+                                          family="Segoe UI, system-ui, sans-serif")),
+        height=max(220, 34 * len(locs) + 80),
+        margin=dict(l=10, r=60, t=50, b=30, autoexpand=True),
+        plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
+        font=dict(family="Segoe UI, system-ui, sans-serif", color="#52514e", size=11),
+        xaxis=dict(title="% vs Target", showgrid=True, gridcolor="#e1e0d9",
+                   gridwidth=1, zeroline=False, color="#898781",
+                   range=[-CAP * 1.25, CAP * 1.25], automargin=True),
+        yaxis=dict(showgrid=False, color="#0b0b0b", automargin=True),
+        showlegend=False,
+        bargap=0.25,
+    )
+    return fig
+
+
+def _ai_trend_chart(field_rows: list, value_col: str, title: str, fy_months_order: list):
+    """Single-line all-India aggregate trend across months (sum of value_col per month).
+
+    Deliberately NOT one line per location -- real data spans 15+ distinct
+    locations, which would be an unreadable spaghetti chart; the per-location
+    detail lives in the diverging bar charts instead.
+    """
+    import plotly.graph_objects as go
+    from collections import defaultdict
+
+    by_month: dict = defaultdict(float)
+    for r in field_rows:
+        v = r.get(value_col)
+        if v is not None:
+            by_month[r["month_year"]] += v
+
+    months = [m for m in fy_months_order if m in by_month]
+    if not months:
+        return None
+    values = [by_month[m] for m in months]
+    labels = [m.split("-")[0] for m in months]
+
+    fig = go.Figure(go.Scatter(
+        x=labels, y=values, mode="lines+markers",
+        line=dict(color="#001F5E", width=2),
+        marker=dict(size=8, color="#001F5E"),
+        hovertemplate="%{x}: %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14, color="#0b0b0b",
+                                          family="Segoe UI, system-ui, sans-serif")),
+        height=300,
+        margin=dict(l=50, r=20, t=40, b=30),
+        plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
+        font=dict(family="Segoe UI, system-ui, sans-serif", color="#52514e", size=11),
+        xaxis=dict(showgrid=False, color="#898781"),
+        yaxis=dict(showgrid=True, gridcolor="#e1e0d9", gridwidth=1, zeroline=False,
+                   color="#898781"),
+        showlegend=False,
+    )
+    return fig
 
 
 # ── Phase-3 form helpers ──────────────────────────────────────────────────────
@@ -5031,9 +5145,9 @@ def show_ai_insights_page(user: dict):
         '<div style="font-size:24px;font-weight:800;color:#001F5E;margin-bottom:2px;">'
         '🧠 AI Insights — Submitted MIS Data</div>'
         '<div style="font-size:13px;color:#666;margin-bottom:6px;">'
-        'AI-generated findings from real submitted data across all locations and months. '
-        'Every figure the AI cites is sourced from the table below — verify anything '
-        'important against it before acting on it.</div>',
+        'Charts are computed directly from real submitted data — reliable by construction. '
+        'The AI only writes the short summary below them; verify any figure it cites '
+        'against the charts or the source table.</div>',
         unsafe_allow_html=True,
     )
     st.markdown("---")
@@ -5041,35 +5155,70 @@ def show_ai_insights_page(user: dict):
     today         = date.today()
     fy_start_year = today.year if today.month >= 4 else today.year - 1
     with st.spinner("Loading submitted data…"):
-        field_rows = sheets.get_analytics_field_data("Admin", "", fy_start_year)
+        field_rows     = sheets.get_analytics_field_data("Admin", "", fy_start_year)
+        fy_months_order = sheets._fy_month_years(fy_start_year)
 
     if not field_rows:
         st.info("No submitted MIS data available yet to analyse.")
         return
 
-    months_present = sorted({r["month_year"] for r in field_rows})
+    months_present = [m for m in fy_months_order if m in {r["month_year"] for r in field_rows}]
     st.caption(
         f"Data available for: {', '.join(months_present)}  ·  "
         f"{len(field_rows)} location-month record(s)"
     )
 
-    if st.button("✨ Generate Insights", key="gen_ai_insights", type="primary"):
-        with st.spinner("Analysing submitted data with AI…"):
-            months_label = ", ".join(months_present)
+    # ── AI executive summary (short, sits above the charts) ───────────────────
+    if st.button("✨ Generate Summary", key="gen_ai_insights", type="primary"):
+        with st.spinner("Summarising with AI…"):
             st.session_state["_ai_insights_result"] = _gemini_insights_response(
-                field_rows, months_label
+                field_rows, ", ".join(months_present)
             )
 
     if st.session_state.get("_ai_insights_result"):
         st.markdown(
             '<div style="background:#f5f8ff;border-left:4px solid #001F5E;'
-            'border-radius:8px;padding:16px 18px;margin:12px 0;">',
+            'border-radius:8px;padding:14px 18px;margin:12px 0;">',
             unsafe_allow_html=True,
         )
         st.markdown(st.session_state["_ai_insights_result"])
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with st.expander("📄 View source data (verify any figure the AI cites against this)"):
+    # ── Actual vs Target — per location, one month at a time ──────────────────
+    sel_month = st.selectbox("Month", months_present, index=len(months_present) - 1,
+                             key="ai_insights_month")
+    month_rows = [r for r in field_rows if r["month_year"] == sel_month]
+
+    st.caption("🟢 Green = at/better than target &nbsp;·&nbsp; 🔴 Red = below/worse than target")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        fig = _ai_target_delta_chart(
+            month_rows, "Total (MT) incl. Other Products", "Thruput Target (MT)",
+            f"Throughput vs Target — {sel_month}", higher_is_better=True,
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No throughput/target data for this month.")
+    with col_b:
+        fig = _ai_target_delta_chart(
+            month_rows, "OPEX (Rs/MT)", "OPEX Target (Rs/MT)",
+            f"OPEX vs Target — {sel_month}", higher_is_better=False,
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No OPEX/target data for this month.")
+
+    # ── All-India trend across months ──────────────────────────────────────────
+    fig = _ai_trend_chart(
+        field_rows, "Total (MT) incl. Other Products",
+        "All-India Total Throughput — Month on Month", fy_months_order,
+    )
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("📄 View source data (verify any figure against this)"):
         import pandas as pd
         st.dataframe(pd.DataFrame(field_rows), use_container_width=True)
 
