@@ -4409,11 +4409,16 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                     st.error(res2.get("msg", "Could not save setting."))
 
             # ── Warn active users before flipping Maintenance Mode on ─────
+            # Stored/compared in UTC (datetime.utcnow()), never local server time --
+            # the Admin clicking this may be on a local dev instance (IST) while
+            # users are on the deployed Streamlit Cloud instance (UTC); comparing
+            # naive local-time values across those two produced a ~5.5h (330 min)
+            # bogus countdown until this fix.
             _warn_at_raw = sheets.get_setting("maintenance_warning_at", "")
             _warn_pending = False
             if _warn_at_raw:
                 try:
-                    _warn_pending = datetime.fromisoformat(_warn_at_raw) > datetime.now()
+                    _warn_pending = datetime.fromisoformat(_warn_at_raw) > datetime.utcnow()
                 except Exception:
                     _warn_pending = False
 
@@ -4423,7 +4428,7 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                                   key="btn_warn_users", use_container_width=True,
                                   help="Shows a save-your-work banner with a 10-minute "
                                        "countdown to all logged-in non-Admin users"):
-                        _warn_target = (datetime.now() + timedelta(minutes=10)).isoformat()
+                        _warn_target = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
                         _wr = sheets.set_setting("maintenance_warning_at", _warn_target,
                                                   user["userId"])
                         if _wr["ok"]:
@@ -4433,7 +4438,7 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                             st.error(_wr.get("msg", "Could not save setting."))
                 else:
                     _mins_left = max(0, int((datetime.fromisoformat(_warn_at_raw)
-                                              - datetime.now()).total_seconds() // 60))
+                                              - datetime.utcnow()).total_seconds() // 60))
                     st.caption(f"📢 Warning banner active — ~{_mins_left} min left")
                     if st.button("Cancel warning", key="btn_cancel_warn", use_container_width=True):
                         sheets.set_setting("maintenance_warning_at", "", user["userId"])
@@ -9056,12 +9061,12 @@ def main():
         _warn_raw = sheets.get_setting("maintenance_warning_at", "")
         if _warn_raw:
             try:
-                _warn_dt = datetime.fromisoformat(_warn_raw)
+                _warn_dt = datetime.fromisoformat(_warn_raw)   # stored in UTC
             except Exception:
                 _warn_dt = None
-            if _warn_dt and _warn_dt > datetime.now():
-                _mins_left = max(1, int((_warn_dt - datetime.now()).total_seconds() // 60) + 1)
-                _target_clock = _warn_dt.strftime("%I:%M %p").lstrip("0")
+            if _warn_dt and _warn_dt > datetime.utcnow():
+                _mins_left = max(1, int((_warn_dt - datetime.utcnow()).total_seconds() // 60) + 1)
+                _target_clock = (_warn_dt + timedelta(hours=5, minutes=30)).strftime("%I:%M %p").lstrip("0")
                 st.markdown(f"""
 <div style="position:sticky;top:0;z-index:9999;
      background:linear-gradient(90deg,#B75900,#8a4300);color:#fff;
