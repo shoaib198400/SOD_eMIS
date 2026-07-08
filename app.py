@@ -6746,6 +6746,49 @@ def show_reports_page(user: dict):
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # ── M&I Data Integrity Check (Admin/Viewer only) ───────────────────────────
+    if role in ("Admin", "Viewer"):
+        st.markdown(
+            '<div style="background:linear-gradient(90deg,#001a6e,#0033A0,#0050d0);color:white;'
+            'font-size:14px;font-weight:700;padding:11px 20px;border-radius:10px;margin:18px 0 8px;">'
+            'M&I Data Integrity Check</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Scans every SUBMITTED (locked) location across all FY months for M&I (S5A) "
+            "sections that are empty despite approval — catches the silent upload-failure "
+            "class of issue before anyone has to notice and report it manually."
+        )
+        if st.button("🔍 Scan for Missing M&I Data", key="rpt_scan_mi"):
+            with st.spinner("Scanning all submitted locations across the financial year…"):
+                fy_rows_for_scan = [(m["value"], sheets.get_all_status_for_month(m["value"]))
+                                     for m in months]
+                st.session_state["_mi_scan_result"] = sheets.scan_missing_mi_data(fy_rows_for_scan)
+
+        _mi_flagged = st.session_state.get("_mi_scan_result")
+        if _mi_flagged is not None:
+            if not _mi_flagged:
+                st.success("No issues found — every submitted location has complete M&I data.")
+            else:
+                st.warning(f"{len(_mi_flagged)} submitted location-month(s) have missing M&I sections:")
+                scan_records = [{
+                    "Location Code":     f["userId"],
+                    "Location Name":     f["locName"],
+                    "Zone":              f["zone"],
+                    "Month":             f["month_year"],
+                    "Missing Sections":  ", ".join(f["missing_tabs"]),
+                } for f in _mi_flagged]
+                st.markdown(
+                    _rpt_table(scan_records, center_cols={"Location Code", "Month"}),
+                    unsafe_allow_html=True,
+                )
+                st.info(
+                    "To fix: have the Zone raise a Revision Request for the affected "
+                    "location/month, approve it under Pending Revision Requests, then the "
+                    "location can re-upload (now with loud-error protection) or re-enter "
+                    "the missing section and resubmit."
+                )
+
     # ── Email reminders (Admin only) ──────────────────────────────────────────
     if role == "Admin":
         import streamlit.components.v1 as _components

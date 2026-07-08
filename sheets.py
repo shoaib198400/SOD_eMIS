@@ -3636,6 +3636,55 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
     return buf.getvalue()
 
 
+def scan_missing_mi_data(month_year_rows: list) -> list:
+    """Find SUBMITTED (locked) locations whose M&I (S5A) data is actually
+    empty despite being approved -- the exact class of bug caused by the
+    (now-fixed) silent upload-failure issue. TOP/HMEL locations are skipped
+    (M&I not applicable to them).
+
+    `month_year_rows` — same shape as generate_full_mis_consolidated_excel_fy:
+    an ordered list of (month_year, rows) tuples.
+
+    Returns a list of {"userId","locName","zone","month_year","missing_tabs"}
+    dicts, one per flagged location-month. Each of the 10 M&I tabs is fetched
+    exactly once regardless of scope (same pattern as the consolidated report).
+    """
+    from form_defs import get_skip_sections
+
+    eligible = []   # (my, loc) pairs to check
+    for my, rows in month_year_rows:
+        for r in rows:
+            if r.get("status") != "SUBMITTED":
+                continue
+            uid = r.get("userId", "").strip()
+            if not uid:
+                continue
+            if 5 in get_skip_sections(get_loc_type(uid)):
+                continue
+            eligible.append((my, {"userId": uid, "locName": r.get("locName", uid),
+                                   "zone": r.get("zone", "")}))
+
+    if not eligible:
+        return []
+
+    tab_indexes = {tab_key: _load_mi_tab_index(tab_key) for tab_key, _, _, _ in _MI_SHEET_DEFS}
+
+    flagged = []
+    for my, loc in eligible:
+        missing = []
+        for tab_key, display_name, _, _ in _MI_SHEET_DEFS:
+            rows_for_key = tab_indexes[tab_key].get((loc["userId"], my))
+            if not rows_for_key:
+                missing.append(display_name)
+        if missing:
+            flagged.append({
+                "userId": loc["userId"], "locName": loc["locName"], "zone": loc["zone"],
+                "month_year": my, "missing_tabs": missing,
+            })
+
+    return flagged
+
+
 def _load_mi_tab_index(tab_key: str) -> dict:
     """Fetch one M&I tab ONCE (all rows, all users, all months) and index it by
     (user_id, month_year) -> [row_dict, ...].
