@@ -6718,31 +6718,31 @@ def show_reports_page(user: dict):
                 st.warning("No submitted locations with applicable M&I MIS data for this month.")
 
     with dl_col4:
-        if st.button("⬇ Consolidated M&I MIS — Full Year (Excel)", key="rpt_gen_mi_fy",
+        if st.button("⬇ Consolidated MIS + M&I — Full Year (Excel)", key="rpt_gen_mi_fy",
                      use_container_width=True,
-                     help="One workbook, 10 sheets — every submitted location's rows for "
-                          "every FY month (Apr onward) stacked per sheet, tagged with Month "
-                          "and Zone for easy filtering (TOP/HMEL locations excluded — M&I is "
-                          "not applicable to them). Always covers all locations, regardless "
-                          "of the Zone filter above."):
-            with st.spinner("Building full-year consolidated M&I MIS report… this may take a moment."):
+                     help="One workbook covering every SUBMITTED location for every FY month "
+                          "(Apr onward): a 'Full MIS Data' sheet with all flat S1-S10 fields, "
+                          "plus 10 M&I (S5A) sheets (TOP/HMEL excluded from M&I only — not "
+                          "applicable to them). Always covers all locations, regardless of "
+                          "the Zone filter above."):
+            with st.spinner("Building full-year consolidated MIS + M&I report… this may take a moment."):
                 if role in ("Admin", "Viewer"):
                     fy_month_year_rows = [(m["value"], sheets.get_all_status_for_month(m["value"]))
                                            for m in months]
                 else:
                     fy_month_year_rows = [(m["value"], sheets.get_submissions_for_locations(locs, m["value"]))
                                            for m in months]
-                mi_fy_bytes = sheets.generate_mi_mis_consolidated_excel_fy(fy_month_year_rows)
+                mi_fy_bytes = sheets.generate_full_mis_consolidated_excel_fy(fy_month_year_rows)
             if mi_fy_bytes:
                 st.download_button(
-                    label="Download Full-Year Consolidated M&I MIS",
+                    label="Download Full-Year Consolidated MIS + M&I",
                     data=mi_fy_bytes,
-                    file_name=f"MI_MIS_FY_Consolidated_{fy_start_year}-{fy_start_year + 1}.xlsx",
+                    file_name=f"MIS_FY_Consolidated_{fy_start_year}-{fy_start_year + 1}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="rpt_dl_mi_fy",
                 )
             else:
-                st.warning("No submitted locations with applicable M&I MIS data found for this financial year.")
+                st.warning("No submitted locations found for this financial year.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 

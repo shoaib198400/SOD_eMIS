@@ -3466,47 +3466,14 @@ def generate_mi_mis_consolidated_excel(month_year: str, rows: list) -> bytes | N
     return buf.getvalue()
 
 
-def _load_mi_tab_index(tab_key: str) -> dict:
-    """Fetch one M&I tab ONCE (all rows, all users, all months) and index it by
-    (user_id, month_year) -> [row_dict, ...].
-
-    load_mi_data() does one full-tab API fetch per call, which is fine for a
-    single location+month but doesn't scale across many locations and months —
-    this is the bulk equivalent used by multi-month consolidated reports so each
-    of the 10 M&I tabs is only ever fetched once, regardless of scope.
-    """
-    headers  = _MI_TAB_HEADERS[tab_key]
-    ws       = _ensure_ws(TABS[tab_key], headers)
-    all_rows = _api_call(ws.get_all_values)
-    idx: dict = {}
-    if len(all_rows) < 2:
-        return idx
-    hdr = all_rows[0]
-    try:
-        uid_idx = hdr.index("user_id")
-        mon_idx = hdr.index("month_year")
-    except ValueError:
-        return idx
-    for row in all_rows[1:]:
-        row = (row + [""] * len(hdr))[:len(hdr)]
-        key = (row[uid_idx].strip(), row[mon_idx].strip())
-        idx.setdefault(key, []).append({hdr[i]: row[i] for i in range(len(hdr))})
-    return idx
-
-
-def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None:
-    """One workbook, 10 sheets, covering MULTIPLE months + all locations in one file.
-
-    `month_year_rows` is an ordered list of (month_year, rows) tuples — `rows`
-    being location-status dicts (userId/locName/zone/status) for that month, in
-    whatever scope the caller already has (Admin/Viewer: all locations; Zone:
-    own zone only), e.g. [(my, get_all_status_for_month(my)) for my in fy_months].
-    Rows within each sheet are grouped by Month (in the order given) then
-    Location (by name). TOP/HMEL locations are excluded (M&I not applicable).
+def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None:
+    """One workbook covering every SUBMITTED location for every FY month: a
+    "Full MIS Data" sheet with every flat S1-S10 field (read straight from
+    MIS_Submitted, one row per location/month) alongside the 10 M&I (S5A)
+    sheets. TOP/HMEL locations are included in the flat-data sheet (M&I is
+    not applicable to them, but their other sections are) and excluded only
+    from the M&I sheets.
     Returns None if there is nothing to include.
-
-    Each of the 10 M&I tabs is fetched exactly once via _load_mi_tab_index(),
-    regardless of how many months/locations are in scope.
     """
     import io as _io
     from openpyxl import Workbook
@@ -3514,24 +3481,28 @@ def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None
     from openpyxl.utils import get_column_letter
     from form_defs import get_skip_sections
 
-    month_entries = []
+    all_month_entries = []   # every SUBMITTED location, all sections
+    mi_month_entries   = []   # SUBMITTED + M&I-applicable only (excludes TOP/HMEL)
     for my, rows in month_year_rows:
-        locs = []
+        all_locs, mi_locs = [], []
         for r in rows:
             if r.get("status") != "SUBMITTED":
                 continue
             uid = r.get("userId", "").strip()
             if not uid:
                 continue
-            if 5 in get_skip_sections(get_loc_type(uid)):
-                continue  # M&I MIS not applicable for TOP/HMEL locations
-            locs.append({"userId": uid, "locName": r.get("locName", uid),
-                         "zone": r.get("zone", "")})
-        locs.sort(key=lambda l: l["locName"])
-        if locs:
-            month_entries.append((my, locs))
+            loc = {"userId": uid, "locName": r.get("locName", uid), "zone": r.get("zone", "")}
+            all_locs.append(loc)
+            if 5 not in get_skip_sections(get_loc_type(uid)):
+                mi_locs.append(loc)
+        all_locs.sort(key=lambda l: l["locName"])
+        mi_locs.sort(key=lambda l: l["locName"])
+        if all_locs:
+            all_month_entries.append((my, all_locs))
+        if mi_locs:
+            mi_month_entries.append((my, mi_locs))
 
-    if not month_entries:
+    if not all_month_entries:
         return None
 
     wb = Workbook()
@@ -3574,10 +3545,10 @@ def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None
     # ── Cover sheet ────────────────────────────────────────────────────────
     ws0 = wb.active
     ws0.title = "Cover"
-    total_loc_months = sum(len(locs) for _, locs in month_entries)
+    total_loc_months = sum(len(locs) for _, locs in all_month_entries)
     cover_data = [
-        ("Report",  "Consolidated M&I MIS — All Months, All Locations"),
-        ("Months",  ", ".join(my for my, _ in month_entries)),
+        ("Report",  "Consolidated MIS (Full + M&I) — All Months, All Locations"),
+        ("Months",  ", ".join(my for my, _ in all_month_entries)),
         ("Location-Months Included", str(total_loc_months)),
     ]
     for ri, (k, v) in enumerate(cover_data, 1):
@@ -3591,7 +3562,7 @@ def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None
     ws0.cell(row=hdr_r, column=2, value="Zone").font  = _font(bold=True, color="0033A0", size=10)
     ws0.cell(row=hdr_r, column=3, value="Location").font = _font(bold=True, color="0033A0", size=10)
     ri = hdr_r + 1
-    for my, locs in month_entries:
+    for my, locs in all_month_entries:
         for loc in locs:
             ws0.cell(row=ri, column=1, value=my)
             ws0.cell(row=ri, column=2, value=loc["zone"])
@@ -3599,14 +3570,45 @@ def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None
             ri += 1
     ws0.column_dimensions["C"].width = 40
 
-    # ── 10 consolidated subsection sheets ────────────────────────────────────
+    # ── Full MIS Data sheet (flat S1-S10 fields, all months/locations) ──────
+    ws_full = wb.create_sheet("Full MIS Data")
+    try:
+        sub_ws   = _ws(TABS["MIS_SUBMITTED"])
+        sub_vals = _api_call(sub_ws.get_all_values)
+    except Exception:
+        sub_vals = []
+
+    if len(sub_vals) >= 2:
+        headers = sub_vals[0]
+        uid_idx = next((i for i, h in enumerate(headers) if h.strip().lower() in ("user id", "user_id")), 0)
+        mon_idx = next((i for i, h in enumerate(headers) if "month" in h.lower()), 3)
+        wanted  = {(loc["userId"], my) for my, locs in all_month_entries for loc in locs}
+        _hdr_row(ws_full, headers)
+        ri = 2
+        for row in sub_vals[1:]:
+            row_e = (row + [""] * len(headers))[:len(headers)]
+            if (row_e[uid_idx].strip(), row_e[mon_idx].strip()) in wanted:
+                _data_row(ws_full, ri, row_e, ri % 2 == 0)
+                ri += 1
+        if ri == 2:
+            ws_full.cell(row=2, column=1,
+                         value="No submitted data found for this range.").font = HT_FONT
+    else:
+        ws_full.cell(row=1, column=1, value="MIS_Submitted sheet not found or empty.").font = HT_FONT
+    ws_full.freeze_panes = ws_full["A2"]
+    ws_full.protection.sheet   = True
+    ws_full.protection.password = "HPCL@MIS"
+    ws_full.protection.selectLockedCells   = False
+    ws_full.protection.selectUnlockedCells = False
+
+    # ── 10 M&I (S5A) subsection sheets ──────────────────────────────────────
     lead_headers = ["Month", "Zone", "Location Code", "Location Name"]
     for tab_key, sheet_name, display_headers, data_keys in _MI_SHEET_DEFS:
         ws  = wb.create_sheet(sheet_name)
         _hdr_row(ws, lead_headers + display_headers)
-        idx = _load_mi_tab_index(tab_key)   # ONE fetch for this tab, reused for all months/locations
+        idx = _load_mi_tab_index(tab_key)
         ri  = 2
-        for my, locs in month_entries:
+        for my, locs in mi_month_entries:
             for loc in locs:
                 mi_rows = idx.get((loc["userId"], my), [])
                 if not mi_rows:
@@ -3632,6 +3634,34 @@ def generate_mi_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None
     buf = _io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _load_mi_tab_index(tab_key: str) -> dict:
+    """Fetch one M&I tab ONCE (all rows, all users, all months) and index it by
+    (user_id, month_year) -> [row_dict, ...].
+
+    load_mi_data() does one full-tab API fetch per call, which is fine for a
+    single location+month but doesn't scale across many locations and months —
+    this is the bulk equivalent used by multi-month consolidated reports so each
+    of the 10 M&I tabs is only ever fetched once, regardless of scope.
+    """
+    headers  = _MI_TAB_HEADERS[tab_key]
+    ws       = _ensure_ws(TABS[tab_key], headers)
+    all_rows = _api_call(ws.get_all_values)
+    idx: dict = {}
+    if len(all_rows) < 2:
+        return idx
+    hdr = all_rows[0]
+    try:
+        uid_idx = hdr.index("user_id")
+        mon_idx = hdr.index("month_year")
+    except ValueError:
+        return idx
+    for row in all_rows[1:]:
+        row = (row + [""] * len(hdr))[:len(hdr)]
+        key = (row[uid_idx].strip(), row[mon_idx].strip())
+        idx.setdefault(key, []).append({hdr[i]: row[i] for i in range(len(hdr))})
+    return idx
 
 
 def parse_mis_upload(file_bytes: bytes) -> dict:
