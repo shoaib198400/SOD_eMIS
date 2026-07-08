@@ -18,6 +18,20 @@ from datetime import date
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
+_MONTH_ORDER = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+)}
+
+
+def month_sort_key(my: str):
+    """Chronological key for 'Apr-2026' style strings -- plain sorted() on these
+    is alphabetical (Apr, Jun, May), not chronological (Apr, May, Jun)."""
+    parts = my.split("-")
+    mon = _MONTH_ORDER.get(parts[0], 0)
+    yr  = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    return (yr, mon)
+
+
 SENDER_EMAIL = "shoaibrehman@hpcl.in"
 
 BCC_EMAILS = [
@@ -51,11 +65,18 @@ ZONE_EMAIL_MAP = {
 # ── Outlook availability check ────────────────────────────────────────────────
 
 def _send_outlook(to: str, subject: str, html_body: str,
-                  cc: str = "", bcc: str = "") -> dict:
+                  cc: str = "", bcc: str = "",
+                  inline_images: list | None = None) -> dict:
     """Send email via Outlook COM — same pattern as Auto Reco 2.0 mailer.py.
 
     Outlook must be installed and signed in. COM objects are explicitly deleted
     and gc.collect() called before CoUninitialize to avoid Sent-Items race.
+
+    inline_images: optional [(cid, png_bytes), ...] -- embedded as attachments
+    with PR_ATTACH_CONTENT_ID set, so html_body can reference them via
+    <img src="cid:...">. Outlook (Word rendering engine) doesn't reliably
+    display base64 data-URI images, so this attach-by-CID approach is used
+    instead. Temp files are written and cleaned up around the send.
     """
     import gc
     try:
@@ -65,8 +86,10 @@ def _send_outlook(to: str, subject: str, html_body: str,
         return {"ok": False, "msg": f"pywin32 not installed: {exc}"}
 
     com_initialized = False
-    outlook   = None
-    mail_item = None
+    outlook     = None
+    mail_item   = None
+    temp_paths  = []
+    PR_ATTACH_CONTENT_ID = "http://schemas.microsoft.com/mapi/proptag/0x3712001E"
     try:
         pythoncom.CoInitialize()
         com_initialized = True
@@ -75,11 +98,23 @@ def _send_outlook(to: str, subject: str, html_body: str,
         mail_item = outlook.CreateItem(0)
         mail_item.To      = to
         mail_item.Subject = subject
-        mail_item.HTMLBody = html_body
         if cc.strip():
             mail_item.CC  = cc
         if bcc.strip():
             mail_item.BCC = bcc
+
+        for cid, png_bytes in (inline_images or []):
+            import tempfile, os
+            fd, path = tempfile.mkstemp(suffix=".png", prefix=f"emb_{cid}_")
+            with os.fdopen(fd, "wb") as f:
+                f.write(png_bytes)
+            temp_paths.append(path)
+            attachment = mail_item.Attachments.Add(path)
+            attachment.PropertyAccessor.SetProperty(PR_ATTACH_CONTENT_ID, cid)
+
+        # HTMLBody must be set AFTER attachments are added, or Outlook can
+        # drop the cid: reference for inline images added afterward.
+        mail_item.HTMLBody = html_body
 
         try:
             mail_item.Send()
@@ -108,6 +143,12 @@ def _send_outlook(to: str, subject: str, html_body: str,
         if com_initialized:
             try:
                 pythoncom.CoUninitialize()
+            except Exception:
+                pass
+        import os as _os
+        for p in temp_paths:
+            try:
+                _os.remove(p)
             except Exception:
                 pass
 
@@ -528,126 +569,234 @@ def send_consolidated_reminder(month_year: str,
 
 # ── Multi-month email builders & senders ──────────────────────────────────────
 
-def _month_sections_html(months_rows: dict, due_dates: dict,
-                         include_zone_header: bool = False) -> str:
-    """Build one HTML block per month, each with a location table.
+_STATUS_COLORS = {
+    # Semantic 4-color scheme (confirmed): Green = no action required,
+    # Orange = with checker for review, Red = needs maker action (in
+    # progress / rejected), Grey = not started.
+    #
+    # Rendered as plain colored TEXT (no fill), so these are deliberately
+    # darker/richer than typical "fill" shades -- a color that reads fine
+    # as white-on-solid-background often fails contrast as plain text on
+    # white (e.g. light grey #9E9E9E is ~2.8:1 on white, well under the
+    # ~4.5:1 needed for legible text) -- each shade below targets >=4.5:1.
+    "SUBMITTED":       "#2E7D32",   # dark green  -- no action required
+    "LOCKED":          "#2E7D32",   # dark green  -- no action required
+    "PENDING_REVIEW":  "#B75900",   # dark amber/orange -- awaiting checker review
+    "IN_PROGRESS":     "#C62828",   # dark red    -- needs maker action to submit
+    "REJECTED":        "#C62828",   # dark red    -- needs maker action to resubmit
+    "NOT_STARTED":     "#5F6368",   # slate grey  -- not even started (darker than
+                                    # a typical light grey so it stays legible on white)
+}
 
-    months_rows : {month_year: [pending_loc_rows]}
-    due_dates   : {month_year: date}
-    include_zone_header: if True, group by zone inside each month block
+
+def _status_badge(status: str) -> str:
+    color = _STATUS_COLORS.get(status, "#5F6368")
+    label = status.replace("_", " ").title()
+    return (f"<span style='color:{color};font-size:13px;font-weight:700;"
+            f"white-space:nowrap;'>{label}</span>")
+
+
+def _pivot_table_html(months_data: dict, month_list: list, include_zone_col: bool) -> str:
+    """One row per location, one column per month -- status pivoted across months.
+
+    months_data : {month_year: [ALL location rows for that month]} -- UNFILTERED,
+                  so a location's status for months it already submitted is still
+                  visible next to months it's still pending.
+    month_list  : ordered list of month_year strings to show as columns.
+    Only includes locations pending in at least one month in month_list --
+    this is a pending-reminder email, not a full compliance matrix.
     """
-    today    = date.today()
-    sections = ""
-    for my in sorted(months_rows.keys()):
-        locs     = months_rows[my]
-        due_date = due_dates.get(my, date(9999, 1, 1))
-        overdue  = today > due_date
-        due_str  = due_date.strftime("%d %b %Y")
-        hdr_bg   = "#7f1d1d" if overdue else "#003580"
-        badge    = (
-            "&nbsp;<span style='font-size:11px;background:#ef4444;color:white;"
-            "padding:2px 8px;border-radius:10px;'>OVERDUE</span>"
-            if overdue else ""
+    by_loc: dict   = {}   # userId -> {month_year: row}
+    loc_meta: dict = {}   # userId -> (zone, locName)
+    for my in month_list:
+        for row in months_data.get(my, []):
+            uid = row.get("userId", "")
+            by_loc.setdefault(uid, {})[my] = row
+            loc_meta[uid] = (row.get("zone", ""), row.get("locName", uid))
+
+    pending_uids = [
+        uid for uid, months in by_loc.items()
+        if any(months.get(my, {}).get("status") != "SUBMITTED" for my in month_list)
+    ]
+    if not pending_uids:
+        return "<p style='font-size:13px;color:#666;'>No pending locations.</p>"
+
+    pending_uids.sort(key=lambda u: (loc_meta[u][0], loc_meta[u][1]))
+
+    month_hdrs = "".join(
+        f"<th style='padding:8px 10px;text-align:center;font-size:11px;color:#333;'>{my}</th>"
+        for my in month_list
+    )
+    zone_hdr = (
+        "<th style='padding:8px 12px;text-align:left;font-size:11px;color:#333;'>Zone</th>"
+        if include_zone_col else ""
+    )
+    rows_html = ""
+    for i, uid in enumerate(pending_uids):
+        zone, name = loc_meta[uid]
+        bg = "#fafbfe" if i % 2 else "#ffffff"
+        zone_cell = (
+            f"<td style='padding:8px 12px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{zone}</td>"
+            if include_zone_col else ""
+        )
+        cells = "".join(
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e8ecf4;text-align:center;'>"
+            + (_status_badge(by_loc[uid][my]["status"]) if my in by_loc[uid] else "&mdash;")
+            + "</td>"
+            for my in month_list
+        )
+        rows_html += (
+            f"<tr style='background:{bg};'>"
+            f"{zone_cell}"
+            f"<td style='padding:8px 12px;border-bottom:1px solid #e8ecf4;font-size:12px;font-weight:600;'>{name}</td>"
+            f"{cells}"
+            f"</tr>"
         )
 
-        if include_zone_header:
-            # Group by zone inside the month block
-            by_zone: dict = {}
-            for loc in locs:
-                by_zone.setdefault(loc.get("zone", "Unknown"), []).append(loc)
-            zone_blocks = ""
-            for zn in sorted(by_zone.keys()):
-                zlocs = by_zone[zn]
-                rows_html = ""
-                for loc in zlocs:
-                    uid    = loc.get("userId", "")
-                    name   = loc.get("locName", "")
-                    status = loc.get("status", "NOT_STARTED").replace("_", " ").title()
-                    pct    = int(float(loc.get("completion_pct", 0)))
-                    bg     = "#fff8f8" if overdue else "#ffffff"
-                    rows_html += (
-                        f"<tr style='background:{bg};'>"
-                        f"<td style='padding:6px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{uid}</td>"
-                        f"<td style='padding:6px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{name}</td>"
-                        f"<td style='padding:6px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;'>{status}</td>"
-                        f"<td style='padding:6px 11px;border-bottom:1px solid #e8ecf4;font-size:12px;"
-                        f"text-align:center;'>{pct}%</td>"
-                        f"</tr>"
-                    )
-                zone_blocks += (
-                    f"<div style='margin-bottom:10px;'>"
-                    f"<div style='background:#6b7280;color:white;padding:6px 12px;"
-                    f"font-size:12px;font-weight:700;'>{zn} — {len(zlocs)} pending</div>"
-                    f"<table style='width:100%;border-collapse:collapse;'>"
-                    f"<thead><tr style='background:#f1f3f8;'>"
-                    f"<th style='padding:6px 11px;text-align:left;font-size:11px;color:#555;'>Code</th>"
-                    f"<th style='padding:6px 11px;text-align:left;font-size:11px;color:#555;'>Location</th>"
-                    f"<th style='padding:6px 11px;text-align:left;font-size:11px;color:#555;'>Status</th>"
-                    f"<th style='padding:6px 11px;text-align:center;font-size:11px;color:#555;'>Done%</th>"
-                    f"</tr></thead>"
-                    f"<tbody>{rows_html}</tbody>"
-                    f"</table></div>"
-                )
-            body_html = zone_blocks
-        else:
-            rows_html = ""
-            for loc in locs:
-                uid    = loc.get("userId", "")
-                name   = loc.get("locName", "")
-                status = loc.get("status", "NOT_STARTED").replace("_", " ").title()
-                pct    = int(float(loc.get("completion_pct", 0)))
-                bg     = "#fff8f8" if overdue else "#ffffff"
-                rows_html += (
-                    f"<tr style='background:{bg};'>"
-                    f"<td style='padding:8px 12px;border-bottom:1px solid #e8ecf4;font-size:13px;'>{uid}</td>"
-                    f"<td style='padding:8px 12px;border-bottom:1px solid #e8ecf4;font-size:13px;'>{name}</td>"
-                    f"<td style='padding:8px 12px;border-bottom:1px solid #e8ecf4;font-size:13px;'>{status}</td>"
-                    f"<td style='padding:8px 12px;border-bottom:1px solid #e8ecf4;font-size:13px;"
-                    f"text-align:center;'>{pct}%</td>"
-                    f"</tr>"
-                )
-            body_html = (
-                f"<table style='width:100%;border-collapse:collapse;'>"
-                f"<thead><tr style='background:#e8ecf4;'>"
-                f"<th style='padding:8px 12px;text-align:left;font-size:12px;color:#333;'>Code</th>"
-                f"<th style='padding:8px 12px;text-align:left;font-size:12px;color:#333;'>Location</th>"
-                f"<th style='padding:8px 12px;text-align:left;font-size:12px;color:#333;'>Status</th>"
-                f"<th style='padding:8px 12px;text-align:center;font-size:12px;color:#333;'>Done%</th>"
-                f"</tr></thead>"
-                f"<tbody>{rows_html}</tbody>"
-                f"</table>"
-            )
+    return (
+        f"<table style='width:100%;border-collapse:collapse;'>"
+        f"<thead><tr style='background:#e8ecf4;'>"
+        f"{zone_hdr}"
+        f"<th style='padding:8px 12px;text-align:left;font-size:11px;color:#333;'>Location</th>"
+        f"{month_hdrs}"
+        f"</tr></thead>"
+        f"<tbody>{rows_html}</tbody>"
+        f"</table>"
+    )
 
-        sections += (
-            f"<div style='margin-bottom:22px;border:1.5px solid #dde3ed;"
-            f"border-radius:8px;overflow:hidden;'>"
-            f"<div style='background:{hdr_bg};color:white;padding:10px 16px;"
-            f"font-size:13px;font-weight:700;'>"
-            f"📅 {my} — {len(locs)} location(s) pending {badge}&nbsp;&nbsp;"
-            f"<span style='font-size:11px;font-weight:400;'>Deadline: {due_str}</span></div>"
-            f"<div style='padding:6px;'>{body_html}</div>"
-            f"</div>"
-        )
-    return sections
+
+# ── Zone performance chart (embedded in consolidated email) ───────────────────
+
+# Vivid Office/PowerPoint theme accent colors (not pastel/washed out).
+_CHART_COLORS  = ["#4472C4", "#ED7D31", "#70AD47", "#FFC000", "#5B9BD5", "#A5A5A5"]
+_CHART_BORDER  = "#33475B"   # one consistent dark border for all bars/swatches
+
+
+def build_zone_performance_chart(months_rows: dict, month_list: list):
+    """Render a grouped bar chart (zone x month submission compliance %) as PNG
+    bytes, using Pillow -- no matplotlib/kaleido dependency (neither is
+    installed on this machine, and pip install is blocked by network SSL
+    restrictions here). Hand-drawn bars/gridlines/legend/labels.
+
+    Rendered at 2x pixel density (SCALE) and displayed at 1x via explicit
+    width/height on the <img> tag -- the standard "retina image" technique.
+    Without this, Outlook/Windows display scaling can make small chart text
+    look visibly blurry.
+
+    months_rows : {month_year: [ALL loc rows for that month]}
+    month_list  : ordered month_year strings to chart as grouped bars.
+    Returns (png_bytes, display_width, display_height); png_bytes is b"" if
+    there is nothing to chart.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    import io as _io
+
+    zone_month_pct: dict = {}
+    for my in month_list:
+        by_zone: dict = {}
+        for r in months_rows.get(my, []):
+            by_zone.setdefault(r.get("zone", "Unknown"), []).append(r)
+        for z, locs in by_zone.items():
+            total = len(locs)
+            done  = sum(1 for l in locs if l.get("status") == "SUBMITTED")
+            zone_month_pct.setdefault(z, {})[my] = (done / total * 100) if total else 0.0
+
+    zones = sorted(zone_month_pct.keys())
+    if not zones:
+        return b"", 0, 0
+
+    SCALE = 2   # render at 2x, display at 1x -- crisp on any screen/DPI
+
+    n_months  = len(month_list)
+    W         = 1000 * SCALE
+    margin_l  = 190 * SCALE
+    margin_r  = 50 * SCALE
+    margin_t  = 60 * SCALE
+    bar_h     = 7 * SCALE     # thickness of one bar
+    intra_gap = 3 * SCALE     # gap between bars WITHIN the same zone's cluster
+    zone_gap  = 14 * SCALE    # extra whitespace BETWEEN different zones' clusters
+    group_h   = n_months * bar_h + (n_months - 1) * intra_gap
+    row_h     = group_h + zone_gap
+    H         = margin_t + row_h * len(zones) + 50 * SCALE
+    plot_w    = W - margin_l - margin_r
+
+    try:
+        font       = ImageFont.truetype(r"C:\Windows\Fonts\segoeui.ttf", 13 * SCALE)
+        font_small = ImageFont.truetype(r"C:\Windows\Fonts\segoeui.ttf", 11 * SCALE)
+        font_title = ImageFont.truetype(r"C:\Windows\Fonts\segoeuib.ttf", 16 * SCALE)
+    except Exception:
+        font = font_small = font_title = ImageFont.load_default()
+
+    img  = Image.new("RGB", (W, H), "#fcfcfb")
+    draw = ImageDraw.Draw(img)
+
+    draw.text((margin_l, 16 * SCALE), "Zone Submission Compliance % — by Month",
+              font=font_title, fill="#0b0b0b")
+
+    # Legend (one swatch + label per month, fixed color order)
+    lx, ly = margin_l, 42 * SCALE
+    sw = 12 * SCALE
+    for i, my in enumerate(month_list):
+        color = _CHART_COLORS[i % len(_CHART_COLORS)]
+        draw.rounded_rectangle([lx, ly, lx + sw, ly + sw], radius=2 * SCALE,
+                               fill=color, outline=_CHART_BORDER, width=SCALE)
+        draw.text((lx + sw + 6 * SCALE, ly - 1 * SCALE), my, font=font_small, fill="#52514e")
+        lx += sw + 6 * SCALE + int(draw.textlength(my, font=font_small)) + 22 * SCALE
+
+    plot_top = margin_t
+    plot_bot = margin_t + row_h * (len(zones) - 1) + group_h
+
+    # Gridlines + x-axis %
+    for pct in (0, 25, 50, 75, 100):
+        x = margin_l + int(plot_w * pct / 100)
+        draw.line([(x, plot_top - 4 * SCALE), (x, plot_bot)], fill="#e1e0d9", width=SCALE)
+        draw.text((x - 10 * SCALE, plot_bot + 6 * SCALE), f"{pct}%", font=font_small, fill="#898781")
+
+    # Grouped bars, one row per zone
+    for zi, z in enumerate(zones):
+        row_top = plot_top + zi * row_h
+        label = z if len(z) <= 26 else z[:24] + "…"
+        draw.text((10 * SCALE, row_top + group_h / 2 - 7 * SCALE), label, font=font, fill="#0b0b0b")
+        for mi, my in enumerate(month_list):
+            pct   = zone_month_pct[z].get(my, 0.0)
+            color = _CHART_COLORS[mi % len(_CHART_COLORS)]
+            y0 = row_top + mi * (bar_h + intra_gap)
+            y1 = y0 + bar_h
+            x0 = margin_l
+            x1 = margin_l + max(int(plot_w * pct / 100), 2 * SCALE)
+            draw.rounded_rectangle([x0, y0, x1, y1], radius=2 * SCALE,
+                                   fill=color, outline=_CHART_BORDER, width=SCALE)
+
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue(), W // SCALE, H // SCALE
 
 
 def build_multimonth_zone_html(zone_name: str, months_rows: dict,
                                due_dates: dict, custom_intro: str = "") -> str:
-    """HTML for one zone covering multiple months (TO = Zone OD + location in-charges)."""
-    total   = sum(len(v) for v in months_rows.values())
-    my_list = ", ".join(sorted(months_rows.keys()))
+    """HTML for one zone covering multiple months (TO = Zone OD + location in-charges).
+
+    months_rows must be UNFILTERED (all locations, all statuses) per month, so
+    the pivot table can show a location's Submitted status for months it's
+    done alongside Pending for months it isn't -- see _pivot_table_html.
+    """
+    month_list  = sorted(months_rows.keys(), key=month_sort_key)
+    total_pend  = sum(1 for rows in months_rows.values()
+                      for r in rows if r.get("status") != "SUBMITTED")
+    my_list     = ", ".join(month_list)
     intro   = (
         custom_intro.strip()
         or (
             f"This is a combined reminder for MIS data submission for "
-            f"<strong>{my_list}</strong>. The following locations in your zone "
-            f"have pending submissions. Please ensure all are completed at the earliest."
+            f"<strong>{my_list}</strong>. The table below shows each location's "
+            f"status across these months. Please ensure all pending submissions "
+            f"are completed at the earliest."
         )
     )
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="font-family:Arial,sans-serif;margin:0;padding:0;background:#f4f6fb;">
-<div style="max-width:720px;margin:30px auto;background:white;border-radius:14px;
+<div style="max-width:760px;margin:30px auto;background:white;border-radius:14px;
             box-shadow:0 2px 12px rgba(0,0,0,0.10);overflow:hidden;">
   <div style="background:#002B8F;padding:22px 30px;">
     <div style="color:white;font-size:20px;font-weight:700;">HPCL SOD &mdash; MIS Portal</div>
@@ -659,23 +808,42 @@ def build_multimonth_zone_html(zone_name: str, months_rows: dict,
       Dear <strong>{zone_name} Team</strong>,</p>
     <p style="font-size:14px;color:#444;line-height:1.8;">{intro}</p>
     <p style="font-size:13px;color:#666;margin-bottom:18px;">
-      Total: <strong>{total} location-month(s)</strong> pending across
-      <strong>{len(months_rows)} month(s)</strong>
+      Total: <strong>{total_pend} location-month(s)</strong> pending across
+      <strong>{len(month_list)} month(s)</strong>
     </p>
-    {_month_sections_html(months_rows, due_dates, include_zone_header=False)}
+    {_pivot_table_html(months_rows, month_list, include_zone_col=False)}
   </div>
 </div>
 </body></html>"""
 
 
-def build_multimonth_consolidated_html(months_rows: dict, due_dates: dict) -> str:
-    """HTML consolidated email — all zones, all selected months."""
-    total   = sum(len(v) for v in months_rows.values())
-    my_list = ", ".join(sorted(months_rows.keys()))
+def build_multimonth_consolidated_html(months_rows: dict, due_dates: dict,
+                                       chart_cid: str = "",
+                                       chart_w: int = 0, chart_h: int = 0) -> str:
+    """HTML consolidated email — all zones, all selected months.
+
+    months_rows must be UNFILTERED (all locations, all statuses) per month.
+    chart_cid: if set, embeds <img src="cid:{chart_cid}"> for the attached
+    zone-performance bar chart (see build_zone_performance_chart).
+    chart_w/chart_h: explicit DISPLAY size (not the underlying pixel size,
+    which is 2x for crispness) -- Outlook needs a width/height attribute,
+    not just CSS, to size a cid: image correctly.
+    """
+    month_list = sorted(months_rows.keys(), key=month_sort_key)
+    total_pend = sum(1 for rows in months_rows.values()
+                     for r in rows if r.get("status") != "SUBMITTED")
+    my_list    = ", ".join(month_list)
+    chart_html = (
+        f'<div style="margin:20px 0;text-align:center;">'
+        f'<img src="cid:{chart_cid}" alt="Zone performance chart" '
+        f'width="{chart_w}" height="{chart_h}" '
+        f'style="max-width:100%;height:auto;border-radius:8px;border:1px solid #e8ecf4;"></div>'
+        if chart_cid else ""
+    )
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="font-family:Arial,sans-serif;margin:0;padding:0;background:#f4f6fb;">
-<div style="max-width:760px;margin:30px auto;background:white;border-radius:14px;
+<div style="max-width:800px;margin:30px auto;background:white;border-radius:14px;
             box-shadow:0 2px 12px rgba(0,0,0,0.10);overflow:hidden;">
   <div style="background:#002B8F;padding:22px 30px;">
     <div style="color:white;font-size:20px;font-weight:700;">HPCL SOD &mdash; MIS Portal</div>
@@ -686,10 +854,11 @@ def build_multimonth_consolidated_html(months_rows: dict, due_dates: dict) -> st
     <p style="font-size:15px;color:#333;margin-top:0;">Dear Team,</p>
     <p style="font-size:14px;color:#444;line-height:1.8;">
       Consolidated MIS pending status for <strong>{my_list}</strong>:
-      <strong>{total} location-month(s)</strong> across
-      <strong>{len(months_rows)} month(s)</strong> not yet submitted.
+      <strong>{total_pend} location-month(s)</strong> across
+      <strong>{len(month_list)} month(s)</strong> not yet submitted.
     </p>
-    {_month_sections_html(months_rows, due_dates, include_zone_header=True)}
+    {chart_html}
+    {_pivot_table_html(months_rows, month_list, include_zone_col=True)}
   </div>
 </div>
 </body></html>"""
@@ -709,15 +878,21 @@ def send_all_multimonth_reminders(months_data: dict, due_dates: dict,
     if not ok:
         return {"ok": False, "sent": 0, "failed": 0, "errors": [], "msg": err}
 
-    # Build {zone: {month: [pending_locs]}}
+    # Build {zone: {month: [ALL_locs]}} -- unfiltered, so the pivot table can
+    # show a location's Submitted status for months it's done alongside
+    # Pending for months it isn't. zones_with_pending decides who gets an
+    # email at all; it's tracked separately since zone_months itself now
+    # includes locations that have already submitted everything.
     zone_months: dict = {}
+    zones_with_pending: set = set()
     for my, rows in months_data.items():
         for loc in rows:
+            z = loc.get("zone", "Unknown")
+            zone_months.setdefault(z, {}).setdefault(my, []).append(loc)
             if loc.get("status") != "SUBMITTED":
-                z = loc.get("zone", "Unknown")
-                zone_months.setdefault(z, {}).setdefault(my, []).append(loc)
+                zones_with_pending.add(z)
 
-    zones_with_email = sorted(z for z in zone_months if z in _get_zone_map())
+    zones_with_email = sorted(z for z in zones_with_pending if z in _get_zone_map())
     if not zones_with_email:
         return {
             "ok": True, "sent": 0, "failed": 0, "errors": [],
@@ -725,7 +900,7 @@ def send_all_multimonth_reminders(months_data: dict, due_dates: dict,
         }
 
     today      = date.today()
-    my_str     = ", ".join(sorted(months_data.keys()))
+    my_str     = ", ".join(sorted(months_data.keys(), key=month_sort_key))
     any_overdue = any(today > d for d in due_dates.values())
 
     if test_mode:
@@ -769,12 +944,15 @@ def send_all_multimonth_reminders(months_data: dict, due_dates: dict,
         html_body   = build_multimonth_zone_html(
             zone_name, m_rows_zone, due_dates, custom_intro
         )
-        # TO = Zone OD + unique location emails across all months
+        # TO = Zone OD + unique location emails across all months, but only
+        # for locations that are actually pending in >=1 month -- m_rows_zone
+        # is unfiltered (for the pivot table's display), so this must filter.
         loc_emails = list({
             loc_email_map[str(loc.get("userId", ""))]
             for locs in m_rows_zone.values()
             for loc in locs
-            if loc_email_map.get(str(loc.get("userId", "")))
+            if loc.get("status") != "SUBMITTED"
+            and loc_email_map.get(str(loc.get("userId", "")))
         })
         zone_od = contacts.get("to", "")
         to_str  = "; ".join(filter(None, [zone_od] + loc_emails))
@@ -805,7 +983,7 @@ def send_multimonth_consolidated_reminder(months_data: dict, due_dates: dict,
     BCC = none
     """
     today       = date.today()
-    my_str      = ", ".join(sorted(months_data.keys()))
+    my_str      = ", ".join(sorted(months_data.keys(), key=month_sort_key))
     total       = sum(
         1 for rows in months_data.values()
         for r in rows if r.get("status") != "SUBMITTED"
@@ -817,7 +995,15 @@ def send_multimonth_consolidated_reminder(months_data: dict, due_dates: dict,
         if any_overdue else
         f"{pfx}Consolidated MIS Pending Report | {my_str} | {total} pending"
     )
-    html_body = build_multimonth_consolidated_html(months_data, due_dates)
+
+    chart_png, chart_w, chart_h = build_zone_performance_chart(
+        months_data, sorted(months_data.keys(), key=month_sort_key)
+    )
+    chart_cid = "zone_perf_chart" if chart_png else ""
+    html_body = build_multimonth_consolidated_html(
+        months_data, due_dates, chart_cid=chart_cid, chart_w=chart_w, chart_h=chart_h
+    )
+    inline_images = [(chart_cid, chart_png)] if chart_png else []
 
     if test_mode:
         to_str, cc_str = test_email or SENDER_EMAIL, ""
@@ -825,7 +1011,7 @@ def send_multimonth_consolidated_reminder(months_data: dict, due_dates: dict,
         to_str = SENDER_EMAIL
         cc_str = "; ".join(BCC_EMAILS)
 
-    res = _send_outlook(to_str, subject, html_body, cc_str, "")
+    res = _send_outlook(to_str, subject, html_body, cc_str, "", inline_images=inline_images)
     if "msg" not in res:
         res["msg"] = (
             f"Consolidated report sent covering {len(months_data)} month(s): {my_str}."

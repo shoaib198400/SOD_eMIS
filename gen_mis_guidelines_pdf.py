@@ -96,7 +96,7 @@ SECTIONS = [
         "Permits Issued, MOCs Created and Approved",
         "Pending MDSA & OISD Observations (%), OISD Obs > 1 Year (count)",
         "SOPs re-validated within 3 years (Yes / No / NA), Green Belt Area (SQM)",
-        "CCTV: Installed (count), Non-Functional (count), % Breakdown (auto-calc), VA Exception %",
+        "CCTV: Installed (count), Non-Functional (count), % Breakdown (auto-calc), VA Exception performance %",
         "Awards Received (optional text field)",
     ]),
     (7, "Operational Efficiency", [

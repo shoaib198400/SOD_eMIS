@@ -29,8 +29,12 @@ from google.oauth2.service_account import Credentials
 
 
 def _api_call(fn, *args, retries: int = 6, **kwargs):
-    """Execute a Sheets API call with exponential backoff on 429 quota errors.
+    """Execute a Sheets API call with exponential backoff on 429 quota errors
+    and on transient connection failures (DNS blips, dropped connections --
+    the same class of error as an occasional 'Failed to resolve
+    sheets.googleapis.com' seen on flaky networks).
     Waits 2^n seconds between attempts (1 s, 2 s, 4 s, 8 s, 16 s, 32 s)."""
+    import requests as _requests
     for n in range(retries):
         try:
             return fn(*args, **kwargs)
@@ -38,6 +42,11 @@ def _api_call(fn, *args, retries: int = 6, **kwargs):
             resp = getattr(exc, "response", None)
             code = getattr(resp, "status_code", 0) if resp else 0
             if code == 429 and n < retries - 1:
+                time.sleep(min(2 ** n, 32))
+            else:
+                raise
+        except (_requests.exceptions.ConnectionError, _requests.exceptions.Timeout):
+            if n < retries - 1:
                 time.sleep(min(2 ** n, 32))
             else:
                 raise
@@ -156,6 +165,72 @@ def _client():
 @st.cache_resource
 def _spreadsheet():
     return _client().open_by_key(st.secrets["sheets"]["spreadsheet_id"])
+
+
+def mirror_backup_to_replica() -> dict:
+    """Copy every tab of the live master sheet into the backup replica sheet.
+
+    Full-value overwrite per tab (not incremental) -- safe to re-run any time.
+    Takes roughly a minute (one read + one write per tab, ~25 tabs); intended
+    to be triggered manually (Admin button) or by the scheduled GitHub Action,
+    not on any hot path.
+    """
+    backup_id = st.secrets.get("sheets", {}).get("backup_spreadsheet_id", "")
+    if not backup_id:
+        return {"ok": False, "msg": "backup_spreadsheet_id not configured in secrets."}
+
+    import time as _t
+    t0 = _t.time()
+    client  = _client()
+    master  = _spreadsheet()
+    try:
+        replica = client.open_by_key(backup_id)
+    except Exception as e:
+        return {"ok": False, "msg": f"Could not open backup sheet: {e}"}
+
+    existing = {ws.title: ws for ws in replica.worksheets()}
+    tabs_done, errors = [], []
+    master_tabs = master.worksheets()
+
+    for i, ws in enumerate(master_tabs):
+        name = ws.title
+        try:
+            rows = _api_call(ws.get_all_values)
+            n_rows = max(len(rows), 1)
+            n_cols = max((len(r) for r in rows), default=1) or 1
+
+            if name in existing:
+                dest = existing[name]
+                if dest.row_count < n_rows or dest.col_count < n_cols:
+                    _api_call(dest.resize, rows=max(n_rows, dest.row_count),
+                             cols=max(n_cols, dest.col_count))
+                _api_call(dest.clear)
+            else:
+                dest = _api_call(replica.add_worksheet, title=name,
+                                 rows=max(n_rows, 10), cols=max(n_cols, 10))
+                existing[name] = dest
+
+            if rows:
+                padded = [r + [""] * (n_cols - len(r)) for r in rows]
+                _api_call(dest.update, padded, value_input_option="RAW")
+            tabs_done.append(name)
+        except Exception as e:
+            errors.append(f"{name}: {e}")
+
+        # Throttle: existing-tab writes use up to 3 write calls each (resize +
+        # clear + update); back-to-back across ~25 tabs can exceed Sheets'
+        # per-minute write quota even with _api_call's retry/backoff. A short
+        # pause between tabs keeps total throughput comfortably under it.
+        if i < len(master_tabs) - 1:
+            _t.sleep(1.5)
+
+    set_setting("last_backup_at", datetime.now().isoformat(), "system")
+    return {
+        "ok": not errors,
+        "tabs_done": tabs_done,
+        "errors": errors,
+        "duration_sec": round(_t.time() - t0, 1),
+    }
 
 
 @st.cache_resource
@@ -452,7 +527,7 @@ def check_login(location_code: str, password: str) -> dict:
             return {"ok": False, "msg": "Location Code and Password are required."}
 
         ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _api_call(ws.get_all_values)
 
         if len(rows) < 2:
             return {"ok": False, "msg": "No users configured. Please contact Admin."}
@@ -499,7 +574,12 @@ def check_login(location_code: str, password: str) -> dict:
         return {"ok": False, "msg": "Location Code not found. Please check and try again."}
 
     except Exception as e:
-        return {"ok": False, "msg": f"System error. Please try again. ({e})"}
+        # Don't leak internal details (spreadsheet IDs, stack text) to the
+        # login screen -- log server-side for diagnosis, show a plain message.
+        print(f"[check_login] {type(e).__name__}: {e}")
+        return {"ok": False,
+                "msg": "Unable to reach the server right now. Please check your "
+                       "connection and try again in a moment."}
 
 
 def change_password(user_id: str, current_pass: str,
@@ -1000,9 +1080,26 @@ def save_draft(user_id: str, month_year: str,
         save_draft(user_id, month_year, field_data={...}, sections_complete=[1,3,5,...])
     """
     try:
-        existing  = load_draft(user_id, month_year)
-        sheet_row = existing.pop("_sheet_row", None)
-        secs_raw  = existing.pop("_sections_complete", "")
+        # Fresh, uncached lookup of the target row — never trust the cached
+        # load_draft() result here. A stale cached read was the root cause of
+        # a duplicate-row bug: two save_draft() calls landing within the same
+        # 30 s cache window both saw "no row yet" and both appended, creating
+        # two MIS_DRAFT rows for the same (user_id, month_year).
+        ws         = _ws(TABS["MIS_DRAFT"])
+        fresh_rows = _api_call(ws.get_all_values)
+        sheet_row  = None
+        existing: dict = {}
+        secs_raw   = ""
+        for i, row in enumerate(fresh_rows[1:], start=2):
+            row = (row + [""] * 5)[:5]
+            if row[0].strip() == user_id and row[1].strip() == month_year:
+                sheet_row = i
+                secs_raw  = row[2].strip()
+                try:
+                    existing = json.loads(row[4]) if row[4].strip() else {}
+                except Exception:
+                    existing = {}
+                break
 
         try:
             secs_done = {int(x) for x in secs_raw.split(",") if x.strip().isdigit()}
@@ -1026,7 +1123,6 @@ def save_draft(user_id: str, month_year: str,
         now_str  = datetime.now().isoformat()
         data_str = json.dumps(existing)
 
-        ws = _ws(TABS["MIS_DRAFT"])
         if sheet_row:
             _api_call(ws.update, f"A{sheet_row}:E{sheet_row}",
                       [[user_id, month_year, secs_str, now_str, data_str]])
@@ -1036,8 +1132,26 @@ def save_draft(user_id: str, month_year: str,
                 value_input_option="RAW",
             )
 
-        status = "IN_PROGRESS" if secs_done else "NOT_STARTED"
-        _update_submission_status(user_id, month_year, status, pct)
+        # Never let an incidental data save silently un-approve a month the
+        # Checker has already reviewed. Root cause of a real production bug:
+        # a Maker save request landing shortly after Approve & Lock (e.g. a
+        # queued/in-flight request from before the lock happened) would
+        # unconditionally overwrite status back to IN_PROGRESS, even though
+        # locked_by/locked_at were preserved -- a status/lock-state mismatch
+        # with no audit trail explaining it. Fresh (uncached) check so this
+        # can't be fooled by a stale cache window either.
+        _ss_ws = _ensure_ws(TABS["SUBMISSION_STATUS"], _SS_HEADERS)
+        _ss_rows = _api_call(_ss_ws.get_all_values)
+        _cur_status = "NOT_STARTED"
+        for _row in _ss_rows[1:]:
+            _row = (_row + [""] * 9)[:9]
+            if _row[0].strip() == user_id and _row[1].strip() == month_year:
+                _cur_status = _row[2].strip() or "NOT_STARTED"
+                break
+
+        if _cur_status not in ("SUBMITTED", "LOCKED"):
+            status = "IN_PROGRESS" if secs_done else "NOT_STARTED"
+            _update_submission_status(user_id, month_year, status, pct)
         tag = f"S{section_num}" if section_num else "BulkUpload"
         audit_log(user_id, f"SaveDraft {tag}",
                   f"month={month_year} secs={secs_str} pct={pct}")
@@ -1242,11 +1356,21 @@ def reset_draft(maker_id: str, month_year: str, checker_id: str, reason: str) ->
 
 # ── Phase-6: Zone / HQO view + Revision workflow ──────────────────────────────
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _user_access_raw_rows() -> list:
+    """Shared 60 s cache of the full UserAccess sheet -- avoids an uncached
+    full-sheet read on every rerun of every Zone/Admin dashboard render,
+    which was a real contributor to the app feeling slow with 15-20+
+    concurrent users (Streamlit reruns the whole script on every widget
+    interaction, and this sheet was being re-read from scratch each time)."""
+    ws = _ws(TABS["USER_ACCESS"])
+    return _api_call(ws.get_all_values)
+
+
 def get_locations_by_zone(zone_name: str) -> list:
     """Return Maker location dicts for a given zone (reads UserAccess)."""
     try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
+        rows = _user_access_raw_rows()
         locs = []
         for row in rows[1:]:
             row = (row + [""] * 8)[:8]
@@ -1265,8 +1389,7 @@ def get_locations_by_zone(zone_name: str) -> list:
 def get_all_maker_locations() -> list:
     """Return all Maker location dicts across all zones (HQO view)."""
     try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
+        rows = _user_access_raw_rows()
         locs = []
         for row in rows[1:]:
             row = (row + [""] * 8)[:8]
@@ -1285,8 +1408,7 @@ def get_all_maker_locations() -> list:
 def get_maker_info(user_id: str) -> dict:
     """Return {"userId", "locName", "zone"} for a Maker, or a minimal dict."""
     try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        rows = _user_access_raw_rows()
         for row in rows[1:]:
             row = (row + [""] * 8)[:8]
             loc_code, loc_name, zone, _, role = row[:5]
@@ -1727,6 +1849,8 @@ def sync_missing_maker_accounts(default_password: str = "") -> dict:
             else:
                 skipped += 1
 
+        if added:
+            _user_access_raw_rows.clear()
         return {"ok": True, "added": added, "skipped": skipped}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
@@ -1877,6 +2001,7 @@ def update_location_zone(loc_code: str, new_zone: str, updated_by: str) -> dict:
                 updated_rows.append(i)
         if updated_rows:
             _loc_name_map.clear()
+            _user_access_raw_rows.clear()
             audit_log(updated_by, "ZoneUpdate",
                       f"loc={loc_code} new_zone={new_zone} rows={updated_rows}")
             return {
@@ -3689,9 +3814,11 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                 col_map[ci] = clean_to_key[hc]
 
         tab_data = []
+        had_data_row = False
         for raw in mi_rows[3:]:   # skip banner(0), header(1), hint(2)
             if all(v is None or str(v).strip() == "" for v in raw):
                 continue
+            had_data_row = True
             # Detect "Not Applicable" marker row
             first_val = str(raw[0] or "").strip().lower()
             if "not applicable" in first_val or first_val == "na":
@@ -3705,6 +3832,18 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                         rec[col_map[ci]] = nv
             if rec:
                 tab_data.append(rec)
+
+        # Loud failure: the sheet had real data rows, but NOT ONE of them
+        # produced a recognised field — almost always a header-text mismatch
+        # (edited column headers, or an outdated/newer template version).
+        # Without this, the upload silently reports success while quietly
+        # dropping this entire M&I section.
+        if had_data_row and tab_data == []:
+            result["errors"].append(
+                f"⚠️ M&I sheet '{sheet_name}' has data but none of its columns "
+                f"were recognised — this section was NOT imported. Please "
+                f"re-download the current template and re-enter this section."
+            )
 
         result["mi_tabs"][tab_key] = tab_data
 

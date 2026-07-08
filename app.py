@@ -3,7 +3,7 @@
 import base64
 import os
 import platform
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -3649,7 +3649,11 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                   "legal_cases": [], "mi_tabs": {}}
 
                     if parsed["errors"]:
-                        for err in parsed["errors"]:
+                        _mi_errs  = [e for e in parsed["errors"] if "M&I sheet" in e]
+                        _oth_errs = [e for e in parsed["errors"] if "M&I sheet" not in e]
+                        for err in _mi_errs:
+                            st.error(err)
+                        for err in _oth_errs:
                             st.warning(err)
 
                     fields_from_xl = parsed["fields"]
@@ -3709,6 +3713,19 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                     for f in edit_flds
                                 ):
                                     secs_complete.append(sn)
+
+                        # Union with the section's pre-existing completion state
+                        # instead of replacing it wholesale. A section already
+                        # marked complete server-side must not be silently
+                        # un-completed just because this browser session never
+                        # loaded its fields into session_state (e.g. the user
+                        # went straight to Upload without opening that section).
+                        _existing_draft = sheets.load_draft(user["userId"], month_year)
+                        _existing_secs = {
+                            int(s) for s in str(_existing_draft.get("_sections_complete", "")).split(",")
+                            if s.strip().isdigit()
+                        }
+                        secs_complete = sorted(set(secs_complete) | _existing_secs)
 
                         # ── Persist to Google Sheets ─────────────────────
                         # Only send non-empty values so blank session-state
@@ -3997,7 +4014,7 @@ def show_dashboard():
             "Month", range(len(months)),
             format_func=lambda i: (
                 f"{icon_map.get(months[i]['status'], '⚪')}  {months[i]['label']}"
-                f"{'  🔒' if months[i]['is_locked'] else ''}"
+                f"{'  🔒' if months[i]['status'] in ('SUBMITTED', 'LOCKED') else ''}"
             ),
             key="sel_month",
         )
@@ -4344,6 +4361,33 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                         unsafe_allow_html=True,
                     )
 
+            # ── Manual backup-now (Admin only) ─────────────────────────────
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
+            _last_backup = sheets.get_setting("last_backup_at", "")
+            if _last_backup:
+                try:
+                    import datetime as _dtm
+                    _age_min = (_dtm.datetime.now() - _dtm.datetime.fromisoformat(_last_backup)).total_seconds() / 60
+                    _age_txt = f"{_age_min:.0f} min ago" if _age_min < 120 else f"{_age_min/60:.1f} hr ago"
+                except Exception:
+                    _age_txt = _last_backup
+                st.caption(f"🗄️ Last backup: {_age_txt}")
+            else:
+                st.caption("🗄️ No backup on record yet")
+            if st.button("💾  Backup Now", key="btn_backup_now", use_container_width=True,
+                         help="Mirror every tab of the live sheet into the backup replica sheet (~1 min)"):
+                with st.spinner("Backing up all sheet tabs… this takes about a minute"):
+                    _bk_res = sheets.mirror_backup_to_replica()
+                if _bk_res.get("ok"):
+                    st.success(
+                        f"Backup complete — {len(_bk_res['tabs_done'])} tab(s) in "
+                        f"{_bk_res['duration_sec']}s"
+                    )
+                else:
+                    st.error(
+                        f"Backup finished with errors: {_bk_res.get('msg') or _bk_res.get('errors')}"
+                    )
+
             # ── Maintenance mode toggle (Admin only) ──────────────────────
             st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
             maint_on  = sheets.get_setting("maintenance_mode", "FALSE") == "TRUE"
@@ -4359,8 +4403,41 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                                           user["userId"])
                 if res2["ok"]:
                     st.success("Maintenance mode " + ("ON 🔧" if maint_new else "OFF ✅"))
+                    if maint_new:
+                        sheets.set_setting("maintenance_warning_at", "", user["userId"])
                 else:
                     st.error(res2.get("msg", "Could not save setting."))
+
+            # ── Warn active users before flipping Maintenance Mode on ─────
+            _warn_at_raw = sheets.get_setting("maintenance_warning_at", "")
+            _warn_pending = False
+            if _warn_at_raw:
+                try:
+                    _warn_pending = datetime.fromisoformat(_warn_at_raw) > datetime.now()
+                except Exception:
+                    _warn_pending = False
+
+            if not maint_on:
+                if not _warn_pending:
+                    if st.button("📢  Warn Users (Maintenance in 10 min)",
+                                  key="btn_warn_users", use_container_width=True,
+                                  help="Shows a save-your-work banner with a 10-minute "
+                                       "countdown to all logged-in non-Admin users"):
+                        _warn_target = (datetime.now() + timedelta(minutes=10)).isoformat()
+                        _wr = sheets.set_setting("maintenance_warning_at", _warn_target,
+                                                  user["userId"])
+                        if _wr["ok"]:
+                            st.success("Warning banner is now live for active users (10-min countdown).")
+                            st.rerun()
+                        else:
+                            st.error(_wr.get("msg", "Could not save setting."))
+                else:
+                    _mins_left = max(0, int((datetime.fromisoformat(_warn_at_raw)
+                                              - datetime.now()).total_seconds() // 60))
+                    st.caption(f"📢 Warning banner active — ~{_mins_left} min left")
+                    if st.button("Cancel warning", key="btn_cancel_warn", use_container_width=True):
+                        sheets.set_setting("maintenance_warning_at", "", user["userId"])
+                        st.rerun()
 
         # ── Chatbot nav button (Zone + Admin when enabled) ────────────────
         if sheets.get_setting("chatbot_enabled", "FALSE") == "TRUE":
@@ -6804,7 +6881,7 @@ def show_reports_page(user: dict):
                             "Zone OD (TO)": rcp["to"] or "—",
                             "Zone IC (CC)": rcp["cc"] or "—",
                         }
-                        for my in sorted(selected_months):
+                        for my in sorted(selected_months, key=_emails.month_sort_key):
                             n = sum(
                                 1 for r in months_data[my]
                                 if r.get("zone") == z and r.get("status") != "SUBMITTED"
@@ -6849,25 +6926,24 @@ def show_reports_page(user: dict):
                         sample_zone = all_pending_zones[0] if all_pending_zones else ""
                         if sample_zone:
                             rcp = _emails.get_zone_recipients(sample_zone)
-                            # Collect pending for sample zone per month
+                            # Full (unfiltered) rows for the sample zone across all
+                            # selected months -- the pivot table shows Submitted
+                            # alongside Pending per location, so it needs every
+                            # status, not just pending ones.
                             sz_months_rows = {
-                                my: [
-                                    r for r in rows
-                                    if r.get("zone") == sample_zone
-                                    and r.get("status") != "SUBMITTED"
-                                ]
+                                my: [r for r in rows if r.get("zone") == sample_zone]
                                 for my, rows in months_data.items()
-                                if any(
-                                    r.get("zone") == sample_zone
-                                    and r.get("status") != "SUBMITTED"
-                                    for r in rows
-                                )
                             }
+                            _sz_pending_count = sum(
+                                1 for locs in sz_months_rows.values()
+                                for r in locs if r.get("status") != "SUBMITTED"
+                            )
                             _all_loc_emails = list({
                                 _loc_map[str(r.get("userId", ""))]
                                 for locs in sz_months_rows.values()
                                 for r in locs
-                                if _loc_map.get(str(r.get("userId", "")))
+                                if r.get("status") != "SUBMITTED"
+                                and _loc_map.get(str(r.get("userId", "")))
                             })
                             _to_prev = "; ".join(
                                 filter(None, [rcp["to"]] + _all_loc_emails[:3])
@@ -6879,7 +6955,7 @@ def show_reports_page(user: dict):
                             )
                             st.caption(
                                 f"Sample: **{sample_zone}** — "
-                                f"{sum(len(v) for v in sz_months_rows.values())} pending "
+                                f"{_sz_pending_count} pending "
                                 f"across {len(sz_months_rows)} month(s)"
                             )
                             _components.html(
@@ -6907,6 +6983,15 @@ def show_reports_page(user: dict):
                                 f"Covers {total_pending_all} pending location-month(s) "
                                 f"across {len(selected_months)} month(s)"
                             )
+                            # cid: references only resolve inside a sent Outlook
+                            # email, not this HTML preview -- render the chart
+                            # separately here so it's visible before sending.
+                            _chart_png, _chart_w, _chart_h = _emails.build_zone_performance_chart(
+                                months_data, sorted(months_data.keys(), key=_emails.month_sort_key)
+                            )
+                            if _chart_png:
+                                st.image(_chart_png, width=_chart_w,
+                                        caption="Embedded as an image attachment in the actual email")
                             _components.html(
                                 _emails.build_multimonth_consolidated_html(
                                     months_data, due_dates
@@ -6917,7 +7002,7 @@ def show_reports_page(user: dict):
                             st.info("No pending locations to preview.")
 
                 # ── Test Mode ──────────────────────────────────────────────────
-                _my_label = ", ".join(sorted(selected_months))
+                _my_label = ", ".join(sorted(selected_months, key=_emails.month_sort_key))
                 test_mode_em = st.toggle(
                     f"Test Mode — send only to {_emails.SENDER_EMAIL} (no actual emails go out)",
                     key="rpt_test_mode_multi",
@@ -8922,6 +9007,33 @@ def main():
 
     # ── Maintenance mode: block non-Admin users ───────────────────────────────
     _maint_on = sheets.get_setting("maintenance_mode", "FALSE").upper() == "TRUE"
+
+    # ── Pending-maintenance warning banner (shown before mode actually flips) ──
+    if (not _maint_on) and role not in ("Admin",) and (user is not None) and page != "login":
+        _warn_raw = sheets.get_setting("maintenance_warning_at", "")
+        if _warn_raw:
+            try:
+                _warn_dt = datetime.fromisoformat(_warn_raw)
+            except Exception:
+                _warn_dt = None
+            if _warn_dt and _warn_dt > datetime.now():
+                _mins_left = max(1, int((_warn_dt - datetime.now()).total_seconds() // 60) + 1)
+                _target_clock = _warn_dt.strftime("%I:%M %p").lstrip("0")
+                st.markdown(f"""
+<div style="position:sticky;top:0;z-index:9999;
+     background:linear-gradient(90deg,#B75900,#8a4300);color:#fff;
+     padding:12px 20px;border-radius:8px;margin-bottom:14px;
+     font-size:14.5px;line-height:1.5;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+  <b>⚠️ Scheduled Maintenance — Action Required</b><br>
+  This portal will enter Maintenance Mode at <b>{_target_clock}</b>
+  (~<b>{_mins_left} min</b> from now).
+  Please save your work now to avoid any loss of data.<br>
+  You will be automatically logged out once maintenance begins.
+  We apologise for the inconvenience and appreciate your cooperation.
+  <div style="font-size:12px;opacity:0.85;margin-top:4px;">— SOD MIS Admin Team</div>
+</div>
+""", unsafe_allow_html=True)
+
     if _maint_on and role not in ("Admin",) and (user is not None) and page != "login":
         show_maintenance_page()
         return
