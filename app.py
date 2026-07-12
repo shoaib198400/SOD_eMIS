@@ -884,54 +884,6 @@ def _base_css():
         var obs = new MutationObserver(styleLogout);
         obs.observe(pd.body, { childList: true, subtree: true });
     })();
-
-    (function fixPasswordEyeIcon() {
-        // The password show/hide toggle's icon sometimes renders as the raw
-        // Material-icon ligature name ("visibility" / "visibility_off")
-        // instead of a glyph. Rather than guess the internal markup (which
-        // varies by Streamlit/BaseWeb version), find it by its actual text
-        // or aria-label and replace it with a plain emoji.
-        var pd = window.parent.document;
-        function fixIcons() {
-            pd.querySelectorAll('button').forEach(function(btn) {
-                var label = btn.getAttribute('aria-label') || '';
-                // Compute raw text excluding our own overlay span, so a
-                // previously-fixed button doesn't get misread by its own emoji.
-                var rawTxt = '';
-                btn.childNodes.forEach(function(n) {
-                    if (n.nodeType === 3) rawTxt += n.textContent;
-                    else if (n.nodeType === 1 && !n.classList.contains('__eye_fix__')) {
-                        rawTxt += (n.innerText || n.textContent || '');
-                    }
-                });
-                rawTxt = rawTxt.trim();
-                var isHide = label === 'Hide password text' || rawTxt === 'visibility_off';
-                var isShow = label === 'Show password text' || rawTxt === 'visibility';
-                if (!isHide && !isShow) return;
-                var icon = isHide ? '🙈' : '👁️';
-                Array.prototype.forEach.call(btn.children, function(el) {
-                    if (el.classList.contains('__eye_fix__')) return;
-                    el.style.setProperty('display', 'none', 'important');
-                });
-                btn.childNodes.forEach(function(n) {
-                    if (n.nodeType === 3) n.textContent = '';
-                });
-                var mark = btn.querySelector('.__eye_fix__');
-                if (!mark) {
-                    mark = pd.createElement('span');
-                    mark.className = '__eye_fix__';
-                    btn.appendChild(mark);
-                }
-                mark.style.setProperty('display', 'inline-block', 'important');
-                mark.style.setProperty('font-size', '16px', 'important');
-                mark.style.setProperty('line-height', '1', 'important');
-                mark.textContent = icon;
-            });
-        }
-        fixIcons();
-        var obs2 = new MutationObserver(fixIcons);
-        obs2.observe(pd.body, { childList: true, subtree: true, characterData: true });
-    })();
     </script>
     """, height=0)
 
