@@ -895,13 +895,22 @@ def _base_css():
         function fixIcons() {
             pd.querySelectorAll('button').forEach(function(btn) {
                 var label = btn.getAttribute('aria-label') || '';
-                var txt = (btn.innerText || btn.textContent || '').trim();
-                var isHide = label === 'Hide password text' || txt === 'visibility_off';
-                var isShow = label === 'Show password text' || txt === 'visibility';
+                // Compute raw text excluding our own overlay span, so a
+                // previously-fixed button doesn't get misread by its own emoji.
+                var rawTxt = '';
+                btn.childNodes.forEach(function(n) {
+                    if (n.nodeType === 3) rawTxt += n.textContent;
+                    else if (n.nodeType === 1 && !n.classList.contains('__eye_fix__')) {
+                        rawTxt += (n.innerText || n.textContent || '');
+                    }
+                });
+                rawTxt = rawTxt.trim();
+                var isHide = label === 'Hide password text' || rawTxt === 'visibility_off';
+                var isShow = label === 'Show password text' || rawTxt === 'visibility';
                 if (!isHide && !isShow) return;
                 var icon = isHide ? '🙈' : '👁️';
-                if (btn.getAttribute('data-eye-fixed') === icon) return;
                 Array.prototype.forEach.call(btn.children, function(el) {
+                    if (el.classList.contains('__eye_fix__')) return;
                     el.style.setProperty('display', 'none', 'important');
                 });
                 btn.childNodes.forEach(function(n) {
@@ -911,12 +920,12 @@ def _base_css():
                 if (!mark) {
                     mark = pd.createElement('span');
                     mark.className = '__eye_fix__';
-                    mark.style.fontSize = '16px';
-                    mark.style.lineHeight = '1';
                     btn.appendChild(mark);
                 }
+                mark.style.setProperty('display', 'inline-block', 'important');
+                mark.style.setProperty('font-size', '16px', 'important');
+                mark.style.setProperty('line-height', '1', 'important');
                 mark.textContent = icon;
-                btn.setAttribute('data-eye-fixed', icon);
             });
         }
         fixIcons();
