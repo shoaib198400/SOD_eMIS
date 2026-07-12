@@ -859,25 +859,32 @@ def _base_css():
     .auto-hint  { font-size:11px; color:#6b7a99; }
 
     /* ── Password show/hide toggle icon ──
-       The global font-family rule above (targets [data-testid]) overrides the
-       Material Symbols ligature font Streamlit needs to turn "visibility" /
-       "visibility_off" into an eye glyph, so the literal word renders instead.
-       Render our own icon via CSS content so it doesn't depend on that font. */
-    button[aria-label="Show password text"] [data-testid="stIconMaterial"],
-    button[aria-label="Hide password text"] [data-testid="stIconMaterial"] {
-        font-size: 0 !important;
-        line-height: 1 !important;
+       BaseWeb's built-in Input renders this icon internally (SVG or ligature
+       text depending on version) and our global font-family rule can break
+       ligature-based icon fonts. Rather than guess the internal markup, hide
+       whatever BaseWeb renders inside the toggle button and draw our own
+       glyph as an overlay -- robust regardless of the internal DOM. */
+    button[aria-label="Show password text"],
+    button[aria-label="Hide password text"] {
+        position: relative !important;
     }
-    button[aria-label="Show password text"] [data-testid="stIconMaterial"]::after {
-        content: "👁️";
-        font-family: initial !important;
+    button[aria-label="Show password text"] > *,
+    button[aria-label="Hide password text"] > * {
+        visibility: hidden !important;
+    }
+    button[aria-label="Show password text"]::before,
+    button[aria-label="Hide password text"]::before {
+        position: absolute !important;
+        inset: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
         font-size: 16px !important;
-    }
-    button[aria-label="Hide password text"] [data-testid="stIconMaterial"]::after {
-        content: "🙈";
         font-family: initial !important;
-        font-size: 16px !important;
+        visibility: visible !important;
     }
+    button[aria-label="Show password text"]::before { content: "👁️"; }
+    button[aria-label="Hide password text"]::before { content: "🙈"; }
 
     </style>
     """, unsafe_allow_html=True)
