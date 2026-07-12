@@ -858,6 +858,27 @@ def _base_css():
     .auto-val   { font-size:22px; font-weight:800; color:#001F5E; margin:2px 0; }
     .auto-hint  { font-size:11px; color:#6b7a99; }
 
+    /* ── Password show/hide toggle icon ──
+       The global font-family rule above (targets [data-testid]) overrides the
+       Material Symbols ligature font Streamlit needs to turn "visibility" /
+       "visibility_off" into an eye glyph, so the literal word renders instead.
+       Render our own icon via CSS content so it doesn't depend on that font. */
+    button[aria-label="Show password text"] [data-testid="stIconMaterial"],
+    button[aria-label="Hide password text"] [data-testid="stIconMaterial"] {
+        font-size: 0 !important;
+        line-height: 1 !important;
+    }
+    button[aria-label="Show password text"] [data-testid="stIconMaterial"]::after {
+        content: "👁️";
+        font-family: initial !important;
+        font-size: 16px !important;
+    }
+    button[aria-label="Hide password text"] [data-testid="stIconMaterial"]::after {
+        content: "🙈";
+        font-family: initial !important;
+        font-size: 16px !important;
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
