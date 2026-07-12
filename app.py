@@ -858,34 +858,6 @@ def _base_css():
     .auto-val   { font-size:22px; font-weight:800; color:#001F5E; margin:2px 0; }
     .auto-hint  { font-size:11px; color:#6b7a99; }
 
-    /* ── Password show/hide toggle icon ──
-       BaseWeb's built-in Input renders this icon internally (SVG or ligature
-       text depending on version) and our global font-family rule can break
-       ligature-based icon fonts. Rather than guess the internal markup, hide
-       whatever BaseWeb renders inside the toggle button and draw our own
-       glyph as an overlay -- robust regardless of the internal DOM. */
-    button[aria-label="Show password text"],
-    button[aria-label="Hide password text"] {
-        position: relative !important;
-    }
-    button[aria-label="Show password text"] > *,
-    button[aria-label="Hide password text"] > * {
-        visibility: hidden !important;
-    }
-    button[aria-label="Show password text"]::before,
-    button[aria-label="Hide password text"]::before {
-        position: absolute !important;
-        inset: 0 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        font-size: 16px !important;
-        font-family: initial !important;
-        visibility: visible !important;
-    }
-    button[aria-label="Show password text"]::before { content: "👁️"; }
-    button[aria-label="Hide password text"]::before { content: "🙈"; }
-
     </style>
     """, unsafe_allow_html=True)
 
@@ -911,6 +883,45 @@ def _base_css():
         styleLogout();
         var obs = new MutationObserver(styleLogout);
         obs.observe(pd.body, { childList: true, subtree: true });
+    })();
+
+    (function fixPasswordEyeIcon() {
+        // The password show/hide toggle's icon sometimes renders as the raw
+        // Material-icon ligature name ("visibility" / "visibility_off")
+        // instead of a glyph. Rather than guess the internal markup (which
+        // varies by Streamlit/BaseWeb version), find it by its actual text
+        // or aria-label and replace it with a plain emoji.
+        var pd = window.parent.document;
+        function fixIcons() {
+            pd.querySelectorAll('button').forEach(function(btn) {
+                var label = btn.getAttribute('aria-label') || '';
+                var txt = (btn.innerText || btn.textContent || '').trim();
+                var isHide = label === 'Hide password text' || txt === 'visibility_off';
+                var isShow = label === 'Show password text' || txt === 'visibility';
+                if (!isHide && !isShow) return;
+                var icon = isHide ? '🙈' : '👁️';
+                if (btn.getAttribute('data-eye-fixed') === icon) return;
+                Array.prototype.forEach.call(btn.children, function(el) {
+                    el.style.setProperty('display', 'none', 'important');
+                });
+                btn.childNodes.forEach(function(n) {
+                    if (n.nodeType === 3) n.textContent = '';
+                });
+                var mark = btn.querySelector('.__eye_fix__');
+                if (!mark) {
+                    mark = pd.createElement('span');
+                    mark.className = '__eye_fix__';
+                    mark.style.fontSize = '16px';
+                    mark.style.lineHeight = '1';
+                    btn.appendChild(mark);
+                }
+                mark.textContent = icon;
+                btn.setAttribute('data-eye-fixed', icon);
+            });
+        }
+        fixIcons();
+        var obs2 = new MutationObserver(fixIcons);
+        obs2.observe(pd.body, { childList: true, subtree: true, characterData: true });
     })();
     </script>
     """, height=0)
