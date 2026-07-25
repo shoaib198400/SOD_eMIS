@@ -3522,30 +3522,52 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
     ws0.column_dimensions["C"].width = 40
 
     # ── Full MIS Data sheet (flat S1-S10 fields, all months/locations) ──────
+    # Postgres note: same header-reconstruction approach as
+    # download_submitted_data_excel -- built from _field_label_map() plus
+    # whichever field keys appear across the included approved snapshots.
     ws_full = wb.create_sheet("Full MIS Data")
+    wanted  = {(loc["userId"], my) for my, locs in all_month_entries for loc in locs}
     try:
-        sub_ws   = _ws(TABS["MIS_SUBMITTED"])
-        sub_vals = _api_call(sub_ws.get_all_values)
+        wanted_dates = {(uid, _mk_to_date(my)) for uid, my in wanted}
+        all_rows = _pg_query("""
+            select ms.location_code, l.name as loc_name, z.name as zone_name,
+                   ms.month_year, ms.submitted_at, aps.approved_at,
+                   u.login_code as approved_by_code, aps.snapshot
+            from approved_snapshots aps
+            join monthly_submissions ms on ms.id = aps.submission_id
+            left join locations l on l.code = ms.location_code
+            left join zones z on z.id = l.zone_id
+            left join users u on u.id = aps.approved_by
+        """)
+        full_rows = [r for r in all_rows if (r["location_code"], r["month_year"]) in wanted_dates]
     except Exception:
-        sub_vals = []
+        full_rows = []
 
-    if len(sub_vals) >= 2:
-        headers = sub_vals[0]
-        uid_idx = next((i for i, h in enumerate(headers) if h.strip().lower() in ("user id", "user_id")), 0)
-        mon_idx = next((i for i, h in enumerate(headers) if "month" in h.lower()), 3)
-        wanted  = {(loc["userId"], my) for my, locs in all_month_entries for loc in locs}
+    if full_rows:
+        label_map  = _field_label_map()
+        field_keys = sorted(
+            {k for r in full_rows for k in (r["snapshot"] or {}).keys()},
+            key=lambda k: int(k[1:]) if k[1:].isdigit() else 0,
+        )
+        headers = (["User ID", "Location Name", "Zone", "Month-Year",
+                    "Submitted At", "Approved At", "Approved By"]
+                   + [label_map.get(k, k) for k in field_keys])
         _hdr_row(ws_full, headers)
         ri = 2
-        for row in sub_vals[1:]:
-            row_e = (row + [""] * len(headers))[:len(headers)]
-            if (row_e[uid_idx].strip(), row_e[mon_idx].strip()) in wanted:
-                _data_row(ws_full, ri, row_e, ri % 2 == 0)
-                ri += 1
-        if ri == 2:
-            ws_full.cell(row=2, column=1,
-                         value="No submitted data found for this range.").font = HT_FONT
+        for r in full_rows:
+            snap = r["snapshot"] or {}
+            row_e = [
+                r["location_code"], r["loc_name"] or "", r["zone_name"] or "",
+                month_key(r["month_year"]),
+                r["submitted_at"].isoformat() if r["submitted_at"] else "",
+                r["approved_at"].isoformat() if r["approved_at"] else "",
+                r["approved_by_code"] or "",
+            ] + [snap.get(k, "") for k in field_keys]
+            _data_row(ws_full, ri, row_e, ri % 2 == 0)
+            ri += 1
     else:
-        ws_full.cell(row=1, column=1, value="MIS_Submitted sheet not found or empty.").font = HT_FONT
+        ws_full.cell(row=1, column=1,
+                     value="No submitted data found for this range.").font = HT_FONT
     ws_full.freeze_panes = ws_full["A2"]
     ws_full.protection.sheet   = True
     ws_full.protection.password = "HPCL@MIS"
@@ -3637,30 +3659,49 @@ def scan_missing_mi_data(month_year_rows: list) -> list:
 
 
 def _load_mi_tab_index(tab_key: str) -> dict:
-    """Fetch one M&I tab ONCE (all rows, all users, all months) and index it by
+    """Fetch one M&I tab's data for every submission at once, indexed by
     (user_id, month_year) -> [row_dict, ...].
 
-    load_mi_data() does one full-tab API fetch per call, which is fine for a
-    single location+month but doesn't scale across many locations and months —
-    this is the bulk equivalent used by multi-month consolidated reports so each
-    of the 10 M&I tabs is only ever fetched once, regardless of scope.
+    load_mi_data() reads one location+month at a time, which doesn't scale
+    across many locations and months — this is the bulk equivalent used by
+    multi-month consolidated reports so each of the 10 M&I tabs is only
+    ever fetched once (one query), regardless of scope. Same multi-row vs
+    singleton split as load_mi_data/save_mi_data.
     """
-    headers  = _MI_TAB_HEADERS[tab_key]
-    ws       = _ensure_ws(TABS[tab_key], headers)
-    all_rows = _api_call(ws.get_all_values)
     idx: dict = {}
-    if len(all_rows) < 2:
-        return idx
-    hdr = all_rows[0]
     try:
-        uid_idx = hdr.index("user_id")
-        mon_idx = hdr.index("month_year")
-    except ValueError:
-        return idx
-    for row in all_rows[1:]:
-        row = (row + [""] * len(hdr))[:len(hdr)]
-        key = (row[uid_idx].strip(), row[mon_idx].strip())
-        idx.setdefault(key, []).append({hdr[i]: row[i] for i in range(len(hdr))})
+        headers = _MI_TAB_HEADERS[tab_key]
+        if tab_key in _MI_MULTIROW_TABS:
+            rows = _pg_query("""
+                select ms.location_code, ms.month_year, mr.row_data, mss.is_not_applicable
+                from mi_rows mr
+                join monthly_submissions ms on ms.id = mr.submission_id
+                left join mi_submodule_status mss
+                    on mss.submission_id = mr.submission_id and mss.tab_key = mr.tab_key
+                where mr.tab_key = %s
+                order by mr.submission_id, mr.sort_order
+            """, (tab_key,))
+            for r in rows:
+                key = (r["location_code"], month_key(r["month_year"]))
+                d = {h: r["row_data"].get(h, "") for h in headers}
+                d["na_flag"] = "Y" if r["is_not_applicable"] else "N"
+                idx.setdefault(key, []).append(d)
+        else:
+            rows = _pg_query("""
+                select ms.location_code, ms.month_year, msi.data, mss.is_not_applicable
+                from mi_singletons msi
+                join monthly_submissions ms on ms.id = msi.submission_id
+                left join mi_submodule_status mss
+                    on mss.submission_id = msi.submission_id and mss.tab_key = msi.tab_key
+                where msi.tab_key = %s
+            """, (tab_key,))
+            for r in rows:
+                key = (r["location_code"], month_key(r["month_year"]))
+                d = {h: r["data"].get(h, "") for h in headers}
+                d["na_flag"] = "Y" if r["is_not_applicable"] else "N"
+                idx.setdefault(key, []).append(d)
+    except Exception:
+        pass
     return idx
 
 
@@ -4693,7 +4734,7 @@ def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
             "where submission_id = %s and tab_key = %s",
             (sub["id"], tab_key),
         )
-        na_flag = "TRUE" if na and na["is_not_applicable"] else "FALSE"
+        na_flag = "Y" if na and na["is_not_applicable"] else "N"
 
         if tab_key in _MI_MULTIROW_TABS:
             rows = _pg_query(
@@ -4736,7 +4777,7 @@ def save_mi_data(tab_key: str, user_id: str, month_year: str, rows: list) -> dic
         )
         submission_id = sub["id"]
 
-        na_flag = bool(rows) and str(rows[0].get("na_flag", "")).strip().upper() == "TRUE"
+        na_flag = bool(rows) and str(rows[0].get("na_flag", "")).strip().upper() == "Y"
         _pg_query(
             """
             insert into mi_submodule_status (submission_id, tab_key, is_not_applicable, updated_at)
