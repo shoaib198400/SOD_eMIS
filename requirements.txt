@@ -9,3 +9,5 @@ openpyxl==3.1.5
 pandas==2.3.3
 numpy==2.4.3
 pyarrow==23.0.1
+psycopg2-binary==2.9.10
+bcrypt==4.2.1

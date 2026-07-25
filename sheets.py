@@ -21,11 +21,54 @@ except Exception:
 
 import json
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
+
+import bcrypt
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
+
+
+# ── Postgres (staging branch: functions are being ported off Google Sheets
+#    one domain at a time -- see the migration map artifact. Anything not
+#    yet listed there still runs against Sheets via the code below.) ────────
+
+@st.cache_resource
+def _pg_pool():
+    return psycopg2.pool.SimpleConnectionPool(
+        1, 20, st.secrets["postgres"]["database_url"], sslmode="require"
+    )
+
+
+def _pg_query(sql: str, params: tuple = (), fetch: bool = True):
+    """Run a query against Postgres. fetch=True returns list[dict]; fetch=False
+    returns the affected row count. Always commits on success, rolls back on error."""
+    pool = _pg_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            if fetch:
+                rows = cur.fetchall()
+                conn.commit()
+                return [dict(r) for r in rows]
+            conn.commit()
+            return cur.rowcount
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
+
+
+def _pg_one(sql: str, params: tuple = ()):
+    """Run a query and return the first row as a dict, or None."""
+    rows = _pg_query(sql, params, fetch=True)
+    return rows[0] if rows else None
 
 
 def _api_call(fn, *args, retries: int = 6, **kwargs):
@@ -400,36 +443,21 @@ def get_hourly_login_traffic(target_date: date) -> dict:
 
 @st.cache_data(ttl=3600)
 def _loc_name_map() -> dict:
-    """Return {location_code_upper: (location_name, loc_type, zone)} from LocationMaster.
-    Col A = code, B = name, C = loc_type (HPCL|TOP|HMEL), D = zone (optional).
-    loc_type is derived from name/code pattern if col C is blank."""
+    """Return {location_code_upper: (location_name, loc_type, zone)} from Postgres
+    locations/zones. Same shape/contract as the original Sheets-backed version --
+    loc_type comes straight from the locations.loc_type check constraint now
+    instead of being pattern-guessed from the name."""
     try:
-        ws   = _ws(TABS["LOCATION_MASTER"])
-        rows = _api_call(ws.get_all_values)
-        m    = {}
-        for row in rows[1:]:
-            if len(row) < 2:
-                continue
-            code = str(row[0]).strip()
-            name = str(row[1]).strip()
-            if not code:
-                continue
-            # Column C (index 2) = loc_type if present
-            raw_type = str(row[2]).strip().upper() if len(row) > 2 else ""
-            if raw_type in ("TOP", "HMEL", "HPCL"):
-                ltype = raw_type
-            else:
-                nu = name.upper(); cu = code.upper()
-                if "HMEL" in nu or "HMEL" in cu:
-                    ltype = "HMEL"
-                elif "TOP" in nu or "JAMNAGAR" in nu or "TOP" in cu:
-                    ltype = "TOP"
-                else:
-                    ltype = "HPCL"
-            # Column D (index 3) = zone if present
-            zone = str(row[3]).strip() if len(row) > 3 else ""
-            m[code.upper()] = (name, ltype, zone)
-        return m
+        rows = _pg_query("""
+            select l.code, l.name, l.loc_type, z.name as zone_name
+            from locations l
+            left join zones z on z.id = l.zone_id
+            where l.active
+        """)
+        return {
+            r["code"].upper(): (r["name"], r["loc_type"], r["zone_name"] or "")
+            for r in rows
+        }
     except Exception:
         return {}
 
@@ -519,6 +547,11 @@ def _resolve_loc_name(loc_code: str, stored_name: str) -> str:
 # ── Authentication ────────────────────────────────────────────────────────────
 
 def check_login(location_code: str, password: str) -> dict:
+    """Postgres version. Same return shape as the original except the two
+    fields (_sheet_row, _password) confirmed unused anywhere in app.py are
+    dropped. Passwords are bcrypt-hashed in `users.password_hash` (migrated
+    from the sheet's plaintext by import_user_access.mjs) -- verified with
+    bcrypt.checkpw instead of a plain string comparison."""
     try:
         location_code = str(location_code or "").strip()
         password      = str(password      or "").strip()
@@ -526,55 +559,48 @@ def check_login(location_code: str, password: str) -> dict:
         if not location_code or not password:
             return {"ok": False, "msg": "Location Code and Password are required."}
 
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
+        row = _pg_one("""
+            select u.id, u.login_code, u.password_hash, u.role, u.is_first_login,
+                   u.location_code, u.active,
+                   l.name as loc_name, l.loc_type,
+                   z.name as zone_name
+            from users u
+            left join locations l on l.code = u.location_code
+            left join zones z on z.id = u.zone_id
+            where upper(u.login_code) = upper(%s)
+        """, (location_code,))
 
-        if len(rows) < 2:
-            return {"ok": False, "msg": "No users configured. Please contact Admin."}
+        if not row or not row["active"]:
+            return {"ok": False, "msg": "Location Code not found. Please check and try again."}
 
-        location_exists = False
-        location_code_upper = location_code.upper()
-
-        for sheet_row, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 8)[:8]
-            loc_code_cell, loc_name, zone, stored_pass, role, is_first_raw = row[:6]
-
-            if loc_code_cell.strip().upper() != location_code_upper:
-                continue
-
-            location_exists = True
-
-            if stored_pass.strip() != password:
-                continue
-
-            # Correct location + correct password → update LastLogin
-            try:
-                ws.update_cell(sheet_row, 7, datetime.now().isoformat())
-            except Exception:
-                pass
-
-            audit_log(location_code, "Login", f"Successful login as {role.strip() or 'Maker'}")
-
-            _lname, _ltype = _resolve_loc_info(loc_code_cell, loc_name)
-            _is_default_pw = stored_pass.strip() == loc_code_cell.strip()
-            return {
-                "ok":          True,
-                "userId":      loc_code_cell.strip(),
-                "locName":     _lname,
-                "locType":     _ltype,   # HPCL | TOP | HMEL
-                "zone":        zone.strip(),
-                "role":        role.strip() or "Maker",
-                "isFirstLogin": is_first_raw.strip().upper() == "TRUE" or _is_default_pw,
-                "_sheet_row":  sheet_row,
-                "_password":   password,
-            }
-
-        if location_exists:
+        if not bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
             return {"ok": False, "msg": "Incorrect password. Please try again."}
-        return {"ok": False, "msg": "Location Code not found. Please check and try again."}
+
+        _pg_query("update users set last_login_at = now() where id = %s",
+                   (row["id"],), fetch=False)
+
+        role = row["role"] or "Maker"
+        audit_log(row["login_code"], "Login", f"Successful login as {role}")
+
+        if role in ("Maker", "Checker"):
+            loc_name, loc_type = row["loc_name"] or row["login_code"], row["loc_type"] or "HPCL"
+        elif role == "Zone":
+            loc_name, loc_type = row["zone_name"] or row["login_code"], "HPCL"
+        else:
+            loc_name, loc_type = row["login_code"], "HPCL"
+
+        return {
+            "ok":           True,
+            "userId":       row["login_code"],
+            "locName":      loc_name,
+            "locType":      loc_type,   # HPCL | TOP | HMEL
+            "zone":         row["zone_name"] or "",
+            "role":         role,
+            "isFirstLogin": bool(row["is_first_login"]),
+        }
 
     except Exception as e:
-        # Don't leak internal details (spreadsheet IDs, stack text) to the
+        # Don't leak internal details (connection strings, stack text) to the
         # login screen -- log server-side for diagnosis, show a plain message.
         print(f"[check_login] {type(e).__name__}: {e}")
         return {"ok": False,
@@ -597,29 +623,25 @@ def change_password(user_id: str, current_pass: str,
         if new_pass == current_pass:
             return {"ok": False, "msg": "New password must be different from the current password."}
 
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
-
-        if len(rows) < 2:
+        row = _pg_one(
+            "select id, password_hash, role, location_code from users where login_code = %s",
+            (user_id,),
+        )
+        if not row:
             return {"ok": False, "msg": "User record not found."}
+        if not bcrypt.checkpw(current_pass.encode(), row["password_hash"].encode()):
+            return {"ok": False, "msg": "Current password is incorrect."}
 
-        for sheet_row, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 8)[:8]
-            if row[0].strip() != user_id:
-                continue
-            if row[3].strip() != current_pass:
-                return {"ok": False, "msg": "Current password is incorrect."}
-
-            ws.update_cell(sheet_row, 4, new_pass)
-            ws.update_cell(sheet_row, 6, "FALSE")
-            ws.update_cell(sheet_row, 8, datetime.now().isoformat())
-
-            audit_log(user_id, "Password Changed",
-                      f"Password changed successfully. IsFirstLogin reset to FALSE. "
-                      f"Role: {row[4].strip() or 'Maker'}. Location: {row[1].strip()}")
-            return {"ok": True}
-
-        return {"ok": False, "msg": "User record not found."}
+        new_hash = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
+        _pg_query(
+            """update users set password_hash = %s, is_first_login = false,
+               last_password_change_at = now() where id = %s""",
+            (new_hash, row["id"]), fetch=False,
+        )
+        audit_log(user_id, "Password Changed",
+                  f"Password changed successfully. IsFirstLogin reset to FALSE. "
+                  f"Role: {row['role'] or 'Maker'}. Location: {row['location_code'] or ''}")
+        return {"ok": True}
 
     except Exception as e:
         return {"ok": False, "msg": f"System error: {e}"}
@@ -1871,55 +1893,61 @@ def hqo_account_exists() -> bool:
 
 # ── App Settings (admin-controlled feature flags) ────────────────────────────
 
-@st.cache_data(ttl=60)
 def register_session(user_id: str, token: str) -> dict:
-    """Write session token for user to Settings (key=sess_<uid>)."""
-    import time as _t
-    return set_setting(f"sess_{user_id}", f"{token}|{int(_t.time())}", user_id)
+    """Write session token for user. Uses the dedicated session columns on
+    `users` (current_session_jti/current_session_started_at) instead of the
+    original's Settings-sheet key/value hack -- the schema already has a
+    proper place for this."""
+    _pg_query(
+        "update users set current_session_jti = %s, current_session_started_at = now() "
+        "where login_code = %s",
+        (token, user_id), fetch=False,
+    )
+    return {"ok": True}
 
 
 def check_session_valid(user_id: str, token: str) -> bool:
     """Return True if stored session token matches the one in this session."""
-    stored = get_setting(f"sess_{user_id}", "")
-    if not stored or "|" not in stored:
-        return False
-    stored_token = stored.rsplit("|", 1)[0]
-    return stored_token == token
+    row = _pg_one(
+        "select current_session_jti from users where login_code = %s", (user_id,)
+    )
+    return bool(row) and row["current_session_jti"] == token
 
 
 def clear_session(user_id: str) -> None:
     """Remove the active session token for a user (on logout/timeout)."""
-    set_setting(f"sess_{user_id}", "", user_id)
+    _pg_query(
+        "update users set current_session_jti = null, current_session_started_at = null "
+        "where login_code = %s",
+        (user_id,), fetch=False,
+    )
 
 
 def get_active_sessions(threshold_min: float = 30) -> list:
     """Return [(user_id, minutes_ago), ...] for session tokens younger than threshold_min.
 
-    Approximates "who's currently logged in" from the session tokens written
-    at login (Settings key sess_<user_id>). A token older than the app's own
-    30-minute inactivity timeout is stale — that user has already timed out
-    client-side even though the token record hasn't been cleared yet.
+    Approximates "who's currently logged in" from the session start timestamp
+    written at login. A token older than the app's own 30-minute inactivity
+    timeout is stale — that user has already timed out client-side even
+    though the token record hasn't been cleared yet.
     """
-    import time as _t
-    now = _t.time()
+    rows = _pg_query(
+        """
+        select login_code, current_session_started_at
+        from users
+        where current_session_jti is not null
+          and current_session_started_at > now() - (%s || ' minutes')::interval
+        """,
+        (str(threshold_min),),
+    )
+    now = datetime.now(timezone.utc)
     result = []
-    try:
-        rows = _settings_rows()
-        for row in rows[1:]:
-            row = (row + [""] * 4)[:4]
-            key, val = row[0].strip(), row[1].strip()
-            if not key.startswith("sess_") or not val or "|" not in val:
-                continue
-            uid = key[len("sess_"):]
-            try:
-                _, ts = val.rsplit("|", 1)
-                age_min = (now - float(ts)) / 60
-            except Exception:
-                continue
-            if age_min < threshold_min:
-                result.append((uid, age_min))
-    except Exception:
-        pass
+    for r in rows:
+        started = r["current_session_started_at"]
+        if started is None:
+            continue
+        age_min = (now - started).total_seconds() / 60
+        result.append((r["login_code"], age_min))
     return result
 
 
