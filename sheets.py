@@ -4265,33 +4265,27 @@ def _tm_all_rows() -> list:
     return rows or []
 
 
-@st.cache_data(ttl=7200)
 def get_tank_master() -> dict:
-    """Return {location_code: [sap_tank_no, ...]} — uses shared _tm_all_rows() cache."""
-    # Try Google Sheet via shared row cache
+    """Return {location_code: [tank_no, ...]} for the M&I tank-number dropdowns.
+
+    FLAGGED: the current tank_master table (location_code, tank_no only)
+    covers exactly this lookup and nothing more. sync_tank_master_to_sheet()
+    and get_full_tank_master_excel() below are intentionally left unported
+    -- they need the FULL 31-column maintenance dataset the Sheets
+    TankMaster tab carries (cleaning/inspection/painting dates, capacity,
+    product, age, etc.). Tank inspection/cleaning scheduling is
+    safety-relevant data for a petroleum company; extending the schema for
+    it deserves its own careful design pass, not 28 columns bolted on
+    mid-migration. Both functions still run against Sheets for now via
+    the unchanged _tm_all_rows() below.
+    """
     try:
-        rows = _tm_all_rows()
-        if len(rows) >= 2:
-            hdr = rows[0]
-            try:
-                loc_idx  = hdr.index("Location Code")
-                tank_idx = hdr.index("SAP Tank No.")
-            except ValueError:
-                loc_idx, tank_idx = 2, 12
-            result: dict = {}
-            for row in rows[1:]:
-                row = (row + [""] * max(loc_idx, tank_idx))
-                loc_code = str(row[loc_idx]).strip()
-                tank_no  = str(row[tank_idx]).strip()
-                if not loc_code or loc_code.lower() in ("none", ""):
-                    continue
-                if not tank_no or tank_no.lower() in ("none", ""):
-                    continue
-                result.setdefault(loc_code, [])
-                if tank_no not in result[loc_code]:
-                    result[loc_code].append(tank_no)
-            if result:
-                return result
+        rows = _pg_query("select location_code, tank_no from tank_master order by tank_no")
+        result: dict = {}
+        for r in rows:
+            result.setdefault(r["location_code"], []).append(r["tank_no"])
+        if result:
+            return result
     except Exception:
         pass
 
