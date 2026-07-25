@@ -71,6 +71,13 @@ def _pg_one(sql: str, params: tuple = ()):
     return rows[0] if rows else None
 
 
+def _mk_to_date(month_year: str) -> date:
+    """'Apr-2026' -> date(2026, 4, 1), for querying Postgres's date column.
+    month_key(d) does the reverse conversion and already exists below."""
+    month_0, year = parse_month_key(month_year)
+    return date(year, month_0 + 1, 1)
+
+
 def _api_call(fn, *args, retries: int = 6, **kwargs):
     """Execute a Sheets API call with exponential backoff on 429 quota errors
     and on transient connection failures (DNS blips, dropped connections --
@@ -763,66 +770,47 @@ def log_help_request(location_code: str, issue_desc: str,
 # ── Submission status ─────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=120)
-def _mis_submitted_keys() -> set:
-    """Return set of (user_id, month_year) that physically exist in MIS_Submitted (120 s cache)."""
-    try:
-        ws   = _ws(TABS["MIS_SUBMITTED"])
-        rows = _api_call(ws.get_all_values)
-        if len(rows) < 2:
-            return set()
-        hdr   = rows[0]
-        uid_c = next((hdr.index(h) for h in ("User ID", "user_id") if h in hdr), 0)
-        mon_c = next((hdr.index(h) for h in ("Month-Year", "month_year") if h in hdr), 3)
-        return {(r[uid_c].strip(), r[mon_c].strip()) for r in rows[1:] if len(r) > mon_c}
-    except Exception:
-        return set()
-
-
 def _revert_if_deleted(user_id: str, month_year: str, status: str,
                        completion_pct: float) -> str:
-    """If MIS_Submitted row was deleted externally, revert SubmissionStatus → IN_PROGRESS."""
+    """If the approved_snapshots row was deleted externally, revert status
+    → IN_PROGRESS. Postgres equivalent of the Sheets version's "did the
+    MIS_Submitted row disappear" check -- approved_snapshots is the table
+    that gets a row on approval, same role MIS_Submitted played."""
     if status not in ("SUBMITTED", "LOCKED"):
         return status
-    if (user_id, month_year) not in _mis_submitted_keys():
+    sub = _pg_one(
+        "select id from monthly_submissions where location_code = %s and month_year = %s",
+        (user_id, _mk_to_date(month_year)),
+    )
+    exists = bool(sub) and bool(_pg_one(
+        "select 1 from approved_snapshots where submission_id = %s", (sub["id"],)
+    ))
+    if not exists:
         _update_submission_status(user_id, month_year, "IN_PROGRESS", completion_pct)
-        _mis_submitted_keys.clear()   # invalidate cache so next read sees new state
         return "IN_PROGRESS"
     return status
 
 
-@st.cache_data(ttl=15, show_spinner=False)
-def _submission_status_raw_rows() -> list:
-    """Shared cache of the full SUBMISSION_STATUS sheet (15 s TTL).
-
-    Every save/status/dashboard read used to do its own full-sheet fetch of
-    this tab — with 100+ locations all saving/navigating independently, that
-    multiplied into far more API reads than needed and tripped Sheets' per-
-    minute read quota. Sharing one short-lived cached copy across all readers
-    cuts that back down; every writer clears this immediately so no one sees
-    stale data from their own action.
-    """
-    ws = _ws(TABS["SUBMISSION_STATUS"])
-    return _api_call(ws.get_all_values)
-
-
-@st.cache_data(ttl=60)
 def get_month_status(user_id: str, month_year: str) -> dict:
+    """No caching here (unlike the Sheets version's 60s @st.cache_data) --
+    this is exactly the class of read where a stale cache previously caused
+    real confusion (status appearing to "revert"). Postgres reads are cheap
+    enough that correctness wins over shaving a query."""
     try:
-        rows = _submission_status_raw_rows()
-        if len(rows) >= 2:
-            for row in rows[1:]:
-                row = (row + [""] * 9)[:9]
-                if row[0].strip() == user_id and row[1].strip() == month_year:
-                    pct    = float(row[3]) if row[3] else 0.0
-                    status = _revert_if_deleted(
-                        user_id, month_year, row[2].strip() or "NOT_STARTED", pct
-                    )
-                    return {
-                        "status":         status,
-                        "completion_pct": pct,
-                        "is_locked":      status in ("SUBMITTED", "LOCKED", "PENDING_REVIEW"),
-                        "checker_notes":  row[7].strip() if len(row) > 7 else "",
-                    }
+        row = _pg_one(
+            "select status, completion_pct, checker_notes from monthly_submissions "
+            "where location_code = %s and month_year = %s",
+            (user_id, _mk_to_date(month_year)),
+        )
+        if row:
+            pct    = float(row["completion_pct"] or 0)
+            status = _revert_if_deleted(user_id, month_year, row["status"] or "NOT_STARTED", pct)
+            return {
+                "status":         status,
+                "completion_pct": pct,
+                "is_locked":      status in ("SUBMITTED", "LOCKED", "PENDING_REVIEW"),
+                "checker_notes":  row["checker_notes"] or "",
+            }
     except Exception:
         pass
     return {"status": "NOT_STARTED", "completion_pct": 0.0, "is_locked": False}
@@ -836,13 +824,15 @@ def get_fy_months(user_id: str, fy_start_year: int) -> dict:
         status_map: dict = {}
         pct_map:    dict = {}
         try:
-            rows = _submission_status_raw_rows()
-            if len(rows) >= 2:
-                for row in rows[1:]:
-                    row = (row + [""] * 4)[:4]
-                    if row[0].strip() == user_id:
-                        status_map[row[1].strip()] = row[2].strip()
-                        pct_map[row[1].strip()]    = float(row[3]) if row[3] else 0.0
+            rows = _pg_query(
+                "select month_year, status, completion_pct from monthly_submissions "
+                "where location_code = %s",
+                (user_id,),
+            )
+            for r in rows:
+                k = month_key(r["month_year"])
+                status_map[k] = r["status"]
+                pct_map[k]    = float(r["completion_pct"] or 0)
         except Exception:
             pass
 
@@ -875,15 +865,14 @@ def get_available_months(user_id: str) -> dict:
         user_id = str(user_id or "").strip()
         today   = date.today()
 
-        # Fetch submission status — if tab missing just use empty map
+        # Fetch submission status — empty map on any error
         status_map: dict = {}
         try:
-            rows = _submission_status_raw_rows()
-            if len(rows) >= 2:
-                for row in rows[1:]:
-                    row = (row + [""] * 3)[:3]
-                    if row[0].strip() == user_id:
-                        status_map[row[1].strip()] = row[2].strip()
+            rows = _pg_query(
+                "select month_year, status from monthly_submissions where location_code = %s",
+                (user_id,),
+            )
+            status_map = {month_key(r["month_year"]): r["status"] for r in rows}
         except Exception:
             pass
 
@@ -992,67 +981,48 @@ def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HP
 
 
 # ── Draft CRUD ────────────────────────────────────────────────────────────────
-# MIS_Draft columns: user_id | month_year | sections_complete | last_updated | data_json
+# Postgres: field_values(submission_id, field_key, value), one row per field.
+# sections_complete is stored as field_key='_sections_complete' in the same
+# table -- the original already treated it as "just another key" in the
+# in-memory dict (see load_draft below); this keeps that, without a schema
+# change for one extra text column.
 
-@st.cache_data(ttl=15, show_spinner=False)
-def _mis_draft_raw_rows() -> list:
-    """Shared cache of the full MIS_DRAFT sheet (15 s TTL) — see
-    _submission_status_raw_rows for why this exists. Every writer clears
-    this immediately so no one sees stale data from their own save."""
-    ws = _ws(TABS["MIS_DRAFT"])
-    return _api_call(ws.get_all_values)
-
-
-@st.cache_data(ttl=30, show_spinner=False)
 def load_draft(user_id: str, month_year: str) -> dict:
-    """Return draft data dict for user+month, or empty dict (30 s cache)."""
+    """Return draft data dict for user+month, or empty dict."""
     try:
-        rows = _mis_draft_raw_rows()
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 5)[:5]
-            if row[0].strip() == user_id and row[1].strip() == month_year:
-                try:
-                    data = json.loads(row[4]) if row[4].strip() else {}
-                except Exception:
-                    data = {}
-                data["_sections_complete"] = row[2].strip()
-                data["_sheet_row"]         = i
-                return data
-    except Exception:
-        pass
-    return {}
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def load_submitted_fields(user_id: str, month_year: str) -> dict:
-    """Read field key→value dict from MIS_Submitted for a SUBMITTED location.
-
-    Fallback for generate_filled_mis_report when MIS_Draft is unavailable or empty.
-    MIS_Submitted stores every field value as a labelled column; we reverse-map
-    labels back to field keys (f1, f2 …) so the report generator can use them.
-    """
-    try:
-        ws   = _ws(TABS["MIS_SUBMITTED"])
-        rows = _api_call(ws.get_all_values)
-        if len(rows) < 2:
+        sub = _pg_one(
+            "select id from monthly_submissions where location_code = %s and month_year = %s",
+            (user_id, _mk_to_date(month_year)),
+        )
+        if not sub:
             return {}
-        headers = rows[0]
-        DATA_START = 7  # skip: User ID, Location Name, Zone, Month-Year, Submitted At, Approved At, Approved By
-        rev_map = {v: k for k, v in _field_label_map().items()}
-        uid_c = next((headers.index(h) for h in ("User ID", "user_id") if h in headers), 0)
-        mon_c = next((headers.index(h) for h in ("Month-Year", "month_year") if h in headers), 3)
-        for row in rows[1:]:
-            row_e = (row + [""] * len(headers))[:len(headers)]
-            if row_e[uid_c].strip() == user_id and row_e[mon_c].strip() == month_year:
-                result = {}
-                for ci, h in enumerate(headers[DATA_START:], start=DATA_START):
-                    fkey = rev_map.get(h)
-                    if fkey and ci < len(row_e):
-                        val = row_e[ci].strip()
-                        if val:
-                            result[fkey] = val
-                return result
+        rows = _pg_query(
+            "select field_key, value from field_values where submission_id = %s",
+            (sub["id"],),
+        )
+        data = {r["field_key"]: r["value"] for r in rows}
+        data.setdefault("_sections_complete", "")
+        data["_sheet_row"] = sub["id"]   # kept for compatibility; not a real row number anymore
+        return data
+    except Exception:
         return {}
+
+
+def load_submitted_fields(user_id: str, month_year: str) -> dict:
+    """Read field key→value dict from the approved snapshot for a SUBMITTED
+    location. Fallback for generate_filled_mis_report when the draft is
+    unavailable or empty. Postgres note: approved_snapshots.snapshot is
+    already a field_key→value jsonb blob (written at approval time) -- no
+    label reverse-mapping needed, unlike the Sheets version which had to
+    map MIS_Submitted's human-readable column labels back to f1/f2/... keys."""
+    try:
+        row = _pg_one("""
+            select aps.snapshot
+            from approved_snapshots aps
+            join monthly_submissions ms on ms.id = aps.submission_id
+            where ms.location_code = %s and ms.month_year = %s
+        """, (user_id, _mk_to_date(month_year)))
+        return dict(row["snapshot"]) if row and row["snapshot"] else {}
     except Exception:
         return {}
 
@@ -1060,32 +1030,49 @@ def load_submitted_fields(user_id: str, month_year: str) -> dict:
 def _update_submission_status(user_id: str, month_year: str, status: str, pct: float,
                                submitted_at: str = "", locked_by: str = "",
                                locked_at: str = "", checker_notes: str = ""):
-    # _ensure_ws auto-creates the tab with headers if it doesn't exist yet.
-    # Any exception propagates to save_draft which surfaces it as an error message.
-    ws      = _ensure_ws(TABS["SUBMISSION_STATUS"], _SS_HEADERS)
-    rows    = _submission_status_raw_rows()
-    now_str = datetime.now().isoformat()
-    for i, row in enumerate(rows[1:], start=2):
-        row_e = (row + [""] * 9)[:9]
-        if row_e[0].strip() == user_id and row_e[1].strip() == month_year:
-            _api_call(ws.update, f"A{i}:I{i}", [[
-                user_id, month_year, status, str(pct),
-                submitted_at or row_e[4] or now_str,
-                locked_by  or row_e[5],
-                locked_at  or row_e[6],
-                checker_notes if checker_notes else row_e[7],
-                now_str,
-            ]])
-            get_month_status.clear()
-            _submission_status_raw_rows.clear()
-            return
-    _api_call(ws.append_row,
-        [user_id, month_year, status, str(pct),
-         submitted_at or now_str, locked_by, locked_at, checker_notes, now_str],
-        value_input_option="RAW",
+    """THE fix this whole migration started over. The Sheets version reads
+    the (15s-cached) sheet, decides update-vs-append in Python, and writes --
+    two calls landing in that window both see "no row yet" and both append,
+    producing the duplicate SubmissionStatus rows the audit found (9 real
+    cases, e.g. 1708/Apr-2026 and 1708/Jun-2026 stuck showing IN_PROGRESS
+    despite being actually SUBMITTED).
+
+    This is a single INSERT ... ON CONFLICT ... DO UPDATE -- atomic at the
+    database level via the unique(location_code, month_year) constraint.
+    Two concurrent callers can't both "win" an append; Postgres serializes
+    them and the second becomes an UPDATE. The race is structurally
+    impossible, not just less likely.
+    """
+    mdate = _mk_to_date(month_year)
+    locked_by_id = None
+    if locked_by:
+        row = _pg_one("select id from users where login_code = %s", (locked_by,))
+        locked_by_id = row["id"] if row else None
+
+    _pg_query(
+        """
+        insert into monthly_submissions
+            (location_code, month_year, status, completion_pct, submitted_at,
+             locked_by, locked_at, checker_notes, last_updated_at)
+        values (%(uid)s, %(mdate)s, %(status)s, %(pct)s,
+                coalesce(%(sub_at)s::timestamptz, now()),
+                %(locked_by_id)s, %(lock_at)s::timestamptz, %(notes)s, now())
+        on conflict (location_code, month_year) do update set
+            status          = excluded.status,
+            completion_pct  = excluded.completion_pct,
+            submitted_at    = coalesce(%(sub_at)s::timestamptz, monthly_submissions.submitted_at),
+            locked_by       = coalesce(%(locked_by_id)s, monthly_submissions.locked_by),
+            locked_at       = coalesce(%(lock_at)s::timestamptz, monthly_submissions.locked_at),
+            checker_notes   = coalesce(nullif(%(notes)s, ''), monthly_submissions.checker_notes),
+            last_updated_at = now()
+        """,
+        {
+            "uid": user_id, "mdate": mdate, "status": status, "pct": pct,
+            "sub_at": submitted_at or None, "locked_by_id": locked_by_id,
+            "lock_at": locked_at or None, "notes": checker_notes,
+        },
+        fetch=False,
     )
-    get_month_status.clear()
-    _submission_status_raw_rows.clear()
 
 
 def save_draft(user_id: str, month_year: str,
@@ -1093,43 +1080,33 @@ def save_draft(user_id: str, month_year: str,
                field_data: dict | None = None,
                mark_complete: bool = False,
                sections_complete: list | None = None) -> dict:
-    """Merge field_data into existing draft and persist to MIS_Draft tab.
+    """Merge field_data into existing draft and persist.
 
     Two calling modes:
       Normal (per-section save):
         save_draft(user_id, month_year, section_num, field_data, mark_complete)
       Bulk upload save:
         save_draft(user_id, month_year, field_data={...}, sections_complete=[1,3,5,...])
+
+    Postgres note: the Sheets version's "fresh, never trust the cache"
+    comment described working around a duplicate-row race on MIS_DRAFT.
+    Here, the monthly_submissions upsert is a single atomic statement
+    (unique constraint + ON CONFLICT, same pattern as
+    _update_submission_status) and field_values writes are keyed by
+    (submission_id, field_key) primary key -- no equivalent race exists to
+    guard against.
     """
     try:
-        # Fresh, uncached lookup of the target row — never trust the cached
-        # load_draft() result here. A stale cached read was the root cause of
-        # a duplicate-row bug: two save_draft() calls landing within the same
-        # 30 s cache window both saw "no row yet" and both appended, creating
-        # two MIS_DRAFT rows for the same (user_id, month_year).
-        ws         = _ws(TABS["MIS_DRAFT"])
-        fresh_rows = _api_call(ws.get_all_values)
-        sheet_row  = None
-        existing: dict = {}
-        secs_raw   = ""
-        for i, row in enumerate(fresh_rows[1:], start=2):
-            row = (row + [""] * 5)[:5]
-            if row[0].strip() == user_id and row[1].strip() == month_year:
-                sheet_row = i
-                secs_raw  = row[2].strip()
-                try:
-                    existing = json.loads(row[4]) if row[4].strip() else {}
-                except Exception:
-                    existing = {}
-                break
-
+        existing = load_draft(user_id, month_year)
+        secs_raw = existing.get("_sections_complete", "")
         try:
             secs_done = {int(x) for x in secs_raw.split(",") if x.strip().isdigit()}
         except Exception:
             secs_done = set()
 
+        merged = {k: v for k, v in existing.items() if not k.startswith("_")}
         if field_data:
-            existing.update(field_data)
+            merged.update(field_data)
 
         if sections_complete is not None:
             # Bulk upload: replace section completion entirely
@@ -1142,46 +1119,44 @@ def save_draft(user_id: str, month_year: str,
 
         pct      = len(secs_done) * 10.0
         secs_str = ",".join(str(s) for s in sorted(secs_done))
-        now_str  = datetime.now().isoformat()
-        data_str = json.dumps(existing)
+        mdate    = _mk_to_date(month_year)
 
-        if sheet_row:
-            _api_call(ws.update, f"A{sheet_row}:E{sheet_row}",
-                      [[user_id, month_year, secs_str, now_str, data_str]])
-        else:
-            _api_call(ws.append_row,
-                [user_id, month_year, secs_str, now_str, data_str],
-                value_input_option="RAW",
+        sub = _pg_one(
+            """
+            insert into monthly_submissions (location_code, month_year)
+            values (%s, %s)
+            on conflict (location_code, month_year) do update set
+                last_updated_at = now()
+            returning id, status
+            """,
+            (user_id, mdate),
+        )
+        submission_id = sub["id"]
+
+        merged["_sections_complete"] = secs_str
+        for key, val in merged.items():
+            _pg_query(
+                """
+                insert into field_values (submission_id, field_key, value)
+                values (%s, %s, %s)
+                on conflict (submission_id, field_key) do update set
+                    value = excluded.value, updated_at = now()
+                """,
+                (submission_id, key, str(val) if val is not None else ""),
+                fetch=False,
             )
 
         # Never let an incidental data save silently un-approve a month the
-        # Checker has already reviewed. Root cause of a real production bug:
-        # a Maker save request landing shortly after Approve & Lock (e.g. a
-        # queued/in-flight request from before the lock happened) would
-        # unconditionally overwrite status back to IN_PROGRESS, even though
-        # locked_by/locked_at were preserved -- a status/lock-state mismatch
-        # with no audit trail explaining it. Fresh (uncached) check so this
-        # can't be fooled by a stale cache window either.
-        _ss_ws = _ensure_ws(TABS["SUBMISSION_STATUS"], _SS_HEADERS)
-        _ss_rows = _api_call(_ss_ws.get_all_values)
-        _cur_status = "NOT_STARTED"
-        for _row in _ss_rows[1:]:
-            _row = (_row + [""] * 9)[:9]
-            if _row[0].strip() == user_id and _row[1].strip() == month_year:
-                _cur_status = _row[2].strip() or "NOT_STARTED"
-                break
-
-        if _cur_status not in ("SUBMITTED", "LOCKED"):
+        # Checker has already reviewed (same guard as the Sheets version --
+        # this specific check still matters regardless of backend).
+        if sub["status"] not in ("SUBMITTED", "LOCKED"):
             status = "IN_PROGRESS" if secs_done else "NOT_STARTED"
             _update_submission_status(user_id, month_year, status, pct)
+
         tag = f"S{section_num}" if section_num else "BulkUpload"
         audit_log(user_id, f"SaveDraft {tag}",
                   f"month={month_year} secs={secs_str} pct={pct}")
 
-        # Invalidate caches so next reads see fresh data
-        get_dashboard_data.clear()
-        load_draft.clear()
-        _mis_draft_raw_rows.clear()
         return {"ok": True, "pct": pct, "secs_done": sorted(secs_done)}
 
     except Exception as e:
@@ -1294,40 +1269,39 @@ def submit_for_review(user_id: str, month_year: str) -> dict:
 
 def approve_submission(maker_id: str, month_year: str, checker_id: str,
                        flat_data: dict, user_info: dict) -> dict:
-    """Checker approves — writes flat row to MIS_Submitted and locks the month."""
+    """Checker approves — writes an approved snapshot and locks the month.
+
+    Postgres note: approved_snapshots.snapshot stores field_key->value
+    directly (jsonb) -- no label mapping needed at write time the way the
+    Sheets version needed to convert field keys to human-readable column
+    headers for MIS_Submitted. Report generation (Domain 11) does that
+    mapping at read/render time instead, a cleaner separation."""
     try:
-        label_map  = _field_label_map()
-        field_keys = list(flat_data.keys())
-        col_labels = [label_map.get(k, k) for k in field_keys]
-        headers    = (["User ID", "Location Name", "Zone", "Month-Year",
-                        "Submitted At", "Approved At", "Approved By"]
-                      + col_labels)
-        ws      = _ensure_ws(TABS["MIS_SUBMITTED"], headers, force_headers=True)
-        all_r   = ws.get_all_values()
-        now_str = datetime.now().isoformat()
+        mdate = _mk_to_date(month_year)
+        sub = _pg_one(
+            "select id from monthly_submissions where location_code = %s and month_year = %s",
+            (maker_id, mdate),
+        )
+        if not sub:
+            return {"ok": False, "msg": "No submission found to approve."}
 
-        row = ([maker_id, user_info.get("locName", ""), user_info.get("zone", ""),
-                month_year, now_str, now_str, checker_id]
-               + [str(flat_data.get(k, "") or "") for k in field_keys])
-
-        if len(all_r) >= 2:
-            hdr    = all_r[0]
-            uid_c  = next((hdr.index(h) for h in ("User ID", "user_id") if h in hdr), 0)
-            mon_c  = next((hdr.index(h) for h in ("Month-Year", "month_year") if h in hdr), 3)
-            for i, r in enumerate(all_r[1:], start=2):
-                re = (r + [""] * max(len(hdr), 1))[:max(len(hdr), 1)]
-                if re[uid_c].strip() == maker_id and re[mon_c].strip() == month_year:
-                    ws.update(f"A{i}", [row])
-                    break
-            else:
-                ws.append_row(row, value_input_option="RAW")
-        else:
-            ws.append_row(row, value_input_option="RAW")
+        snapshot = {k: (str(v) if v is not None else "") for k, v in flat_data.items()}
+        _pg_query(
+            """
+            insert into approved_snapshots
+                (submission_id, location_code, month_year, snapshot, approved_by, approved_at)
+            values (%s, %s, %s, %s, (select id from users where login_code = %s), now())
+            on conflict (submission_id) do update set
+                snapshot = excluded.snapshot, approved_by = excluded.approved_by, approved_at = now()
+            """,
+            (sub["id"], maker_id, mdate, psycopg2.extras.Json(snapshot), checker_id),
+            fetch=False,
+        )
 
         sd = get_month_status(maker_id, month_year)
         _update_submission_status(maker_id, month_year, "SUBMITTED",
                                   sd.get("completion_pct", 100),
-                                  locked_by=checker_id, locked_at=now_str)
+                                  locked_by=checker_id, locked_at=datetime.now().isoformat())
         audit_log(checker_id, "ApproveSubmission", f"maker={maker_id} month={month_year}")
         return {"ok": True}
     except Exception as e:
@@ -1354,17 +1328,14 @@ def reject_submission(maker_id: str, month_year: str,
 def reset_draft(maker_id: str, month_year: str, checker_id: str, reason: str) -> dict:
     """Checker resets a maker's draft — wipes all field data so maker can start fresh."""
     try:
-        ws       = _ws(TABS["MIS_DRAFT"])
-        all_rows = _mis_draft_raw_rows()
-        now_str  = datetime.now().isoformat()
-        for i, row in enumerate(all_rows[1:], start=2):
-            r = (row + [""] * 5)[:5]
-            if r[0].strip() == maker_id and r[1].strip() == month_year:
-                ws.update(f"A{i}:E{i}",
-                          [[maker_id, month_year, "", now_str, "{}"]])
-                break
-        _mis_draft_raw_rows.clear()
-        load_draft.clear()
+        sub = _pg_one(
+            "select id from monthly_submissions where location_code = %s and month_year = %s",
+            (maker_id, _mk_to_date(month_year)),
+        )
+        if sub:
+            _pg_query("delete from field_values where submission_id = %s",
+                      (sub["id"],), fetch=False)
+
         _update_submission_status(
             maker_id, month_year, "NOT_STARTED", 0.0,
             checker_notes=f"[RESET by {checker_id}] {reason}",
@@ -1449,17 +1420,18 @@ def get_submissions_for_locations(locs: list, month_year: str) -> list:
 
     status_map: dict = {}
     try:
-        rows = _submission_status_raw_rows()
-        for row in rows[1:]:
-            row = (row + [""] * 9)[:9]
-            if row[1].strip() == month_year:
-                uid = row[0].strip()
-                pct = float(row[3]) if row[3] else 0.0
-                status_map[uid] = {
-                    "status":         _revert_if_deleted(uid, month_year,
-                                                         row[2].strip() or "NOT_STARTED", pct),
-                    "completion_pct": pct,
-                }
+        rows = _pg_query(
+            "select location_code, status, completion_pct from monthly_submissions "
+            "where month_year = %s",
+            (_mk_to_date(month_year),),
+        )
+        for r in rows:
+            uid = r["location_code"]
+            pct = float(r["completion_pct"] or 0)
+            status_map[uid] = {
+                "status":         _revert_if_deleted(uid, month_year, r["status"] or "NOT_STARTED", pct),
+                "completion_pct": pct,
+            }
     except Exception:
         pass
 
