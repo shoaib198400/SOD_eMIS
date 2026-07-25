@@ -475,47 +475,26 @@ def get_loc_type(loc_code: str) -> str:
 def reset_location_data(loc_code: str) -> dict:
     """Delete ALL MIS data for a location (pre-launch data cleanup).
 
-    Clears: MIS_DRAFT, SubmissionStatus, Railway_Claims, IRR_Details,
-    Legal_Cases, MI_TANK_OUTAGE, MI_MAJOR_REPAIR, MI_VRU, MI_AUDIT_2526,
-    MI_AUDIT_2627, MI_TECH_AUDIT, MI_EQUIP_BREAKDOWN, MI_INT_PIPELINE,
-    MI_EXT_PIPELINE, MI_TANK_STATUS.
+    Postgres note: every table the Sheets version had to clear individually
+    across 14 separate tabs (MIS_DRAFT, SubmissionStatus, detail tables, all
+    10 M&I tables) cascades from monthly_submissions via ON DELETE CASCADE
+    foreign keys -- field_values, detail_rows, mi_rows, mi_singletons,
+    mi_submodule_status, and approved_snapshots all disappear automatically
+    when their parent submission row is deleted. Deleting the submissions
+    themselves is sufficient.
     """
     uid = str(loc_code).strip()
-    tabs_to_clear = [
-        "MIS_DRAFT", "SUBMISSION_STATUS",
-        "RAILWAY_CLAIMS", "IRR_DETAILS", "LEGAL_CASES",
-        "MI_TANK_OUTAGE", "MI_MAJOR_REPAIR", "MI_VRU",
-        "MI_AUDIT_2526", "MI_AUDIT_2627", "MI_TECH_AUDIT",
-        "MI_EQUIP_BREAKDOWN", "MI_INT_PIPELINE", "MI_EXT_PIPELINE",
-        "MI_TANK_STATUS",
-    ]
-    deleted_total = 0
-    errors = []
     try:
-        for tab_key in tabs_to_clear:
-            tab_name = TABS.get(tab_key)
-            if not tab_name:
-                continue
-            try:
-                ws = _ws(tab_name)
-                rows_to_del = []
-                for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-                    if row and str(row[0]).strip() == uid:
-                        rows_to_del.append(i)
-                for row_idx in reversed(rows_to_del):
-                    ws.delete_rows(row_idx)
-                deleted_total += len(rows_to_del)
-            except Exception as tab_err:
-                errors.append(f"{tab_name}: {tab_err}")
-        # Also clear the cached dashboard data
+        deleted_total = _pg_query(
+            "delete from monthly_submissions where location_code = %s",
+            (uid,), fetch=False,
+        )
         try:
             get_dashboard_data.clear()
         except Exception:
             pass
-        msg = f"Deleted {deleted_total} row(s) for location {uid}."
-        if errors:
-            msg += "  Warnings: " + "; ".join(errors)
-        return {"ok": True, "deleted": deleted_total, "msg": msg}
+        return {"ok": True, "deleted": deleted_total,
+                "msg": f"Deleted {deleted_total} month(s) of MIS data for location {uid}."}
     except Exception as exc:
         return {"ok": False, "msg": str(exc)}
 
@@ -1362,16 +1341,8 @@ def reset_draft(maker_id: str, month_year: str, checker_id: str, reason: str) ->
 
 
 # ── Phase-6: Zone / HQO view + Revision workflow ──────────────────────────────
-
-@st.cache_data(ttl=60, show_spinner=False)
-def _user_access_raw_rows() -> list:
-    """Shared 60 s cache of the full UserAccess sheet -- avoids an uncached
-    full-sheet read on every rerun of every Zone/Admin dashboard render,
-    which was a real contributor to the app feeling slow with 15-20+
-    concurrent users (Streamlit reruns the whole script on every widget
-    interaction, and this sheet was being re-read from scratch each time)."""
-    ws = _ws(TABS["USER_ACCESS"])
-    return _api_call(ws.get_all_values)
+# (_user_access_raw_rows removed -- its only three callers were ported to
+# direct Postgres queries in the Account & Location Management domain.)
 
 
 def get_locations_by_zone(zone_name: str) -> list:
