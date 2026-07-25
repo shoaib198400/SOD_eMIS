@@ -3892,6 +3892,11 @@ def download_submitted_data_excel(month_year: str):
     """Build and return an Excel workbook (bytes) of approved MIS data for month_year.
 
     Returns None if there are no submitted rows for the requested month.
+
+    Postgres note: approved_snapshots.snapshot is keyed by field_key (f1,
+    f2, ...), so the header row is built from _field_label_map() plus
+    whichever keys actually appear in this month's snapshots, instead of
+    just copying MIS_Submitted's column headers verbatim.
     """
     import io as _io
     from openpyxl import Workbook
@@ -3899,27 +3904,41 @@ def download_submitted_data_excel(month_year: str):
     from openpyxl.utils import get_column_letter
 
     try:
-        ws_sheet = _ws(TABS["MIS_SUBMITTED"])
-        all_vals = ws_sheet.get_all_values()
+        rows = _pg_query("""
+            select ms.location_code, l.name as loc_name, z.name as zone_name,
+                   ms.submitted_at, aps.approved_at, u.login_code as approved_by_code,
+                   aps.snapshot
+            from approved_snapshots aps
+            join monthly_submissions ms on ms.id = aps.submission_id
+            left join locations l on l.code = ms.location_code
+            left join zones z on z.id = l.zone_id
+            left join users u on u.id = aps.approved_by
+            where ms.month_year = %s
+            order by ms.location_code
+        """, (_mk_to_date(month_year),))
     except Exception:
         return None
 
-    if len(all_vals) < 2:
+    if not rows:
         return None
 
-    headers = all_vals[0]
-    month_col_idx = None
-    for ci, h in enumerate(headers):
-        if "month" in h.lower():
-            month_col_idx = ci
-            break
-
-    if month_col_idx is None:
-        return None
-
-    data_rows = [row for row in all_vals[1:] if len(row) > month_col_idx and row[month_col_idx].strip() == month_year]
-    if not data_rows:
-        return None
+    label_map  = _field_label_map()
+    field_keys = sorted(
+        {k for r in rows for k in (r["snapshot"] or {}).keys()},
+        key=lambda k: int(k[1:]) if k[1:].isdigit() else 0,
+    )
+    headers = (["User ID", "Location Name", "Zone", "Month-Year",
+                "Submitted At", "Approved At", "Approved By"]
+               + [label_map.get(k, k) for k in field_keys])
+    data_rows = []
+    for r in rows:
+        snap = r["snapshot"] or {}
+        data_rows.append([
+            r["location_code"], r["loc_name"] or "", r["zone_name"] or "", month_year,
+            r["submitted_at"].isoformat() if r["submitted_at"] else "",
+            r["approved_at"].isoformat() if r["approved_at"] else "",
+            r["approved_by_code"] or "",
+        ] + [snap.get(k, "") for k in field_keys])
 
     wb = Workbook()
     ws = wb.active
@@ -4058,22 +4077,23 @@ def get_compliance_analytics(role: str, zone: str, fy_year: int) -> dict:
     months  = _fy_month_years(fy_year)
     locs    = get_all_maker_locations() if role == "Admin" else get_locations_by_zone(zone)
     loc_ids = {l["userId"] for l in locs}
-    loc_map  = {l["userId"]: l for l in locs}
-    result   = {m: {} for m in months}
+    loc_map = {l["userId"]: l for l in locs}
+    result  = {m: {} for m in months}
     try:
-        rows = _submission_status_raw_rows()
-        for row in rows[1:]:
-            row    = (row + [""] * 9)[:9]
-            uid    = row[0].strip()
-            mon    = row[1].strip()
-            status = row[2].strip()
-            pct    = row[3]
-            sub_at = row[4].strip()
-            if uid in loc_ids and mon in result:
+        mdates = {_mk_to_date(m): m for m in months}
+        rows = _pg_query(
+            "select location_code, month_year, status, completion_pct, submitted_at "
+            "from monthly_submissions where month_year = any(%s)",
+            (list(mdates.keys()),),
+        )
+        for r in rows:
+            uid = r["location_code"]
+            mon = mdates.get(r["month_year"])
+            if uid in loc_ids and mon:
                 result[mon][uid] = {
-                    "status":         status or "NOT_STARTED",
-                    "completion_pct": float(pct) if pct else 0.0,
-                    "submitted_at":   sub_at,
+                    "status":         r["status"] or "NOT_STARTED",
+                    "completion_pct": float(r["completion_pct"] or 0),
+                    "submitted_at":   r["submitted_at"].isoformat() if r["submitted_at"] else "",
                     "loc":            loc_map.get(uid, {}),
                 }
     except Exception:
@@ -4090,45 +4110,44 @@ def get_compliance_analytics(role: str, zone: str, fy_year: int) -> dict:
     return result
 
 
-@st.cache_data(ttl=300)
 def get_analytics_field_data(role: str, zone: str, fy_year: int) -> list:
-    """Fetch approved MIS numeric field values for FY from MIS_Submitted.
+    """Fetch approved MIS numeric field values for FY from approved_snapshots.
 
     Returns list of dicts: user_id, loc_name, zone_name, month_year + field labels as keys.
+
+    Postgres note: approved_snapshots.snapshot is keyed by field_key (f1,
+    f2, ...) directly -- looks up by key and maps to the human label
+    (_AN_FIELD_LABELS) only on the way out, unlike the original which had
+    to reverse-map MIS_Submitted's column headers back to keys first.
     """
     months  = set(_fy_month_years(fy_year))
     locs    = get_all_maker_locations() if role == "Admin" else get_locations_by_zone(zone)
     loc_ids = {l["userId"] for l in locs}
-    loc_map  = {l["userId"]: l for l in locs}
-    needed   = set(_AN_FIELD_LABELS.values())
+    loc_map = {l["userId"]: l for l in locs}
     try:
-        ws       = _ws(TABS["MIS_SUBMITTED"])
-        all_vals = ws.get_all_values()
-        if len(all_vals) < 2:
-            return []
-        headers = all_vals[0]
-        col_map = {h: ci for ci, h in enumerate(headers) if h in needed}
-        uid_c   = next((i for i, h in enumerate(headers) if h in ("User ID", "user_id")), 0)
-        mon_c   = next((i for i, h in enumerate(headers) if "month" in h.lower()), 3)
-        out     = []
-        for row in all_vals[1:]:
-            if len(row) <= max(uid_c, mon_c):
-                continue
-            uid = row[uid_c].strip()
-            mon = row[mon_c].strip()
+        rows = _pg_query("""
+            select ms.location_code, ms.month_year, aps.snapshot
+            from approved_snapshots aps
+            join monthly_submissions ms on ms.id = aps.submission_id
+        """)
+        out = []
+        for r in rows:
+            uid = r["location_code"]
+            mon = month_key(r["month_year"])
             if uid not in loc_ids or mon not in months:
                 continue
+            snap = r["snapshot"] or {}
             rec = {
                 "user_id":    uid,
                 "month_year": mon,
                 "loc_name":   loc_map.get(uid, {}).get("locName", uid),
                 "zone_name":  loc_map.get(uid, {}).get("zone", ""),
             }
-            for label, ci in col_map.items():
-                raw = row[ci].strip() if ci < len(row) else ""
+            for fkey, label in _AN_FIELD_LABELS.items():
+                raw = snap.get(fkey)
                 try:
                     rec[label] = float(raw) if raw else None
-                except ValueError:
+                except (ValueError, TypeError):
                     rec[label] = None
             out.append(rec)
         return out
@@ -4560,40 +4579,62 @@ def get_approved_mis_excel(
     zone: str | None = None,
     month_year: str | None = None,
 ) -> bytes:
-    """Return xlsx bytes from MIS_SUBMITTED optionally filtered by zone and/or month."""
+    """Return xlsx bytes of approved MIS records, optionally filtered by zone and/or month.
+
+    Postgres note: same header-reconstruction approach as
+    download_submitted_data_excel -- built from _field_label_map() plus
+    whichever field keys appear in the filtered snapshots.
+    """
     import io as _io
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 
     try:
-        ws_sheet = _ws(TABS["MIS_SUBMITTED"])
-        all_rows = _api_call(ws_sheet.get_all_values)
+        sql = """
+            select ms.location_code, l.name as loc_name, z.name as zone_name,
+                   ms.month_year, ms.submitted_at, aps.approved_at,
+                   u.login_code as approved_by_code, aps.snapshot
+            from approved_snapshots aps
+            join monthly_submissions ms on ms.id = aps.submission_id
+            left join locations l on l.code = ms.location_code
+            left join zones z on z.id = l.zone_id
+            left join users u on u.id = aps.approved_by
+            where 1=1
+        """
+        params: list = []
+        if zone:
+            sql += " and z.name = %s"
+            params.append(zone)
+        if month_year:
+            sql += " and ms.month_year = %s"
+            params.append(_mk_to_date(month_year))
+        sql += " order by ms.location_code"
+        rows = _pg_query(sql, tuple(params))
     except Exception as exc:
-        raise ValueError(f"Cannot read MIS_SUBMITTED: {exc}") from exc
+        raise ValueError(f"Cannot read approved submissions: {exc}") from exc
 
-    if len(all_rows) < 2:
-        raise ValueError("No approved MIS submissions found.")
-
-    hdr  = all_rows[0]
-    data = all_rows[1:]
-
-    try:
-        zone_idx = hdr.index("Zone")
-    except ValueError:
-        zone_idx = 2
-    try:
-        mon_idx = hdr.index("Month-Year")
-    except ValueError:
-        mon_idx = 3
-
-    if zone:
-        data = [r for r in data if (r + [""] * (zone_idx + 1))[zone_idx].strip() == zone]
-    if month_year:
-        data = [r for r in data if (r + [""] * (mon_idx + 1))[mon_idx].strip() == month_year]
-
-    if not data:
+    if not rows:
         raise ValueError("No approved MIS records found for the selected filters.")
+
+    label_map  = _field_label_map()
+    field_keys = sorted(
+        {k for r in rows for k in (r["snapshot"] or {}).keys()},
+        key=lambda k: int(k[1:]) if k[1:].isdigit() else 0,
+    )
+    hdr = (["User ID", "Location Name", "Zone", "Month-Year",
+            "Submitted At", "Approved At", "Approved By"]
+           + [label_map.get(k, k) for k in field_keys])
+    data = []
+    for r in rows:
+        snap = r["snapshot"] or {}
+        data.append([
+            r["location_code"], r["loc_name"] or "", r["zone_name"] or "",
+            month_key(r["month_year"]),
+            r["submitted_at"].isoformat() if r["submitted_at"] else "",
+            r["approved_at"].isoformat() if r["approved_at"] else "",
+            r["approved_by_code"] or "",
+        ] + [snap.get(k, "") for k in field_keys])
 
     wb  = Workbook()
     ws1 = wb.active
