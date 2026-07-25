@@ -388,19 +388,12 @@ def _prev_month_key() -> str:
 
 def audit_log(loc_code: str, action: str, details: str = ""):
     try:
-        _ws(TABS["AUDIT_LOG"]).append_row(
-            [datetime.now().isoformat(), loc_code, action, details],
-            value_input_option="RAW",
+        _pg_query(
+            "insert into audit_log (actor_location_code, action, details) values (%s, %s, %s)",
+            (loc_code, action, psycopg2.extras.Json(details)), fetch=False,
         )
     except Exception:
         pass
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def _audit_log_raw_rows() -> list:
-    """Shared cache of the full AUDIT_LOG sheet (60 s TTL)."""
-    ws = _ws(TABS["AUDIT_LOG"])
-    return _api_call(ws.get_all_values)
 
 
 _IST_OFFSET = timedelta(hours=5, minutes=30)
@@ -409,7 +402,7 @@ _IST_OFFSET = timedelta(hours=5, minutes=30)
 def get_hourly_login_traffic(target_date: date) -> dict:
     """Return {"hours": [{"hour": 0..23, "users": n}, ...], "total_users": n}
     -- distinct users who logged in during each hour of target_date (IST), from
-    the AUDIT_LOG "Login" events, plus the distinct-user count for the whole day.
+    audit_log's "Login" events, plus the distinct-user count for the whole day.
 
     Counts a user once per hour even if they logged in more than once in it --
     this answers "how many distinct users were on the portal that hour", not
@@ -417,26 +410,30 @@ def get_hourly_login_traffic(target_date: date) -> dict:
     set (summing the per-hour counts would double-count anyone active in more
     than one hour).
 
-    AUDIT_LOG timestamps are written by datetime.now() on the deployed server,
-    which runs in UTC -- shift to IST before bucketing, otherwise every hour
-    (and the day boundary itself) is off by 5:30.
+    occurred_at is a real timestamptz (UTC) -- shift to IST before bucketing,
+    same reasoning as the original's manual offset. Also now filters to the
+    target date's UTC range in SQL instead of fetching the entire audit_log
+    history and filtering in Python -- audit_log is the fastest-growing table
+    in this system, so this matters more here than most of the other ports.
     """
     hour_users = {h: set() for h in range(24)}
     day_users: set = set()
     try:
-        rows = _audit_log_raw_rows()
-        for row in rows[1:]:
-            row = (row + [""] * 4)[:4]
-            ts, loc, action = row[0].strip(), row[1].strip(), row[2].strip()
-            if action != "Login" or not ts:
+        start_utc = datetime.combine(target_date, datetime.min.time(),
+                                      tzinfo=timezone.utc) - _IST_OFFSET
+        end_utc   = start_utc + timedelta(days=1)
+        rows = _pg_query(
+            "select occurred_at, actor_location_code from audit_log "
+            "where action = 'Login' and occurred_at >= %s and occurred_at < %s",
+            (start_utc, end_utc),
+        )
+        for r in rows:
+            dt = r["occurred_at"]
+            if dt is None:
                 continue
-            try:
-                dt = datetime.fromisoformat(ts) + _IST_OFFSET
-            except Exception:
-                continue
-            if dt.date() != target_date:
-                continue
-            hour_users[dt.hour].add(loc)
+            dt_ist = dt.astimezone(timezone.utc) + _IST_OFFSET
+            loc = r["actor_location_code"] or ""
+            hour_users[dt_ist.hour].add(loc)
             day_users.add(loc)
     except Exception:
         pass
@@ -657,28 +654,27 @@ def change_password(user_id: str, current_pass: str,
 # ── Help desk / forgot password ──────────────────────────────────────────────
 
 def request_password_reset(location_code: str) -> dict:
+    """Postgres note: helpdesk_tickets.location_code has a not-null FK to
+    locations -- Zone/Admin/Viewer users have no location_code at all, so
+    they can't get a helpdesk ticket row the way Maker/Checker can. Falls
+    back to audit_log only for those; a narrow edge case in practice, since
+    self-service reset is used almost entirely by Maker/Checker."""
     try:
         location_code = str(location_code or "").strip()
         if not location_code:
             return {"ok": False, "msg": "Please enter your Location Code."}
 
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
-        if len(rows) >= 2:
-            codes = [r[0].strip() for r in rows[1:]]
-            if location_code not in codes:
-                return {
-                    "ok":  False,
-                    "msg": f'Location Code "{location_code}" is not registered.',
-                }
+        user = _pg_one("select location_code from users where login_code = %s", (location_code,))
+        if not user:
+            return {"ok": False, "msg": f'Location Code "{location_code}" is not registered.'}
 
-        _ws(TABS["HELPDESK"]).append_row(
-            [datetime.now().isoformat(), location_code,
-             "Password Reset Request",
-             "User requested a password reset via the Forgot Password link.",
-             "Pending", ""],
-            value_input_option="RAW",
-        )
+        if user["location_code"]:
+            _pg_query(
+                "insert into helpdesk_tickets (location_code, issue_type, issue_desc, status) "
+                "values (%s, 'Password Reset Request', "
+                "'User requested a password reset via the Forgot Password link.', 'OPEN')",
+                (user["location_code"],), fetch=False,
+            )
         audit_log(location_code, "Forgot Password", "Reset request logged")
         return {
             "ok":  True,
@@ -695,42 +691,52 @@ _HELPDESK_HEADERS = [
 ]
 
 
-@st.cache_data(ttl=120)
+# Sheets used free-text status ("Pending"/"In Progress"/"Resolved", see
+# app.py's selectbox); schema constrains to OPEN/RESPONDED/CLOSED. Map
+# between them rather than loosen the constraint.
+_HD_STATUS_TO_DB   = {"Pending": "OPEN", "In Progress": "RESPONDED", "Resolved": "CLOSED"}
+_HD_STATUS_FROM_DB = {v: k for k, v in _HD_STATUS_TO_DB.items()}
+
+
 def get_helpdesk_tickets() -> list:
     """Return all helpdesk tickets (newest first).
 
-    Each ticket dict includes a 'row' key = 1-based sheet row so
-    respond_to_helpdesk_ticket() can update the correct row.
-    """
+    'row' is now the ticket's real id, used by respond_to_helpdesk_ticket
+    (no longer a literal sheet row number, but the same round-trip role)."""
     try:
-        ws   = _ensure_ws(TABS["HELPDESK"], _HELPDESK_HEADERS)
-        rows = _api_call(ws.get_all_values)
-        out  = []
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 7)[:7]
-            out.append({
-                "row":            i,
-                "timestamp":      row[0],
-                "location_code":  row[1],
-                "issue_type":     row[2],
-                "issue_desc":     row[3],
-                "status":         row[4] or "Pending",
-                "admin_response": row[5],
-                "responded_at":   row[6],
-            })
-        return list(reversed(out))
+        rows = _pg_query("""
+            select id, created_at, location_code, issue_type, issue_desc,
+                   status, admin_response, responded_at
+            from helpdesk_tickets order by created_at desc
+        """)
+        return [
+            {
+                "row":            r["id"],
+                "timestamp":      r["created_at"].isoformat() if r["created_at"] else "",
+                "location_code":  r["location_code"] or "",
+                "issue_type":     r["issue_type"] or "",
+                "issue_desc":     r["issue_desc"] or "",
+                "status":         _HD_STATUS_FROM_DB.get(r["status"], "Pending"),
+                "admin_response": r["admin_response"] or "",
+                "responded_at":   r["responded_at"].isoformat() if r["responded_at"] else "",
+            }
+            for r in rows
+        ]
     except Exception:
         return []
 
 
 def respond_to_helpdesk_ticket(row: int, response: str,
                                 status: str, updated_by: str) -> dict:
-    """Write admin response + status + timestamp back to the sheet row."""
+    """Write admin response + status back to the ticket (row = ticket id)."""
     try:
-        ws  = _ensure_ws(TABS["HELPDESK"], _HELPDESK_HEADERS)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ws.update(f"E{row}:G{row}", [[status, response, now]])
-        get_helpdesk_tickets.clear()
+        db_status = _HD_STATUS_TO_DB.get(status, "RESPONDED")
+        actioner  = _pg_one("select id from users where login_code = %s", (updated_by,))
+        _pg_query(
+            "update helpdesk_tickets set status = %s, admin_response = %s, "
+            "responded_at = now(), responded_by = %s where id = %s",
+            (db_status, response, actioner["id"] if actioner else None, row), fetch=False,
+        )
         audit_log(updated_by, "HelpDesk Response",
                   f"Row {row} → {status}: {response[:80]}")
         return {"ok": True}
@@ -740,6 +746,11 @@ def respond_to_helpdesk_ticket(row: int, response: str,
 
 def log_help_request(location_code: str, issue_desc: str,
                      issue_type: str = "Help Request") -> dict:
+    """FLAGGED FOR REVIEW (minor): helpdesk_tickets.location_code has a real
+    foreign key to locations(code), so a mistyped/unknown code is now
+    rejected with a friendly message instead of being silently logged as-is
+    (the Sheets version never validated this at all). Reasonable tightening,
+    not a regression, but worth knowing it's a new behavior."""
     try:
         location_code = str(location_code or "").strip()
         issue_desc    = str(issue_desc    or "").strip()
@@ -749,13 +760,14 @@ def log_help_request(location_code: str, issue_desc: str,
             return {"ok": False, "msg": "Please enter your Location Code."}
         if len(issue_desc) < 10:
             return {"ok": False, "msg": "Please describe your issue in at least 10 characters."}
+        if not _pg_one("select 1 from locations where code = %s", (location_code,)):
+            return {"ok": False, "msg": f'Location Code "{location_code}" is not recognized.'}
 
         ref_id = "HD-" + str(int(time.time()))[-6:]
-
-        _ws(TABS["HELPDESK"]).append_row(
-            [datetime.now().isoformat(), location_code,
-             issue_type, issue_desc, "Pending", ""],
-            value_input_option="RAW",
+        _pg_query(
+            "insert into helpdesk_tickets (location_code, issue_type, issue_desc, status) "
+            "values (%s, %s, %s, 'OPEN')",
+            (location_code, issue_type, issue_desc), fetch=False,
         )
         audit_log(location_code, "Help Request", f"{ref_id} [{issue_type}] — {issue_desc[:60]}")
         return {
@@ -769,7 +781,6 @@ def log_help_request(location_code: str, issue_desc: str,
 
 # ── Submission status ─────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=120)
 def _revert_if_deleted(user_id: str, month_year: str, status: str,
                        completion_pct: float) -> str:
     """If the approved_snapshots row was deleted externally, revert status
@@ -1882,43 +1893,27 @@ def get_active_sessions(threshold_min: float = 30) -> list:
     return result
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _settings_rows() -> list:
-    """Read all Settings rows once, cached for 60 s. Single API call shared by all get_setting() lookups."""
-    try:
-        ws = _ensure_ws(TABS["SETTINGS"], _SETTINGS_HEADERS)
-        return _api_call(ws.get_all_values) or []
-    except Exception:
-        return []
-
-
 def get_setting(key: str, default: str = "FALSE") -> str:
-    """Read a single value from the Settings tab (uses 60 s shared cache)."""
+    """Read a single value from app_settings."""
     try:
-        rows = _settings_rows()
-        for row in rows[1:]:
-            row = (row + [""] * 4)[:4]
-            if row[0].strip() == key:
-                return row[1].strip() or default
-        return default
+        row = _pg_one("select value from app_settings where key = %s", (key,))
+        return row["value"] if row and row["value"] else default
     except Exception:
         return default
 
 
 def set_setting(key: str, value: str, updated_by: str = "system") -> dict:
-    """Write/update a value in the Settings tab and clear the read cache."""
+    """Write/update a value in app_settings."""
     try:
-        ws   = _ensure_ws(TABS["SETTINGS"], _SETTINGS_HEADERS)
-        rows = _api_call(ws.get_all_values)
-        now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 4)[:4]
-            if row[0].strip() == key:
-                _api_call(lambda i=i: ws.update(f"B{i}:D{i}", [[value, updated_by, now]]))
-                _settings_rows.clear()
-                return {"ok": True}
-        _api_call(lambda: ws.append_row([key, value, updated_by, now], value_input_option="RAW"))
-        _settings_rows.clear()
+        _pg_query(
+            """
+            insert into app_settings (key, value, updated_by, updated_at)
+            values (%s, %s, %s, now())
+            on conflict (key) do update set
+                value = excluded.value, updated_by = excluded.updated_by, updated_at = now()
+            """,
+            (key, value, updated_by), fetch=False,
+        )
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
@@ -1971,53 +1966,53 @@ def update_location_zone(loc_code: str, new_zone: str, updated_by: str) -> dict:
 
 # ── EmailMaster: dynamic email maps ──────────────────────────────────────────
 
-@st.cache_data(ttl=300)
 def get_email_master_maps() -> tuple:
-    """Read EmailMaster sheet → (loc_map, zone_map).
+    """Read email_routing → (loc_map, zone_map).
 
-    Returns (None, None) if the tab is empty or missing — callers should
-    fall back to the hardcoded dicts in emails.py.
-    ttl=300 means email changes in the sheet take effect within 5 minutes.
+    Returns (None, None) if empty — callers fall back to the hardcoded
+    dicts in emails.py.
     """
     try:
-        ws   = _ensure_ws(TABS["EMAIL_MASTER"], _EMAIL_MASTER_HEADERS)
-        rows = _api_call(ws.get_all_values)
-        if len(rows) < 2:
+        rows = _pg_query("select entity_type, entity_code, email, cc from email_routing")
+        if not rows:
             return None, None
-        loc_map  = {}
-        zone_map = {}
-        for row in rows[1:]:
-            row = (row + [""] * 5)[:5]
-            t, code, _name, email, cc = [c.strip() for c in row]
-            if not code or not email:
+        loc_map, zone_map = {}, {}
+        for r in rows:
+            if not r["entity_code"] or not r["email"]:
                 continue
-            if t.lower() == "location":
-                loc_map[code] = email
-            elif t.lower() == "zone":
-                zone_map[code] = {"to": email, "cc": cc}
+            if r["entity_type"] == "LOCATION":
+                loc_map[r["entity_code"]] = r["email"]
+            elif r["entity_type"] == "ZONE":
+                zone_map[r["entity_code"]] = {"to": r["email"], "cc": r["cc"] or ""}
         return (loc_map or None), (zone_map or None)
     except Exception:
         return None, None
 
 
 def seed_email_master(location_map: dict, zone_map: dict) -> dict:
-    """Populate (or overwrite) the EmailMaster tab from the given dicts.
+    """Populate (or overwrite) email_routing from the given dicts.
 
-    Called once from the Mail Trigger page to migrate hardcoded data to the
-    sheet so the admin can edit it there going forward.
+    Called once from the Mail Trigger page to migrate hardcoded data so the
+    admin can edit it in the database going forward.
     """
     try:
-        ws = _ensure_ws(TABS["EMAIL_MASTER"], _EMAIL_MASTER_HEADERS)
-        ws.batch_clear(["A2:E2000"])
-        rows = []
+        _pg_query("delete from email_routing", fetch=False)
+        count = 0
         for code, email in sorted(location_map.items()):
-            rows.append(["Location", code, "", email, ""])
+            _pg_query(
+                "insert into email_routing (entity_type, entity_code, email) "
+                "values ('LOCATION', %s, %s)",
+                (code, email), fetch=False,
+            )
+            count += 1
         for zone, v in sorted(zone_map.items()):
-            rows.append(["Zone", zone, zone, v.get("to", ""), v.get("cc", "")])
-        if rows:
-            ws.append_rows(rows, value_input_option="RAW")
-        get_email_master_maps.clear()
-        return {"ok": True, "count": len(rows)}
+            _pg_query(
+                "insert into email_routing (entity_type, entity_code, display_name, email, cc) "
+                "values ('ZONE', %s, %s, %s, %s)",
+                (zone, zone, v.get("to", ""), v.get("cc", "")), fetch=False,
+            )
+            count += 1
+        return {"ok": True, "count": count}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
