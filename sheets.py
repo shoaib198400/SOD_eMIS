@@ -4208,9 +4208,19 @@ _MI_TAB_HEADERS = {
 
 
 def ensure_mi_tabs():
-    """Auto-create any missing M&I worksheet tabs with their headers."""
-    for key, headers in _MI_TAB_HEADERS.items():
-        _ensure_ws(TABS[key], headers)
+    """No-op on Postgres -- the mi_rows/mi_singletons/mi_submodule_status
+    tables already exist via the schema, unlike Sheets worksheet tabs which
+    needed explicit auto-creation. Kept as a callable no-op for compatibility
+    with any existing call site."""
+    pass
+
+
+# tab_key -> which M&I table stores it: repeatable rows vs one record per
+# submission. Matches schema.sql's own split (mi_rows vs mi_singletons).
+_MI_MULTIROW_TABS = {
+    "MI_TANK_OUTAGE", "MI_MAJOR_REPAIR", "MI_TECH_AUDIT",
+    "MI_EQUIP_BREAKDOWN", "MI_TANK_STATUS",
+}
 
 
 _MI_ALL_TABS = (
@@ -4619,26 +4629,53 @@ def get_approved_mis_excel(
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
-    """Return list of row-dicts for user+month from an M&I tab (5-min cache)."""
+    """Return list of row-dicts for user+month from an M&I tab.
+
+    Postgres note: multi-row tabs live in mi_rows, singleton tabs in
+    mi_singletons (see _MI_MULTIROW_TABS) -- matching the split the schema
+    already has. na_flag is stored once per (submission, tab) in
+    mi_submodule_status rather than repeated on every row like the sheet
+    did; merged back into each returned dict so the contract (a dict with
+    every header key, na_flag included) is unchanged for callers.
+    """
     try:
         headers = _MI_TAB_HEADERS[tab_key]
-        ws      = _ensure_ws(TABS[tab_key], headers)
-        all_rows = _api_call(ws.get_all_values)
-        if len(all_rows) < 2:
+        sub = _pg_one(
+            "select id from monthly_submissions where location_code = %s and month_year = %s",
+            (user_id, _mk_to_date(month_year)),
+        )
+        if not sub:
             return []
-        hdr = all_rows[0]
-        try:
-            uid_idx = hdr.index("user_id")
-            mon_idx = hdr.index("month_year")
-        except ValueError:
-            return []
-        result = []
-        for row in all_rows[1:]:
-            row = (row + [""] * len(hdr))[:len(hdr)]
-            if row[uid_idx].strip() != user_id or row[mon_idx].strip() != month_year:
-                continue
-            result.append({hdr[i]: row[i] for i in range(len(hdr))})
-        return result
+
+        na = _pg_one(
+            "select is_not_applicable from mi_submodule_status "
+            "where submission_id = %s and tab_key = %s",
+            (sub["id"], tab_key),
+        )
+        na_flag = "TRUE" if na and na["is_not_applicable"] else "FALSE"
+
+        if tab_key in _MI_MULTIROW_TABS:
+            rows = _pg_query(
+                "select row_data from mi_rows where submission_id = %s and tab_key = %s "
+                "order by sort_order",
+                (sub["id"], tab_key),
+            )
+            result = []
+            for r in rows:
+                d = {h: r["row_data"].get(h, "") for h in headers}
+                d["na_flag"] = na_flag
+                result.append(d)
+            return result
+        else:
+            row = _pg_one(
+                "select data from mi_singletons where submission_id = %s and tab_key = %s",
+                (sub["id"], tab_key),
+            )
+            if not row:
+                return []
+            d = {h: row["data"].get(h, "") for h in headers}
+            d["na_flag"] = na_flag
+            return [d]
     except Exception:
         return []
 
@@ -4646,37 +4683,54 @@ def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
 def save_mi_data(tab_key: str, user_id: str, month_year: str, rows: list) -> dict:
     """Replace all rows for user+month in an M&I tab with the provided rows list."""
     try:
-        headers  = _MI_TAB_HEADERS[tab_key]
-        ws       = _ensure_ws(TABS[tab_key], headers)
-        all_rows = _api_call(ws.get_all_values)
-        hdr = all_rows[0] if all_rows else headers
-        try:
-            uid_idx = hdr.index("user_id")
-            mon_idx = hdr.index("month_year")
-        except ValueError:
-            uid_idx, mon_idx = 0, 1
+        headers = _MI_TAB_HEADERS[tab_key]
+        sub = _pg_one(
+            """
+            insert into monthly_submissions (location_code, month_year)
+            values (%s, %s)
+            on conflict (location_code, month_year) do update set last_updated_at = now()
+            returning id
+            """,
+            (user_id, _mk_to_date(month_year)),
+        )
+        submission_id = sub["id"]
 
-        to_del = [i + 2 for i, row in enumerate(all_rows[1:])
-                  if (row + [""] * len(hdr))[uid_idx].strip() == user_id
-                  and (row + [""] * len(hdr))[mon_idx].strip() == month_year]
-        for idx in reversed(to_del):
-            _api_call(ws.delete_rows, idx)
+        na_flag = bool(rows) and str(rows[0].get("na_flag", "")).strip().upper() == "TRUE"
+        _pg_query(
+            """
+            insert into mi_submodule_status (submission_id, tab_key, is_not_applicable, updated_at)
+            values (%s, %s, %s, now())
+            on conflict (submission_id, tab_key) do update set
+                is_not_applicable = excluded.is_not_applicable, updated_at = now()
+            """,
+            (submission_id, tab_key, na_flag), fetch=False,
+        )
 
-        now_str = datetime.now().isoformat()
-        for rec in rows:
-            out_row = []
-            for col in headers:
-                if col == "user_id":
-                    out_row.append(user_id)
-                elif col == "month_year":
-                    out_row.append(month_year)
-                elif col == "saved_at":
-                    out_row.append(now_str)
-                else:
-                    out_row.append(str(rec.get(col, "") or ""))
-            _api_call(ws.append_row, out_row, value_input_option="RAW")
+        data_cols = [h for h in headers if h not in ("user_id", "month_year", "na_flag", "saved_at")]
 
-        load_mi_data.clear()  # invalidate read cache so next load fetches fresh data
+        if tab_key in _MI_MULTIROW_TABS:
+            _pg_query("delete from mi_rows where submission_id = %s and tab_key = %s",
+                      (submission_id, tab_key), fetch=False)
+            for sr, rec in enumerate(rows, 1):
+                row_data = {c: str(rec.get(c, "") or "") for c in data_cols}
+                _pg_query(
+                    "insert into mi_rows (submission_id, tab_key, row_data, sort_order) "
+                    "values (%s, %s, %s, %s)",
+                    (submission_id, tab_key, psycopg2.extras.Json(row_data), sr), fetch=False,
+                )
+        else:
+            rec = rows[0] if rows else {}
+            row_data = {c: str(rec.get(c, "") or "") for c in data_cols}
+            _pg_query(
+                """
+                insert into mi_singletons (submission_id, tab_key, data, updated_at)
+                values (%s, %s, %s, now())
+                on conflict (submission_id, tab_key) do update set
+                    data = excluded.data, updated_at = now()
+                """,
+                (submission_id, tab_key, psycopg2.extras.Json(row_data)), fetch=False,
+            )
+
         audit_log(user_id, f"SaveMI {tab_key}", f"month={month_year} rows={len(rows)}")
         return {"ok": True, "rows": len(rows)}
     except Exception as e:
