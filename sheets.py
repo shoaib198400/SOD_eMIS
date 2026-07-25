@@ -1165,65 +1165,68 @@ def save_draft(user_id: str, month_year: str,
 
 # ── Detail table CRUD (Railway Claims, IRR Details, Legal Cases) ─────────────
 
+# tab_key (TABS dict convention) -> detail_rows.table_type (schema check constraint)
+_DETAIL_TYPE_MAP = {
+    "RAILWAY_CLAIMS": "RAILWAY_CLAIM",
+    "IRR_DETAILS":    "IRR_DETAIL",
+    "LEGAL_CASES":    "LEGAL_CASE",
+}
+
+
 def load_detail_table(user_id: str, month_year: str, tab_key: str) -> list:
-    """Return list of row-dicts for user+month from a detail sheet."""
+    """Return list of row-dicts for user+month from a detail table.
+
+    Postgres note: Sr#/Zone/Location prefix columns the sheet stored per row
+    are gone -- those were denormalized display convenience, derivable from
+    the submission's own location/month via a join if a report ever needs
+    them. row_data holds exactly defn["data_keys"], nothing else."""
     try:
-        defn      = _DETAIL_DEF[tab_key]
-        ws        = _ensure_ws(TABS[tab_key], defn["sheet_headers"])
-        all_rows  = ws.get_all_values()
-        if len(all_rows) < 2:
+        defn  = _DETAIL_DEF[tab_key]
+        ttype = _DETAIL_TYPE_MAP[tab_key]
+        sub = _pg_one(
+            "select id from monthly_submissions where location_code = %s and month_year = %s",
+            (user_id, _mk_to_date(month_year)),
+        )
+        if not sub:
             return []
-        headers   = all_rows[0]
-        try:
-            uid_idx = headers.index("user_id")
-            mon_idx = headers.index("Month-Year")
-        except ValueError:
-            return []
-        prefix  = defn["prefix_count"]
-        dkeys   = defn["data_keys"]
-        result  = []
-        for row in all_rows[1:]:
-            row = (row + [""] * len(headers))[:len(headers)]
-            if row[uid_idx].strip() != user_id or row[mon_idx].strip() != month_year:
-                continue
-            result.append({k: (row[prefix + i] if prefix + i < len(row) else "")
-                           for i, k in enumerate(dkeys)})
-        return result
+        rows = _pg_query(
+            "select row_data from detail_rows where submission_id = %s and table_type = %s "
+            "order by sort_order",
+            (sub["id"], ttype),
+        )
+        return [{k: r["row_data"].get(k, "") for k in defn["data_keys"]} for r in rows]
     except Exception:
         return []
 
 
 def save_detail_table(user_id: str, month_year: str, tab_key: str,
                       rows_data: list, user_info: dict) -> dict:
-    """Replace all rows for user+month in a detail sheet with rows_data."""
+    """Replace all rows for user+month in a detail table with rows_data."""
     try:
-        defn      = _DETAIL_DEF[tab_key]
-        ws        = _ensure_ws(TABS[tab_key], defn["sheet_headers"])
-        all_rows  = ws.get_all_values()
-        headers   = all_rows[0] if all_rows else defn["sheet_headers"]
-        try:
-            uid_idx = headers.index("user_id")
-            mon_idx = headers.index("Month-Year")
-        except ValueError:
-            uid_idx, mon_idx = 4, 3
+        defn  = _DETAIL_DEF[tab_key]
+        ttype = _DETAIL_TYPE_MAP[tab_key]
+        sub = _pg_one(
+            """
+            insert into monthly_submissions (location_code, month_year)
+            values (%s, %s)
+            on conflict (location_code, month_year) do update set last_updated_at = now()
+            returning id
+            """,
+            (user_id, _mk_to_date(month_year)),
+        )
+        submission_id = sub["id"]
 
-        # Delete existing rows for this user+month (reverse order to keep indices stable)
-        to_del = [i + 2 for i, row in enumerate(all_rows[1:])
-                  if (row + [""] * len(headers))[uid_idx].strip() == user_id
-                  and (row + [""] * len(headers))[mon_idx].strip() == month_year]
-        for idx in reversed(to_del):
-            ws.delete_rows(idx)
-
-        zone = user_info.get("zone", "")
-        loc  = user_info.get("locName", "")
-
+        _pg_query(
+            "delete from detail_rows where submission_id = %s and table_type = %s",
+            (submission_id, ttype), fetch=False,
+        )
         for sr, rec in enumerate(rows_data, 1):
-            if tab_key == "IRR_DETAILS":
-                prefix = [sr, zone, user_id, loc, month_year, user_id]
-            else:
-                prefix = [sr, zone, loc, month_year, user_id]
-            data_vals = [str(rec.get(k, "") or "") for k in defn["data_keys"]]
-            ws.append_row(prefix + data_vals, value_input_option="RAW")
+            row_data = {k: str(rec.get(k, "") or "") for k in defn["data_keys"]}
+            _pg_query(
+                "insert into detail_rows (submission_id, table_type, row_data, sort_order) "
+                "values (%s, %s, %s, %s)",
+                (submission_id, ttype, psycopg2.extras.Json(row_data), sr), fetch=False,
+            )
 
         audit_log(user_id, f"SaveDetail {tab_key}",
                   f"month={month_year} rows={len(rows_data)}")
@@ -1447,29 +1450,44 @@ def get_submissions_for_locations(locs: list, month_year: str) -> list:
 
 def create_revision_request(zone_id: str, location_id: str,
                             month_year: str, reason: str) -> dict:
-    """Zone user raises a correction request for an already-submitted month."""
+    """Zone user raises a correction request for an already-submitted month.
+
+    Postgres note: schema's status enum is 'PENDING'/'APPROVED'/'REJECTED'
+    (not the Sheets version's 'PENDING_HQO') -- using the schema's own
+    convention rather than fighting it. request_id is now just the row's
+    real integer id as a string, not a random UUID fragment -- simpler,
+    and still opaque to users since it's only ever round-tripped from a
+    "list requests" call to an "act on this one" call, never typed by hand.
+    Required a schema fix first: revision_requests had no `notes` column
+    for storing a rejection reason -- added via ALTER TABLE (see schema.sql).
+    """
     try:
         if not reason.strip():
             return {"ok": False, "msg": "Please provide a reason for the revision request."}
 
-        ws   = _ensure_ws(TABS["REVISION_REQUESTS"], _RR_HEADERS)
-        rows = ws.get_all_values()
-        for row in rows[1:]:
-            row = (row + [""] * 10)[:10]
-            if (row[2].strip() == location_id and
-                    row[3].strip() == month_year and
-                    row[5].strip() == "PENDING_HQO"):
-                return {"ok": False,
-                        "msg": "A revision request for this location/month is already pending HQO approval."}
-
-        import uuid
-        req_id  = str(uuid.uuid4())[:8].upper()
-        now_str = datetime.now().isoformat()
-        ws.append_row(
-            [req_id, zone_id, location_id, month_year,
-             reason, "PENDING_HQO", "", "", "", now_str],
-            value_input_option="RAW",
+        mdate = _mk_to_date(month_year)
+        existing = _pg_one(
+            "select id from revision_requests where location_code = %s and month_year = %s "
+            "and status = 'PENDING'",
+            (location_id, mdate),
         )
+        if existing:
+            return {"ok": False,
+                    "msg": "A revision request for this location/month is already pending HQO approval."}
+
+        requester = _pg_one("select id from users where login_code = %s", (zone_id,))
+        if not requester:
+            return {"ok": False, "msg": f"Requesting user '{zone_id}' not found."}
+
+        row = _pg_one(
+            """
+            insert into revision_requests (location_code, month_year, requested_by, reason, status)
+            values (%s, %s, %s, %s, 'PENDING')
+            returning id
+            """,
+            (location_id, mdate, requester["id"], reason),
+        )
+        req_id = str(row["id"])
         audit_log(zone_id, "RevisionRequest",
                   f"req={req_id} loc={location_id} month={month_year}")
         return {"ok": True, "msg": f"Revision request {req_id} submitted to HQO."}
@@ -1478,29 +1496,41 @@ def create_revision_request(zone_id: str, location_id: str,
 
 
 def get_revision_requests(zone_filter: str = "") -> list:
-    """Return revision requests; optionally filtered to a specific zone_id."""
+    """Return revision requests; optionally filtered to a specific
+    requesting user's login_code (matches the original's zone_filter,
+    which was always the requesting Zone user's own id)."""
     try:
-        ws   = _ensure_ws(TABS["REVISION_REQUESTS"], _RR_HEADERS)
-        rows = ws.get_all_values()
-        result = []
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 10)[:10]
-            if zone_filter and row[1].strip() != zone_filter:
-                continue
-            result.append({
-                "row":         i,
-                "request_id":  row[0].strip(),
-                "zone_id":     row[1].strip(),
-                "location_id": row[2].strip(),
-                "month_year":  row[3].strip(),
-                "reason":      row[4].strip(),
-                "status":      row[5].strip() or "PENDING_HQO",
-                "actioned_by": row[6].strip(),
-                "actioned_at": row[7].strip(),
-                "notes":       row[8].strip(),
-                "created_at":  row[9].strip(),
-            })
-        return result
+        sql = """
+            select rr.id, rr.location_code, rr.month_year, rr.reason, rr.status,
+                   rr.actioned_at, rr.notes, rr.created_at,
+                   ru.login_code as requested_by_code,
+                   au.login_code as actioned_by_code
+            from revision_requests rr
+            join users ru on ru.id = rr.requested_by
+            left join users au on au.id = rr.actioned_by
+        """
+        params: tuple = ()
+        if zone_filter:
+            sql += " where ru.login_code = %s"
+            params = (zone_filter,)
+        sql += " order by rr.created_at desc"
+        rows = _pg_query(sql, params)
+        return [
+            {
+                "row":         r["id"],
+                "request_id":  str(r["id"]),
+                "zone_id":     r["requested_by_code"],
+                "location_id": r["location_code"],
+                "month_year":  month_key(r["month_year"]),
+                "reason":      r["reason"] or "",
+                "status":      r["status"] or "PENDING",
+                "actioned_by": r["actioned_by_code"] or "",
+                "actioned_at": r["actioned_at"].isoformat() if r["actioned_at"] else "",
+                "notes":       r["notes"] or "",
+                "created_at":  r["created_at"].isoformat() if r["created_at"] else "",
+            }
+            for r in rows
+        ]
     except Exception:
         return []
 
@@ -1508,29 +1538,34 @@ def get_revision_requests(zone_filter: str = "") -> list:
 def approve_revision_request(request_id: str, actioned_by: str) -> dict:
     """HQO approves revision — unlocks the location's month for re-editing."""
     try:
-        ws   = _ensure_ws(TABS["REVISION_REQUESTS"], _RR_HEADERS)
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 10)[:10]
-            if row[0].strip() == request_id:
-                location_id = row[2].strip()
-                month_year  = row[3].strip()
-                now_str     = datetime.now().isoformat()
-                ws.update(f"F{i}:I{i}",
-                          [["APPROVED", actioned_by, now_str, ""]])
-                sd = get_month_status(location_id, month_year)
-                _update_submission_status(
-                    location_id, month_year, "REJECTED",
-                    sd.get("completion_pct", 0),
-                    checker_notes=(
-                        "Correction approved by HQO. "
-                        "Please update the data and resubmit."
-                    ),
-                )
-                audit_log(actioned_by, "ApproveRevision",
-                          f"req={request_id} loc={location_id} month={month_year}")
-                return {"ok": True}
-        return {"ok": False, "msg": f"Request ID {request_id} not found."}
+        row = _pg_one(
+            "select location_code, month_year from revision_requests where id = %s",
+            (int(request_id),),
+        )
+        if not row:
+            return {"ok": False, "msg": f"Request ID {request_id} not found."}
+        location_id = row["location_code"]
+        month_year  = month_key(row["month_year"])
+
+        actioner = _pg_one("select id from users where login_code = %s", (actioned_by,))
+        _pg_query(
+            "update revision_requests set status = 'APPROVED', actioned_by = %s, actioned_at = now() "
+            "where id = %s",
+            (actioner["id"] if actioner else None, int(request_id)), fetch=False,
+        )
+
+        sd = get_month_status(location_id, month_year)
+        _update_submission_status(
+            location_id, month_year, "REJECTED",
+            sd.get("completion_pct", 0),
+            checker_notes=(
+                "Correction approved by HQO. "
+                "Please update the data and resubmit."
+            ),
+        )
+        audit_log(actioned_by, "ApproveRevision",
+                  f"req={request_id} loc={location_id} month={month_year}")
+        return {"ok": True}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
@@ -1539,18 +1574,16 @@ def reject_revision_request(request_id: str,
                              actioned_by: str, note: str) -> dict:
     """HQO rejects revision request."""
     try:
-        ws   = _ensure_ws(TABS["REVISION_REQUESTS"], _RR_HEADERS)
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 10)[:10]
-            if row[0].strip() == request_id:
-                now_str = datetime.now().isoformat()
-                ws.update(f"F{i}:I{i}",
-                          [["REJECTED", actioned_by, now_str, note]])
-                audit_log(actioned_by, "RejectRevision",
-                          f"req={request_id} note={note[:60]}")
-                return {"ok": True}
-        return {"ok": False, "msg": f"Request ID {request_id} not found."}
+        actioner = _pg_one("select id from users where login_code = %s", (actioned_by,))
+        n = _pg_query(
+            "update revision_requests set status = 'REJECTED', actioned_by = %s, "
+            "actioned_at = now(), notes = %s where id = %s",
+            (actioner["id"] if actioner else None, note, int(request_id)), fetch=False,
+        )
+        if not n:
+            return {"ok": False, "msg": f"Request ID {request_id} not found."}
+        audit_log(actioned_by, "RejectRevision", f"req={request_id} note={note[:60]}")
+        return {"ok": True}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
