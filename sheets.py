@@ -1390,20 +1390,17 @@ def _user_access_raw_rows() -> list:
 
 
 def get_locations_by_zone(zone_name: str) -> list:
-    """Return Maker location dicts for a given zone (reads UserAccess)."""
+    """Return Maker location dicts for a given zone."""
     try:
-        rows = _user_access_raw_rows()
-        locs = []
-        for row in rows[1:]:
-            row = (row + [""] * 8)[:8]
-            loc_code, loc_name, zone, _, role = row[:5]
-            if zone.strip() == zone_name and role.strip() == "Maker":
-                locs.append({
-                    "userId":  loc_code.strip(),
-                    "locName": loc_name.strip(),
-                    "zone":    zone.strip(),
-                })
-        return locs
+        rows = _pg_query("""
+            select u.login_code, l.name as loc_name, z.name as zone_name
+            from users u
+            join locations l on l.code = u.location_code
+            join zones z on z.id = l.zone_id
+            where u.role = 'Maker' and z.name = %s
+        """, (zone_name,))
+        return [{"userId": r["login_code"], "locName": r["loc_name"], "zone": r["zone_name"]}
+                for r in rows]
     except Exception:
         return []
 
@@ -1411,18 +1408,15 @@ def get_locations_by_zone(zone_name: str) -> list:
 def get_all_maker_locations() -> list:
     """Return all Maker location dicts across all zones (HQO view)."""
     try:
-        rows = _user_access_raw_rows()
-        locs = []
-        for row in rows[1:]:
-            row = (row + [""] * 8)[:8]
-            loc_code, loc_name, zone, _, role = row[:5]
-            if role.strip() == "Maker":
-                locs.append({
-                    "userId":  loc_code.strip(),
-                    "locName": loc_name.strip(),
-                    "zone":    zone.strip(),
-                })
-        return locs
+        rows = _pg_query("""
+            select u.login_code, l.name as loc_name, z.name as zone_name
+            from users u
+            join locations l on l.code = u.location_code
+            left join zones z on z.id = l.zone_id
+            where u.role = 'Maker'
+        """)
+        return [{"userId": r["login_code"], "locName": r["loc_name"], "zone": r["zone_name"] or ""}
+                for r in rows]
     except Exception:
         return []
 
@@ -1430,13 +1424,16 @@ def get_all_maker_locations() -> list:
 def get_maker_info(user_id: str) -> dict:
     """Return {"userId", "locName", "zone"} for a Maker, or a minimal dict."""
     try:
-        rows = _user_access_raw_rows()
-        for row in rows[1:]:
-            row = (row + [""] * 8)[:8]
-            loc_code, loc_name, zone, _, role = row[:5]
-            if loc_code.strip() == user_id and role.strip() == "Maker":
-                return {"userId": loc_code.strip(), "locName": loc_name.strip(),
-                        "zone": zone.strip()}
+        row = _pg_one("""
+            select u.login_code, l.name as loc_name, z.name as zone_name
+            from users u
+            join locations l on l.code = u.location_code
+            left join zones z on z.id = l.zone_id
+            where u.role = 'Maker' and u.login_code = %s
+        """, (user_id,))
+        if row:
+            return {"userId": row["login_code"], "locName": row["loc_name"],
+                    "zone": row["zone_name"] or ""}
     except Exception:
         pass
     return {"userId": user_id, "locName": user_id, "zone": ""}
@@ -1594,301 +1591,230 @@ _UA_HEADERS = [
 ]
 
 def setup_zone_accounts() -> dict:
-    """Auto-generate Zone and HQO accounts in UserAccess from existing Maker rows.
+    """Auto-generate Zone and HQO accounts from existing zones/locations.
 
-    Zone account convention:
-      user_id  = first-3-chars-of-zone-name (uppercase) + "ZONE"  e.g. "BHOZONE"
-      password = first-3-chars-of-zone-name (uppercase) + "MIS"   e.g. "BHOMIS"
-      role     = "Zone"
-
-    HQO account:
-      user_id = "SODSBU", password = "SODMIS", role = "Admin"
-
-    Skips rows that already exist (matched on user_id).
-    Returns {"ok": True, "added": [...newly added user_ids...]}
+    Postgres note: zones are already their own rows (created during the
+    Hackathon import), so this no longer needs to derive zone names from
+    Maker rows -- it just ensures every zone has a Zone-role user, plus the
+    HQO/Admin and view-only accounts.
     """
     try:
-        ws   = _ensure_ws(TABS["USER_ACCESS"], _UA_HEADERS)
-        rows = ws.get_all_values()
-        if not rows:
-            return {"ok": False, "msg": "UserAccess sheet is empty."}
-
-        hdr = rows[0]
-        existing_ids = {
-            (r + [""] * len(hdr))[0].strip().upper()
-            for r in rows[1:]
+        zones = _pg_query("select id, name from zones")
+        existing_zone_ids = {
+            r["zone_id"] for r in _pg_query(
+                "select zone_id from users where role = 'Zone' and zone_id is not null"
+            )
         }
+        added = []
 
-        # Collect unique zone names from Maker rows
-        zones_seen: dict[str, str] = {}   # zone_name -> derived zone_id
-        for r in rows[1:]:
-            r = (r + [""] * 8)[:8]
-            zone_name = r[2].strip()
-            role      = r[4].strip()
-            if role == "Maker" and zone_name:
-                prefix   = zone_name[:3].upper()
-                zone_uid = prefix + "ZONE"
-                zones_seen[zone_name] = zone_uid
+        def _hash(pw: str) -> str:
+            return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
-        now_str = datetime.now().isoformat()
-        added   = []
-
-        for zone_name, zone_uid in zones_seen.items():
-            if zone_uid.upper() in existing_ids:
+        for z in zones:
+            if z["id"] in existing_zone_ids:
                 continue
-            prefix = zone_uid[:3]
-            pw     = prefix + "MIS"
-            ws.append_row(
-                [zone_uid, zone_name + " Zone", zone_name, pw, "Zone",
-                 "", "", "Y"],
-                value_input_option="RAW",
+            prefix   = z["name"][:3].upper()
+            zone_uid = prefix + "ZONE"
+            pw       = prefix + "MIS"
+            _pg_query(
+                """insert into users (login_code, zone_id, role, password_hash, is_first_login, active)
+                   values (%s, %s, 'Zone', %s, true, true)
+                   on conflict (login_code) do nothing""",
+                (zone_uid, z["id"], _hash(pw)), fetch=False,
             )
             added.append(zone_uid)
             audit_log("SYSTEM", "SetupZoneAccount",
-                      f"Added zone account {zone_uid} for zone {zone_name}")
+                      f"Added zone account {zone_uid} for zone {z['name']}")
 
-        # HQO / Admin account
-        if "SODSBU" not in existing_ids:
-            ws.append_row(
-                ["SODSBU", "HQ Operations", "ALL", "SODMIS", "Admin",
-                 "", "", "Y"],
-                value_input_option="RAW",
+        if not _pg_one("select 1 from users where login_code = 'SODSBU'"):
+            _pg_query(
+                """insert into users (login_code, role, password_hash, is_first_login, active)
+                   values ('SODSBU', 'Admin', %s, true, true)""",
+                (_hash("SODMIS"),), fetch=False,
             )
             added.append("SODSBU")
             audit_log("SYSTEM", "SetupZoneAccount", "Added HQO account SODSBU")
 
-        # View-only account
-        if "SODVIEW" not in existing_ids:
-            ws.append_row(
-                ["SODVIEW", "View Only Access", "ALL", "VIEWMIS", "Viewer",
-                 "", "", "Y"],
-                value_input_option="RAW",
+        if not _pg_one("select 1 from users where login_code = 'SODVIEW'"):
+            _pg_query(
+                """insert into users (login_code, role, password_hash, is_first_login, active)
+                   values ('SODVIEW', 'Viewer', %s, true, true)""",
+                (_hash("VIEWMIS"),), fetch=False,
             )
             added.append("SODVIEW")
             audit_log("SYSTEM", "SetupZoneAccount", "Added Viewer account SODVIEW")
 
-        try:
-            _spreadsheet.clear()   # force next login to re-read UserAccess
-        except Exception:
-            pass
         return {"ok": True, "added": added}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
 
+# ── FLAGGED FOR REVIEW ────────────────────────────────────────────────────
+# The four functions below (get_zone_admin_accounts, get_all_maker_credentials,
+# get_all_checker_credentials, get_all_zone_credentials) let Admin view every
+# user's PLAINTEXT password in the Sheets version -- used today for account
+# review and for the credential-distribution emails (see app.py ~line 5629).
+# Postgres stores bcrypt hashes (a real security improvement over the
+# Sheets version), which are mathematically one-way: the original password
+# CANNOT be recovered once hashed, by anyone, including this code.
+# "password" is returned as None below so nothing crashes, but the actual
+# credential-distribution workflow needs a product decision before cutover:
+# most likely "generate a new password and show/email it once at creation
+# time" rather than "view the existing one" -- worth discussing before this
+# is relied on for real onboarding.
+
 def get_zone_admin_accounts() -> list:
-    """Return all Zone and Admin rows from UserAccess for diagnostics."""
-    try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
-        out  = []
-        for r in rows[1:]:
-            r = (r + [""] * 8)[:8]
-            role = r[4].strip()
-            if role in ("Zone", "Admin"):
-                out.append({
-                    "user_id":  r[0].strip(),
-                    "loc_name": r[1].strip(),
-                    "zone":     r[2].strip(),
-                    "password": r[3].strip(),
-                    "role":     role,
-                })
-        return out
-    except Exception:
-        return []
+    rows = _pg_query("""
+        select u.login_code, u.role, z.name as zone_name
+        from users u left join zones z on z.id = u.zone_id
+        where u.role in ('Zone', 'Admin')
+    """)
+    return [
+        {"user_id": r["login_code"], "loc_name": r["zone_name"] or "",
+         "zone": r["zone_name"] or "", "password": None, "role": r["role"]}
+        for r in rows
+    ]
 
 
 def get_all_maker_credentials() -> list:
-    """Return list of {userId, locName, zone, password} for all Maker accounts."""
-    try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
-        out  = []
-        for r in rows[1:]:
-            r = (r + [""] * 8)[:8]
-            if r[4].strip() == "Maker" and r[0].strip():
-                out.append({
-                    "userId":  r[0].strip(),
-                    "locName": r[1].strip(),
-                    "zone":    r[2].strip(),
-                    "password": r[3].strip(),
-                })
-        return out
-    except Exception:
-        return []
+    rows = _pg_query("""
+        select u.login_code, l.name as loc_name, z.name as zone_name
+        from users u
+        join locations l on l.code = u.location_code
+        left join zones z on z.id = l.zone_id
+        where u.role = 'Maker'
+    """)
+    return [
+        {"userId": r["login_code"], "locName": r["loc_name"] or "",
+         "zone": r["zone_name"] or "", "password": None}
+        for r in rows
+    ]
 
 
 def get_all_checker_credentials() -> list:
-    """Return list of {userId, locName, zone, password} for all Checker accounts."""
-    try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
-        out  = []
-        for r in rows[1:]:
-            r = (r + [""] * 8)[:8]
-            if r[4].strip() == "Checker" and r[0].strip():
-                out.append({
-                    "userId":  r[0].strip(),
-                    "locName": r[1].strip(),
-                    "zone":    r[2].strip(),
-                    "password": r[3].strip(),
-                })
-        return out
-    except Exception:
-        return []
+    rows = _pg_query("""
+        select u.login_code, l.name as loc_name, z.name as zone_name
+        from users u
+        join locations l on l.code = u.location_code
+        left join zones z on z.id = l.zone_id
+        where u.role = 'Checker'
+    """)
+    return [
+        {"userId": r["login_code"], "locName": r["loc_name"] or "",
+         "zone": r["zone_name"] or "", "password": None}
+        for r in rows
+    ]
 
 
 def get_all_zone_credentials() -> list:
-    """Return list of {userId, locName, zone, password} for all Zone accounts.
-    Deduplicates by zone name — keeps the first occurrence to prevent double emails.
-    """
-    try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
-        out  = []
-        seen_zones = set()
-        for r in rows[1:]:
-            r = (r + [""] * 8)[:8]
-            zone = r[2].strip()
-            if r[4].strip() == "Zone" and r[0].strip():
-                if zone in seen_zones:
-                    continue  # skip duplicate zone row
-                seen_zones.add(zone)
-                out.append({
-                    "userId":   r[0].strip(),
-                    "locName":  r[1].strip(),
-                    "zone":     zone,
-                    "password": r[3].strip(),
-                })
-        return out
-    except Exception:
-        return []
+    """Deduplicates by zone name — keeps the first occurrence, matching the
+    original's behavior to prevent double emails."""
+    rows = _pg_query("""
+        select u.login_code, z.name as zone_name
+        from users u join zones z on z.id = u.zone_id
+        where u.role = 'Zone'
+        order by u.id
+    """)
+    out, seen = [], set()
+    for r in rows:
+        if r["zone_name"] in seen:
+            continue
+        seen.add(r["zone_name"])
+        out.append({"userId": r["login_code"], "locName": r["zone_name"] or "",
+                     "zone": r["zone_name"] or "", "password": None})
+    return out
+
+# ── end flagged section ────────────────────────────────────────────────────
 
 
 def upsert_zone_account(zone_name: str, new_user_id: str, new_password: str) -> dict:
-    """Create or update a Zone account matched by zone_name.
-
-    - If a row with role=Zone and zone=zone_name exists → updates user_id + password.
-    - If no such row exists → appends a new row.
-    Always returns {"ok": True/False, "action": "updated"/"created"}.
-    """
+    """Create or update a Zone account matched by zone_name."""
     try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
+        z = _pg_one("select id from zones where name = %s", (zone_name,))
+        if not z:
+            return {"ok": False, "msg": f"Zone '{zone_name}' not found."}
+        pw_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
 
-        for i, row in enumerate(rows[1:], start=2):
-            row = (row + [""] * 8)[:8]
-            stored_zone = row[2].strip()
-            stored_role = row[4].strip()
-            if stored_role == "Zone" and stored_zone == zone_name:
-                # Update user_id (col A) and password (col D) in-place
-                ws.update(f"A{i}", [[new_user_id]])
-                ws.update(f"D{i}", [[new_password]])
-                ws.update(f"B{i}", [[zone_name]])   # normalise loc_name too
-                audit_log("SYSTEM", "UpdateZoneAccount",
-                          f"zone={zone_name} new_id={new_user_id}")
-                return {"ok": True, "action": "updated"}
-
-        # Not found → create fresh row
-        ws.append_row(
-            [new_user_id, zone_name, zone_name, new_password, "Zone", "", "", "Y"],
-            value_input_option="RAW",
+        existing = _pg_one(
+            "select id from users where role = 'Zone' and zone_id = %s", (z["id"],)
         )
-        audit_log("SYSTEM", "CreateZoneAccount",
-                  f"zone={zone_name} id={new_user_id}")
+        if existing:
+            _pg_query(
+                "update users set login_code = %s, password_hash = %s where id = %s",
+                (new_user_id, pw_hash, existing["id"]), fetch=False,
+            )
+            audit_log("SYSTEM", "UpdateZoneAccount",
+                      f"zone={zone_name} new_id={new_user_id}")
+            return {"ok": True, "action": "updated"}
+
+        _pg_query(
+            """insert into users (login_code, zone_id, role, password_hash, is_first_login, active)
+               values (%s, %s, 'Zone', %s, true, true)""",
+            (new_user_id, z["id"], pw_hash), fetch=False,
+        )
+        audit_log("SYSTEM", "CreateZoneAccount", f"zone={zone_name} id={new_user_id}")
         return {"ok": True, "action": "created"}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
 
 def sync_missing_maker_accounts(default_password: str = "") -> dict:
-    """Add Maker and Checker UserAccess rows for every LocationMaster location
-    that is missing either role.
+    """Add Maker and Checker user rows for every location missing either role.
 
-    Reads LocationMaster (col A=code, B=name, C=loc_type, D=zone).
-    Checks separately for Maker and Checker rows — a location already having
-    a Maker account will still get a Checker row added (and vice-versa).
-    Default passwords: Maker = loc_code, Checker = loc_code + "C".
-    Sets is_first = TRUE so users change password on first login.
-    Returns {"ok": True, "added": [...descriptions...], "skipped": count}.
+    FLAGGED FOR REVIEW: Checker's login_code here is location_code + "C"
+    (e.g. "1775C") -- a distinct, unique login, matching the convention
+    import_user_access.mjs already established during the Hackathon
+    migration and confirmed present in the real data. This differs from the
+    Sheets version, where Checker shares the SAME login_code as Maker and is
+    distinguished only by which password matches during check_login's row
+    scan. This is a real user-facing change: Checkers will need to know to
+    type e.g. "1775C" instead of "1775" going forward. Worth confirming
+    before cutover, and worth a heads-up to Checkers if so.
     """
     try:
-        # Read LocationMaster
-        lm_ws   = _ws(TABS["LOCATION_MASTER"])
-        lm_rows = _api_call(lm_ws.get_all_values)
+        locations = _pg_query("select code, name from locations where active")
+        existing = {(r["login_code"], r["role"])
+                    for r in _pg_query("select login_code, role from users")}
+        added, skipped = [], 0
 
-        # Build (code_upper, role) set of what already exists
-        ua_ws   = _ensure_ws(TABS["USER_ACCESS"], _UA_HEADERS)
-        ua_rows = _api_call(ua_ws.get_all_values)
-        existing = set()   # {(code_upper, role_upper)}
-        for r in ua_rows[1:]:
-            if not r or not str(r[0]).strip():
-                continue
-            c = str(r[0]).strip().upper()
-            role_r = str(r[4]).strip().upper() if len(r) > 4 else "MAKER"
-            existing.add((c, role_r))
+        def _hash(pw: str) -> str:
+            return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
-        added   = []
-        skipped = 0
-        now_str = datetime.now().isoformat()
-
-        for row in lm_rows[1:]:
-            if not row or len(row) < 2:
-                continue
-            code = str(row[0]).strip()
-            name = str(row[1]).strip()
-            if not code:
-                continue
-            zone = str(row[3]).strip() if len(row) > 3 else ""
-            code_up = code.upper()
+        for loc in locations:
+            code, name = loc["code"], loc["name"]
             base_pw = str(default_password).strip() or code
 
-            # Add Maker if missing
-            if (code_up, "MAKER") not in existing:
-                _api_call(
-                    ua_ws.append_row,
-                    [code, name, zone, base_pw, "Maker", "TRUE", now_str, "Y"],
-                    value_input_option="RAW",
+            if (code, "Maker") not in existing:
+                _pg_query(
+                    """insert into users (login_code, location_code, role, password_hash, is_first_login, active)
+                       values (%s, %s, 'Maker', %s, true, true)""",
+                    (code, code, _hash(base_pw)), fetch=False,
                 )
-                existing.add((code_up, "MAKER"))
                 added.append(f"{code} (Maker)")
-                audit_log("SYSTEM", "SyncAccount",
-                          f"Added Maker for {code} ({name})")
+                audit_log("SYSTEM", "SyncAccount", f"Added Maker for {code} ({name})")
             else:
                 skipped += 1
 
-            # Add Checker if missing
-            if (code_up, "CHECKER") not in existing:
-                _api_call(
-                    ua_ws.append_row,
-                    [code, name, zone, base_pw + "C", "Checker", "TRUE", now_str, "Y"],
-                    value_input_option="RAW",
+            checker_code = code + "C"
+            if (checker_code, "Checker") not in existing:
+                _pg_query(
+                    """insert into users (login_code, location_code, role, password_hash, is_first_login, active)
+                       values (%s, %s, 'Checker', %s, true, true)""",
+                    (checker_code, code, _hash(base_pw + "C")), fetch=False,
                 )
-                existing.add((code_up, "CHECKER"))
                 added.append(f"{code} (Checker)")
-                audit_log("SYSTEM", "SyncAccount",
-                          f"Added Checker for {code} ({name})")
+                audit_log("SYSTEM", "SyncAccount", f"Added Checker for {code} ({name})")
             else:
                 skipped += 1
 
-        if added:
-            _user_access_raw_rows.clear()
         return {"ok": True, "added": added, "skipped": skipped}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
 
 def hqo_account_exists() -> bool:
-    """Quick check: is there at least one Admin-role row in UserAccess?"""
-    try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = ws.get_all_values()
-        return any(
-            (r + [""] * 5)[4].strip() == "Admin"
-            for r in rows[1:]
-        )
-    except Exception:
-        return False
+    """Quick check: is there at least one Admin-role user?"""
+    return bool(_pg_one("select 1 from users where role = 'Admin'"))
 
 
 # ── App Settings (admin-controlled feature flags) ────────────────────────────
@@ -2013,30 +1939,27 @@ def set_excluded_report_codes(codes: set, updated_by: str) -> dict:
 
 
 def update_location_zone(loc_code: str, new_zone: str, updated_by: str) -> dict:
-    """Update zone assignment for a location in the UserAccess sheet.
+    """Update zone assignment for a location.
 
-    Column layout: A=loc_code, B=loc_name, C=zone, D=password, E=role.
-    Updates every Maker row matching loc_code (handles duplicate entries).
+    Postgres note: locations.zone_id is the single source of truth (unlike
+    the sheet, which denormalized zone onto every Maker row and needed a
+    "update every matching row" loop) -- this updates exactly one row, and
+    every user tied to that location reflects the change automatically via
+    the join in check_login/_loc_name_map etc.
     """
     try:
-        ws   = _ws(TABS["USER_ACCESS"])
-        rows = _api_call(ws.get_all_values)
-        updated_rows = []
-        for i, row in enumerate(rows[1:], start=2):
-            row_ext = (row + [""] * 8)[:8]
-            if row_ext[0].strip() == str(loc_code) and row_ext[4].strip() == "Maker":
-                _api_call(lambda ri=i: ws.update_cell(ri, 3, new_zone))
-                updated_rows.append(i)
-        if updated_rows:
+        z = _pg_one("select id from zones where name = %s", (new_zone,))
+        if not z:
+            return {"ok": False, "msg": f"Zone '{new_zone}' not found."}
+        n = _pg_query(
+            "update locations set zone_id = %s where code = %s",
+            (z["id"], str(loc_code)), fetch=False,
+        )
+        if n:
             _loc_name_map.clear()
-            _user_access_raw_rows.clear()
-            audit_log(updated_by, "ZoneUpdate",
-                      f"loc={loc_code} new_zone={new_zone} rows={updated_rows}")
-            return {
-                "ok": True,
-                "msg": f"Zone updated to '{new_zone}' for {loc_code} ({len(updated_rows)} row(s)).",
-            }
-        return {"ok": False, "msg": f"Location code {loc_code} not found in UserAccess."}
+            audit_log(updated_by, "ZoneUpdate", f"loc={loc_code} new_zone={new_zone}")
+            return {"ok": True, "msg": f"Zone updated to '{new_zone}' for {loc_code}."}
+        return {"ok": False, "msg": f"Location code {loc_code} not found."}
     except Exception as exc:
         return {"ok": False, "msg": str(exc)}
 
