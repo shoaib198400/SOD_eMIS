@@ -3777,9 +3777,9 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                         mi_tab_key, user["userId"], month_year,
                                         mi_rows)
                                     mi_tabs_saved += 1
-                            # Invalidate M&I completion cache and force-reload all tab states
+                            # Force-reload all tab states (check_mi_complete no
+                            # longer caches -- Postgres reads are always fresh)
                             if mi_tabs_saved:
-                                sheets.check_mi_complete.clear()
                                 st.session_state.pop(
                                     f"_mi_comp_{user['userId']}_{month_year}", None)
                                 # Clear per-tab loaded/rows/ctr/na flags so each tab
@@ -4341,7 +4341,6 @@ def _zone_sidebar(user: dict, title: str, subtitle: str):
                 unsafe_allow_html=True,
             )
             if st.button("🔄 Refresh", key="refresh_live_users", use_container_width=True):
-                sheets._settings_rows.clear()
                 st.rerun()
             if _active_count:
                 _show_active = st.session_state.get("_show_active_users", False)
@@ -5145,7 +5144,6 @@ def show_portal_traffic(user: dict):
     with c_refresh:
         st.markdown('<div style="height:20px;"></div>', unsafe_allow_html=True)
         if st.button("🔄 Refresh", key="traffic_refresh", use_container_width=True):
-            sheets._audit_log_raw_rows.clear()
             st.rerun()
 
     st.markdown("---")
@@ -5724,9 +5722,8 @@ def show_email_review(user: dict):
                     st.error(f"Seed failed: {_seed_res['msg']}")
         with _mc2:
             if st.button("🔄  Refresh email maps now", use_container_width=True,
-                         help="Force-clear the 5-min cache and reload from the sheet."):
-                sheets.get_email_master_maps.clear()
-                st.success("Cache cleared — reload the page to see updated addresses.")
+                         help="Reload email addresses now."):
+                st.success("Reloaded — this page always reads current addresses.")
         with _mc3:
             st.markdown(
                 "<div style='font-size:12px;color:#666;padding-top:6px;'>"
@@ -8777,7 +8774,6 @@ def _mi_tab_tank_status(uid: str, month_year: str, tank_opts: list,
         if res.get("ok"):
             st.success(f"✅ Tank Status saved — {res['rows']} tank(s).")
             st.session_state.pop(sk_loaded, None)
-            sheets.check_mi_complete.clear()
             sheets.get_full_tank_master_excel.clear()   # force fresh download next time
         else:
             st.error(f"Save failed: {res.get('msg', '')}")

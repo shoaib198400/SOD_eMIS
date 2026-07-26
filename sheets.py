@@ -911,8 +911,15 @@ def get_available_months(user_id: str) -> dict:
         return {"ok": False, "msg": str(e), "months": []}
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_dashboard_data(user_id: str, month_year: str = None, loc_type: str = "HPCL") -> dict:
+    """FOUND DURING THE END-TO-END TEST DEBUG: this had @st.cache_data(ttl=60)
+    even though its own dependencies (get_month_status, check_mi_complete)
+    were already de-cached for correctness. submit_for_review calls this
+    internally to check section completeness -- a stale cached result here
+    (e.g. from an earlier dashboard render before all sections/M&I were
+    filled in) could block a legitimate submission for up to 60 seconds
+    after the user actually finished, the exact same class of bug as
+    check_mi_complete's. Removed for the same reason."""
     try:
         user_id = str(user_id or "").strip()
         if not user_id:
@@ -4101,7 +4108,6 @@ _AN_FIELD_LABELS = {
 }
 
 
-@st.cache_data(ttl=300)
 def get_compliance_analytics(role: str, zone: str, fy_year: int) -> dict:
     """Fetch submission status for all 12 FY months.
 
@@ -4450,10 +4456,18 @@ def sync_tank_master_to_sheet() -> dict:
             tm_ws.append_rows(data_rows[start:start + BATCH], value_input_option="RAW")
 
         _tm_all_rows.clear()          # clears shared row cache
-        get_tank_master.clear()       # clears derived dict cache
         get_full_tank_master_excel.clear()   # clears per-location Excel cache
+        # NOTE: get_tank_master() now reads from the Postgres tank_master table
+        # (ported), not this Sheet -- this sync only updates the Sheet and the
+        # full Excel export, and no longer refreshes the M&I tank-number
+        # dropdown data. That's the same rich-schema gap flagged on
+        # get_tank_master's docstring: fixing it properly means designing the
+        # full tank_master schema and porting this function too, not patching
+        # around it here.
         return {"ok": True, "rows": len(data_rows),
-                "msg": f"Tank Master synced: {len(data_rows)} rows written to Google Sheet."}
+                "msg": f"Tank Master synced: {len(data_rows)} rows written to Google Sheet. "
+                       "Note: the M&I tank-number dropdown list now comes from Postgres and "
+                       "is not updated by this sync -- see sheets.py notes on get_tank_master."}
     except Exception as exc:
         return {"ok": False, "rows": 0, "msg": str(exc)}
 
@@ -4710,9 +4724,23 @@ def get_approved_mis_excel(
     return buf.getvalue()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
 def load_mi_data(tab_key: str, user_id: str, month_year: str) -> list:
     """Return list of row-dicts for user+month from an M&I tab.
+
+    MYSTERY SOLVED: this still had the original @st.cache_data(ttl=300,
+    show_spinner=False) -- missed when porting this function, unlike its
+    sibling functions. This is the actual explanation for the "first M&I
+    tab always comes back empty" anomaly from the end-to-end test debug
+    session: check_mi_complete's loop (via get_dashboard_data, called
+    before any M&I tab had data) queried load_mi_data("MI_TANK_OUTAGE", ...)
+    early, got [], and CACHED that empty result for 5 minutes under those
+    exact arguments. The later call after actually saving data hit that
+    same stale cache entry. check_mi_complete's own loop short-circuits on
+    the first empty tab, which is exactly why only the first tab
+    (MI_TANK_OUTAGE, fixed iteration order) ever showed this -- the other
+    9 were never queried early enough to get poisoned. Not a sandbox
+    artifact after all; a real bug, now fixed by removing the decorator,
+    consistent with every other read in this migration.
 
     Postgres note: multi-row tabs live in mi_rows, singleton tabs in
     mi_singletons (see _MI_MULTIROW_TABS) -- matching the split the schema
