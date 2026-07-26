@@ -44,9 +44,22 @@ def _pg_pool():
     )
 
 
-def _pg_query(sql: str, params: tuple = (), fetch: bool = True):
+def _pg_query(sql: str, params: tuple = (), fetch: bool = True, _retries_left: int = 4):
     """Run a query against Postgres. fetch=True returns list[dict]; fetch=False
-    returns the affected row count. Always commits on success, rolls back on error."""
+    returns the affected row count. Always commits on success, rolls back on
+    ordinary errors.
+
+    Retries (discarding the dead connection each time) on a dead pooled
+    connection: psycopg2's SimpleConnectionPool doesn't self-heal -- a
+    connection idle long enough for Supabase or the network to drop it
+    raises "connection already closed"/InterfaceError on next use, and the
+    pool happily hands that same dead connection out again otherwise. One
+    retry isn't always enough: after any real idle period (overnight, low
+    traffic), MULTIPLE or all pooled connections can go stale together, so
+    the first retry can just as easily draw another dead one. Retries up to
+    4 times -- discovered via a real end-to-end test where a single retry
+    still failed intermittently under a full workflow run.
+    """
     pool = _pg_pool()
     conn = pool.getconn()
     try:
@@ -55,14 +68,22 @@ def _pg_query(sql: str, params: tuple = (), fetch: bool = True):
             if fetch:
                 rows = cur.fetchall()
                 conn.commit()
-                return [dict(r) for r in rows]
-            conn.commit()
-            return cur.rowcount
+                result = [dict(r) for r in rows]
+            else:
+                conn.commit()
+                result = cur.rowcount
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        pool.putconn(conn, close=True)  # discard the dead connection, don't recycle it
+        if _retries_left > 0:
+            return _pg_query(sql, params, fetch, _retries_left=_retries_left - 1)
+        raise
     except Exception:
         conn.rollback()
-        raise
-    finally:
         pool.putconn(conn)
+        raise
+    else:
+        pool.putconn(conn)
+        return result
 
 
 def _pg_one(sql: str, params: tuple = ()):
@@ -4262,11 +4283,20 @@ _MI_ALL_TABS = (
 )
 
 
-@st.cache_data(ttl=30)
 def check_mi_complete(user_id: str, month_year: str) -> bool:
     """Return True if all 10 M&I MIS tabs have at least one saved row for user+month.
 
-    Cached for 30 s to avoid 10 API calls on every dashboard render.
+    FOUND BY THE END-TO-END TEST: this used to be @st.cache_data(ttl=30) (to
+    avoid 10 API calls on every dashboard render, back when each load_mi_data
+    call was a Sheets API round-trip). With Postgres this is 10 cheap
+    queries, but more importantly, the cache was real bug -- a Maker filling
+    in all 10 M&I tabs and then hitting Submit within 30 seconds of any
+    earlier dashboard render (which also calls this, via get_dashboard_data)
+    would see a stale cached False and get incorrectly blocked with "M&I MIS
+    (S5A) is incomplete." Same class of stale-cache bug as the
+    SubmissionStatus duplicate-row issue that started this whole migration,
+    just smaller. Caught by testing the real save -> populate M&I -> submit
+    sequence end to end, not by inspection.
     """
     for tab_key in _MI_ALL_TABS:
         if not load_mi_data(tab_key, user_id, month_year):
