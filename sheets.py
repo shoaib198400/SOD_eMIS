@@ -1270,13 +1270,90 @@ def submit_for_review(user_id: str, month_year: str) -> dict:
         return {"ok": False, "msg": str(e)}
 
 
+# Frozen column order for MIS_Submitted, matching exactly what's live in the
+# sheet today (rebuilt from MIS_DRAFT for Apr/May/Jun 2026, verified
+# column-for-column against this list). This is intentionally a hardcoded
+# snapshot, NOT derived fresh from SECTION_FIELDS each time -- see
+# _canonical_mis_field_order()'s docstring for why that distinction matters
+# for anything added to form_defs.py later.
+_MIS_SUBMITTED_FROZEN_FIELD_ORDER = (
+    'f1', 'f2', 'f142', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9',
+    'f10', 'f11', 'f12', 'f13', 'f14', 'f15', 'f16', 'f17', 'f18', 'f19',
+    'f20', 'f21', 'f22', 'f23', 'f24', 'f143', 'f144', 'f145', 'f146', 'f147',
+    'f25', 'f26', 'f148', 'f149', 'f150', 'f151', 'f27', 'f28', 'f29', 'f30',
+    'f31', 'f32', 'f33', 'f34', 'f141', 'f159', 'f160', 'f161', 'f162', 'f163',
+    'f164', 'f36', 'f37', 'f157', 'f158', 'f38', 'f39', 'f40', 'f41', 'f42',
+    'f43', 'f44', 'f45', 'f46', 'f47', 'f48', 'f49', 'f50', 'f51', 'f52',
+    'f53', 'f54', 'f55', 'f56', 'f57', 'f58', 'f59', 'f60', 'f61', 'f62',
+    'f63', 'f64', 'f65', 'f66', 'f67', 'f68', 'f69', 'f70', 'f71', 'f72',
+    'f73', 'f74', 'f75', 'f76', 'f77', 'f78', 'f79', 'f80', 'f81', 'f82',
+    'f83', 'f152', 'f84', 'f85', 'f86', 'f87', 'f88', 'f89', 'f90', 'f91',
+    'f153', 'f92', 'f93', 'f94', 'f95', 'f96', 'f97', 'f98', 'f154', 'f155',
+    'f99', 'f100', 'f156', 'f101', 'f102', 'f103', 'f104', 'f105', 'f106', 'f107',
+    'f108', 'f109', 'f110', 'f111', 'f112', 'f113', 'f114', 'f115', 'f116', 'f117',
+    'f118', 'f119', 'f120', 'f121', 'f122', 'f123', 'f124', 'f125', 'f126', 'f127',
+    'f128', 'f129', 'f130', 'f131', 'f132', 'f133', 'f134', 'f135', 'f136', 'f137',
+    'f138', 'f139', 'f140',
+)
+
+
+def _canonical_mis_field_order() -> list:
+    """Fixed (key, label) list covering every S1-S10 field, including
+    auto-calculated ones. This is THE fix for the MIS_Submitted header-drift
+    bug: the old code built headers from list(flat_data.keys()) -- whatever
+    fields happened to be in that one submission's draft -- so different
+    submissions (different location types, different save histories)
+    produced different header layouts, and each approval's header rewrite
+    only overwrites cells up to its own length, leaving fragments of
+    older/longer headers behind. Confirmed via the live sheet: after
+    repeated approvals, the header row had accumulated 7 duplicate
+    "_sheet_row" columns and 2 duplicate "_sections_complete" columns, and
+    several date-labeled columns contained percentages/counts from
+    unrelated fields for many historical rows.
+
+    FUTURE-PROOFING, IMPORTANT: the base order comes from
+    _MIS_SUBMITTED_FROZEN_FIELD_ORDER above -- a hardcoded snapshot, not a
+    fresh re-derivation from SECTION_FIELDS. That distinction is the whole
+    point. If a new field gets added to form_defs.py later (in the middle
+    of some section's list, most likely), recomputing "section order" fresh
+    every time would shift every field after it to a new column position --
+    reintroducing this exact bug, just triggered by a form_defs.py edit
+    instead of data variability. Freezing the order means every field that
+    exists today keeps its column forever; anything new found in
+    SECTION_FIELDS that isn't already in the frozen tuple gets appended at
+    the END of the list instead, in first-encountered order. New fields
+    show up as new trailing columns (existing rows blank for them, which is
+    correct -- that data genuinely didn't exist yet), and nothing already
+    written ever moves.
+
+    Labels come directly from SECTION_FIELDS (not the filtered
+    _field_label_map(), which excludes auto-calculated fields) so every
+    field gets a real label instead of a raw key like "f20".
+    """
+    from form_defs import SECTION_FIELDS
+    label_by_key = {
+        f["key"]: f.get("label", f["key"])
+        for fields in SECTION_FIELDS.values()
+        for f in fields
+    }
+    ordered = [(k, label_by_key.get(k, k)) for k in _MIS_SUBMITTED_FROZEN_FIELD_ORDER]
+
+    seen = set(_MIS_SUBMITTED_FROZEN_FIELD_ORDER)
+    for sn in range(1, 11):
+        for f in SECTION_FIELDS.get(sn, []):
+            if f["key"] not in seen:
+                seen.add(f["key"])
+                ordered.append((f["key"], f.get("label", f["key"])))
+    return ordered
+
+
 def approve_submission(maker_id: str, month_year: str, checker_id: str,
                        flat_data: dict, user_info: dict) -> dict:
     """Checker approves — writes flat row to MIS_Submitted and locks the month."""
     try:
-        label_map  = _field_label_map()
-        field_keys = list(flat_data.keys())
-        col_labels = [label_map.get(k, k) for k in field_keys]
+        canon      = _canonical_mis_field_order()
+        field_keys = [k for k, _ in canon]
+        col_labels = [lbl for _, lbl in canon]
         headers    = (["User ID", "Location Name", "Zone", "Month-Year",
                         "Submitted At", "Approved At", "Approved By"]
                       + col_labels)
