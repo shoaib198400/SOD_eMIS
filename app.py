@@ -549,7 +549,17 @@ def _do_save(user_id: str, month_year: str, section_num: int,
     from datetime import date as _date_cls
     field_data, all_req_filled = {}, True
     range_errors = []
+    cur_vals = {f["key"]: st.session_state.get(_sk(month_year, f["key"])) for f in fields}
     for f in fields:
+        # A show_when field that's currently hidden must be force-cleared, not
+        # skipped: save_draft() merges field_data onto the existing draft, so
+        # merely omitting the key would leave a stale value in place from
+        # before the trigger field changed (e.g. reason text typed while the
+        # trigger was "Yes", still present after switching it to "No").
+        sw = f.get("show_when")
+        if sw and not all(str(cur_vals.get(k) or "") == str(v) for k, v in sw.items()):
+            field_data[f["key"]] = ""
+            continue
         sk  = _sk(month_year, f["key"])
         val = st.session_state.get(sk)
         if isinstance(val, _date_cls):
