@@ -531,20 +531,49 @@ def _render_field(field: dict, sk: str, disabled: bool, all_vals: dict):
 
 def _do_save(user_id: str, month_year: str, section_num: int,
              fields: list, is_locked: bool) -> dict:
-    """Collect session-state values and persist draft."""
+    """Collect session-state values and persist draft.
+
+    Server-side min/max enforcement lives here, not just in the Excel
+    template's data-validation or the number_input widget's min_value/
+    max_value. Both of those are client-side only -- easy to bypass via
+    bulk Excel upload, which is confirmed to be how several
+    unit-of-measure errors got into production (e.g. "Electricity
+    Expenditure (Rs in Lakhs)" recorded as 232954, a ~100,000x scale
+    slip consistent with entering the bill in Rupees instead of Lakhs).
+    This is the one place every entry path (typed or uploaded) always
+    passes through before persisting, so it's the only place a check
+    here can't be skipped.
+    """
     if is_locked:
         return {"ok": False, "msg": "Section is locked."}
     from datetime import date as _date_cls
     field_data, all_req_filled = {}, True
+    range_errors = []
     for f in fields:
         sk  = _sk(month_year, f["key"])
         val = st.session_state.get(sk)
         if isinstance(val, _date_cls):
             val = val.strftime("%d/%m/%Y")
         if val is not None and val != "":
+            if f.get("type") in ("number", "int") and not f.get("auto"):
+                try:
+                    num_val = float(val)
+                    f_min, f_max = f.get("min"), f.get("max")
+                    if f_min is not None and num_val < float(f_min):
+                        range_errors.append(
+                            f"{f['label']}: {val} is below the minimum allowed ({f_min})")
+                    elif f_max is not None and num_val > float(f_max):
+                        range_errors.append(
+                            f"{f['label']}: {val} is above the maximum allowed ({f_max}) "
+                            f"— check the unit (e.g. Lakhs vs Rupees)")
+                except (ValueError, TypeError):
+                    pass
             field_data[f["key"]] = val
         elif f.get("req") and not f.get("auto"):
             all_req_filled = False
+
+    if range_errors:
+        return {"ok": False, "msg": "Please correct before saving:\n" + "\n".join(range_errors)}
     # Cross-field: complied recommendations cannot exceed total
     if section_num == 1 and all_req_filled:
         try:
@@ -2457,16 +2486,24 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
     # ── Process navigation & save OUTSIDE columns so st.rerun() is safe ──────
     if navigate_to is not None:
         with st.spinner("Saving…"):
-            _do_save(user["userId"], month_year, section_num, fields, is_locked)
+            _nav_res = _do_save(user["userId"], month_year, section_num, fields, is_locked)
             _save_detail_tables(detail_dfs, user, month_year, is_locked)
-        if navigate_to == "dashboard":
+        if not _nav_res.get("ok"):
+            # Stay on this section instead of navigating away -- previously
+            # this branch never checked _do_save's result at all, so a
+            # validation failure here would have been silently discarded
+            # and the user would move on unaware anything was wrong.
+            st.error(f"Save failed: {_nav_res.get('msg', 'Unknown error')}")
+        elif navigate_to == "dashboard":
             st.session_state.selected_section = None
+            st.rerun()
         elif navigate_to == "mi_mis":
             st.session_state.selected_section = "mi_mis"
+            st.rerun()
         else:
             st.session_state.pop(f"draft_loaded_{mc}_s{navigate_to}", None)
             st.session_state.selected_section = navigate_to
-        st.rerun()
+            st.rerun()
     elif save_clicked:
         with st.spinner("Saving…"):
             res = _do_save(user["userId"], month_year, section_num, fields, is_locked)
