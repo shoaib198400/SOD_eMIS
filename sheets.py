@@ -783,24 +783,52 @@ def _submission_status_raw_rows() -> list:
     return _api_call(ws.get_all_values)
 
 
+def _resolve_submission_status_rows(rows: list) -> dict:
+    """Collapse SUBMISSION_STATUS's raw rows into {(user_id, month_year): row},
+    keeping whichever row has the latest last_updated timestamp when a
+    duplicate exists for the same key.
+
+    Defense-in-depth for a race Sheets can't fully close (no real atomic
+    upsert available, unlike the ON CONFLICT fix on postgres-staging): this
+    doesn't prevent a duplicate row from being created by
+    _update_submission_status, but it does mean every reader consistently
+    shows the most-recently-written status instead of an arbitrary one
+    (previously: whichever row happened to be scanned first/last, which
+    differed by function -- get_month_status effectively preferred the
+    oldest row, others the newest, so different pages could disagree about
+    the same location's status while a duplicate existed).
+
+    last_updated (column 9) is always datetime.now().isoformat(), so plain
+    string comparison sorts chronologically correctly -- no need to parse.
+    """
+    best: dict = {}
+    for row in rows[1:]:
+        row = (row + [""] * 9)[:9]
+        key = (row[0].strip(), row[1].strip())
+        if not key[0]:
+            continue
+        prev = best.get(key)
+        if prev is None or (row[8] or "") >= (prev[8] or ""):
+            best[key] = row
+    return best
+
+
 @st.cache_data(ttl=60)
 def get_month_status(user_id: str, month_year: str) -> dict:
     try:
         rows = _submission_status_raw_rows()
-        if len(rows) >= 2:
-            for row in rows[1:]:
-                row = (row + [""] * 9)[:9]
-                if row[0].strip() == user_id and row[1].strip() == month_year:
-                    pct    = float(row[3]) if row[3] else 0.0
-                    status = _revert_if_deleted(
-                        user_id, month_year, row[2].strip() or "NOT_STARTED", pct
-                    )
-                    return {
-                        "status":         status,
-                        "completion_pct": pct,
-                        "is_locked":      status in ("SUBMITTED", "LOCKED", "PENDING_REVIEW"),
-                        "checker_notes":  row[7].strip() if len(row) > 7 else "",
-                    }
+        row = _resolve_submission_status_rows(rows).get((user_id, month_year))
+        if row:
+            pct    = float(row[3]) if row[3] else 0.0
+            status = _revert_if_deleted(
+                user_id, month_year, row[2].strip() or "NOT_STARTED", pct
+            )
+            return {
+                "status":         status,
+                "completion_pct": pct,
+                "is_locked":      status in ("SUBMITTED", "LOCKED", "PENDING_REVIEW"),
+                "checker_notes":  row[7].strip() if len(row) > 7 else "",
+            }
     except Exception:
         pass
     return {"status": "NOT_STARTED", "completion_pct": 0.0, "is_locked": False}
@@ -815,12 +843,11 @@ def get_fy_months(user_id: str, fy_start_year: int) -> dict:
         pct_map:    dict = {}
         try:
             rows = _submission_status_raw_rows()
-            if len(rows) >= 2:
-                for row in rows[1:]:
-                    row = (row + [""] * 4)[:4]
-                    if row[0].strip() == user_id:
-                        status_map[row[1].strip()] = row[2].strip()
-                        pct_map[row[1].strip()]    = float(row[3]) if row[3] else 0.0
+            resolved = _resolve_submission_status_rows(rows)
+            for (uid, my), row in resolved.items():
+                if uid == user_id:
+                    status_map[my] = row[2].strip()
+                    pct_map[my]    = float(row[3]) if row[3] else 0.0
         except Exception:
             pass
 
@@ -857,11 +884,10 @@ def get_available_months(user_id: str) -> dict:
         status_map: dict = {}
         try:
             rows = _submission_status_raw_rows()
-            if len(rows) >= 2:
-                for row in rows[1:]:
-                    row = (row + [""] * 3)[:3]
-                    if row[0].strip() == user_id:
-                        status_map[row[1].strip()] = row[2].strip()
+            resolved = _resolve_submission_status_rows(rows)
+            for (uid, my), row in resolved.items():
+                if uid == user_id:
+                    status_map[my] = row[2].strip()
         except Exception:
             pass
 
@@ -1038,25 +1064,48 @@ def load_submitted_fields(user_id: str, month_year: str) -> dict:
 def _update_submission_status(user_id: str, month_year: str, status: str, pct: float,
                                submitted_at: str = "", locked_by: str = "",
                                locked_at: str = "", checker_notes: str = ""):
+    """Update-or-append the SubmissionStatus row for (user_id, month_year).
+
+    Fresh, uncached lookup — never trust the 15 s _submission_status_raw_rows()
+    cache here. This is the exact same class of bug that was already fixed
+    for MIS_DRAFT in save_draft(): two calls landing within the cache
+    window can both see "no row yet" and both append, producing duplicate
+    rows for the same location/month. Confirmed still live on this sheet
+    (3 duplicate pairs found for the current month during the July 2026
+    review) despite the same fix having already been applied on the
+    postgres-staging branch, where it's structurally impossible instead of
+    just less likely -- Sheets has no real atomic upsert, so this narrows
+    the race window (15 s -> the time of one read+write round trip) rather
+    than closing it completely. If more than one row already exists for
+    this key, updates whichever has the latest last_updated instead of
+    whichever the scan happens to hit first, so repeated writes converge
+    on the correct row instead of perpetuating the split.
+    """
     # _ensure_ws auto-creates the tab with headers if it doesn't exist yet.
     # Any exception propagates to save_draft which surfaces it as an error message.
     ws      = _ensure_ws(TABS["SUBMISSION_STATUS"], _SS_HEADERS)
-    rows    = _submission_status_raw_rows()
+    rows    = _api_call(ws.get_all_values)
     now_str = datetime.now().isoformat()
+
+    match_i, match_row = None, None
     for i, row in enumerate(rows[1:], start=2):
         row_e = (row + [""] * 9)[:9]
         if row_e[0].strip() == user_id and row_e[1].strip() == month_year:
-            _api_call(ws.update, f"A{i}:I{i}", [[
-                user_id, month_year, status, str(pct),
-                submitted_at or row_e[4] or now_str,
-                locked_by  or row_e[5],
-                locked_at  or row_e[6],
-                checker_notes if checker_notes else row_e[7],
-                now_str,
-            ]])
-            get_month_status.clear()
-            _submission_status_raw_rows.clear()
-            return
+            if match_row is None or (row_e[8] or "") >= (match_row[8] or ""):
+                match_i, match_row = i, row_e
+
+    if match_row is not None:
+        _api_call(ws.update, f"A{match_i}:I{match_i}", [[
+            user_id, month_year, status, str(pct),
+            submitted_at or match_row[4] or now_str,
+            locked_by  or match_row[5],
+            locked_at  or match_row[6],
+            checker_notes if checker_notes else match_row[7],
+            now_str,
+        ]])
+        get_month_status.clear()
+        _submission_status_raw_rows.clear()
+        return
     _api_call(ws.append_row,
         [user_id, month_year, status, str(pct),
          submitted_at or now_str, locked_by, locked_at, checker_notes, now_str],
@@ -1508,10 +1557,9 @@ def get_submissions_for_locations(locs: list, month_year: str) -> list:
     status_map: dict = {}
     try:
         rows = _submission_status_raw_rows()
-        for row in rows[1:]:
-            row = (row + [""] * 9)[:9]
-            if row[1].strip() == month_year:
-                uid = row[0].strip()
+        resolved = _resolve_submission_status_rows(rows)
+        for (uid, my), row in resolved.items():
+            if my == month_year:
                 pct = float(row[3]) if row[3] else 0.0
                 status_map[uid] = {
                     "status":         _revert_if_deleted(uid, month_year,
@@ -4188,18 +4236,13 @@ def get_compliance_analytics(role: str, zone: str, fy_year: int) -> dict:
     result   = {m: {} for m in months}
     try:
         rows = _submission_status_raw_rows()
-        for row in rows[1:]:
-            row    = (row + [""] * 9)[:9]
-            uid    = row[0].strip()
-            mon    = row[1].strip()
-            status = row[2].strip()
-            pct    = row[3]
-            sub_at = row[4].strip()
+        resolved = _resolve_submission_status_rows(rows)
+        for (uid, mon), row in resolved.items():
             if uid in loc_ids and mon in result:
                 result[mon][uid] = {
-                    "status":         status or "NOT_STARTED",
-                    "completion_pct": float(pct) if pct else 0.0,
-                    "submitted_at":   sub_at,
+                    "status":         row[2].strip() or "NOT_STARTED",
+                    "completion_pct": float(row[3]) if row[3] else 0.0,
+                    "submitted_at":   row[4].strip(),
                     "loc":            loc_map.get(uid, {}),
                 }
     except Exception:
