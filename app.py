@@ -8867,26 +8867,32 @@ def show_mi_mis_page(user: dict, month_year: str, month_label: str):
             'Tank Master</div></div>',
             unsafe_allow_html=True,
         )
-        try:
-            import base64 as _b64mod
-            _tm_bytes = sheets.get_full_tank_master_excel(location_code=uid)
-            _tm_b64   = _b64mod.b64encode(_tm_bytes).decode()
-            _tm_fname = f"TankMaster_{uid}.xlsx"
-            _tm_mime  = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            st.markdown(
-                f'<a href="data:{_tm_mime};base64,{_tm_b64}" download="{_tm_fname}"'
-                f' style="display:flex;align-items:center;justify-content:flex-start;'
-                f'width:calc(100% - 16px);margin:2px 8px;padding:8px 13px;'
-                f'background:rgba(255,255,255,0.06);color:#ffffff;'
-                f'border:1px solid rgba(255,255,255,0.08);border-radius:8px;'
-                f'font-size:11.5px;font-weight:500;text-decoration:none;'
-                f'box-sizing:border-box;cursor:pointer;'
-                f'transition:background 0.15s ease;">'
-                f'&#11015;&#65039;&nbsp; Download Tank Master</a>',
-                unsafe_allow_html=True,
+        # Generated on click, not on every rerun -- this used to eagerly call
+        # get_full_tank_master_excel() + base64-encode the result on EVERY
+        # sidebar render for EVERY user (this sidebar shows on every M&I page),
+        # which both re-encoded a large string every rerun and, via the 2-hour
+        # cache TTL keyed by location_code, could hold one generated Excel per
+        # active location simultaneously -- a real contributor to the app
+        # hitting Streamlit Cloud's memory limit. Now matches the button-gated
+        # pattern already used correctly for the Zone-level downloads above.
+        _tm_key = f"_sidebar_tm_{uid}"
+        if st.button("⬇️  Download Tank Master", key="btn_sidebar_tm",
+                     use_container_width=True):
+            with st.spinner("Preparing Tank Master…"):
+                try:
+                    st.session_state[_tm_key] = sheets.get_full_tank_master_excel(location_code=uid)
+                except Exception as _ex:
+                    st.error(f"Tank Master unavailable: {_ex}")
+                    st.session_state[_tm_key] = None
+        if st.session_state.get(_tm_key):
+            st.download_button(
+                label="⬇️  Save Tank Master",
+                data=st.session_state[_tm_key],
+                file_name=f"TankMaster_{uid}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="dl_sidebar_tm",
             )
-        except Exception as _ex:
-            st.error(f"Tank Master unavailable: {_ex}")
 
     _dash_header(user)
 
