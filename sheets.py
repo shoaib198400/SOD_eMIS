@@ -1546,16 +1546,27 @@ def get_maker_info(user_id: str) -> dict:
     return {"userId": user_id, "locName": user_id, "zone": ""}
 
 
-def get_submissions_for_locations(locs: list, month_year: str) -> list:
+def get_submissions_for_locations(locs: list, month_year: str, force_fresh: bool = False) -> list:
     """Bulk-fetch submission status for a list of location dicts.
 
     Locations in the 'excluded_from_reports' Settings key (e.g. non-operational)
     are silently omitted from the returned list.
+
+    force_fresh=True bypasses the 15 s status cache with an uncached read.
+    Normal dashboard views don't need this (a few seconds' staleness is a fine
+    trade for fewer Sheets API calls), but bulk actions that tell someone their
+    status by email are a different story: a location whose real status is
+    already SUBMITTED must never have a reminder email go out claiming it's
+    still PENDING just because the cache hadn't refreshed yet. This is rare
+    enough (an admin explicitly sending reminders, not a page every user hits
+    constantly) that the extra API call is a non-issue.
     """
     excluded = get_excluded_report_codes()
 
     status_map: dict = {}
     try:
+        if force_fresh:
+            _submission_status_raw_rows.clear()
         rows = _submission_status_raw_rows()
         resolved = _resolve_submission_status_rows(rows)
         for (uid, my), row in resolved.items():
@@ -4056,10 +4067,10 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
 
 # ── Phase-8/9: Reports & Email ──────────────────────────────────────────────
 
-def get_all_status_for_month(month_year: str) -> list:
+def get_all_status_for_month(month_year: str, force_fresh: bool = False) -> list:
     """Return submission status for every Maker location for a given month."""
     locs = get_all_maker_locations()
-    return get_submissions_for_locations(locs, month_year)
+    return get_submissions_for_locations(locs, month_year, force_fresh=force_fresh)
 
 
 def download_submitted_data_excel(month_year: str):

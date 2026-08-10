@@ -6953,7 +6953,11 @@ def show_reports_page(user: dict):
                 due_dates:   dict = {}   # {month_year: date}
                 for my in selected_months:
                     due_dates[my]   = _due_from_my(my)
-                    months_data[my] = sheets.get_all_status_for_month(my)
+                    # force_fresh: this page emails real people telling them
+                    # their status -- a location that already submitted must
+                    # never get a "still pending" reminder just because the
+                    # normal 15 s dashboard cache hadn't refreshed yet.
+                    months_data[my] = sheets.get_all_status_for_month(my, force_fresh=True)
 
                 # ── Combined pending per zone ──────────────────────────────────
                 # For table: unique pending location count per zone per month
