@@ -4078,7 +4078,15 @@ def show_dashboard():
         return
 
     # ── Deadline alert ────────────────────────────────────────────────────────
-    _deadline_banner(data["deadline"], selected["label"])
+    # compute_deadline() is pure date math -- it has no idea whether the
+    # location already submitted, so a location sitting at Submitted/100%/
+    # Locked would still get a red "OVERDUE ... Submit immediately!" banner
+    # once the due date passed, right next to a Status card saying otherwise.
+    # Nothing further is owed once submitted (or handed off to the Checker
+    # via PENDING_REVIEW), so skip the banner rather than show it stuck on
+    # a stale "ON TRACK, -26 days remaining"-style message.
+    if data.get("status") not in ("SUBMITTED", "PENDING_REVIEW"):
+        _deadline_banner(data["deadline"], selected["label"])
 
     # ── KPI strip ─────────────────────────────────────────────────────────────
     _kpi = [
