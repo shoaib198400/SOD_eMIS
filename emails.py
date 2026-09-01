@@ -901,7 +901,21 @@ def send_all_multimonth_reminders(months_data: dict, due_dates: dict,
 
     today      = date.today()
     my_str     = ", ".join(sorted(months_data.keys(), key=month_sort_key))
-    any_overdue = any(today > d for d in due_dates.values())
+
+    def _has_overdue_pending(rows_by_month: dict) -> bool:
+        """True only if some month here is BOTH past its due date AND still
+        has at least one non-SUBMITTED location -- not just "the date has
+        passed" on its own. A month bundled into the same reminder round
+        that isn't due yet (e.g. August, due 5-Sep, reminded on 2-Sep) must
+        never flip the whole email to OVERDUE just because an older month
+        in the same batch happens to be genuinely late; and a month that IS
+        past due but where everyone in scope has already submitted isn't
+        overdue for them either."""
+        return any(
+            today > due_dates.get(my, date(9999, 1, 1))
+            and any(r.get("status") != "SUBMITTED" for r in rows)
+            for my, rows in rows_by_month.items()
+        )
 
     if test_mode:
         first_zone  = zones_with_email[0]
@@ -910,7 +924,7 @@ def send_all_multimonth_reminders(months_data: dict, due_dates: dict,
         pfx         = "[TEST] "
         subject     = (
             f"{pfx}OVERDUE — MIS Submission Pending | {first_zone} | {my_str}"
-            if any_overdue else
+            if _has_overdue_pending(m_rows_zone) else
             f"{pfx}Reminder — MIS Submission Pending | {first_zone} | {my_str}"
         )
         html_body = build_multimonth_zone_html(
@@ -935,7 +949,7 @@ def send_all_multimonth_reminders(months_data: dict, due_dates: dict,
     for zone_name in zones_with_email:
         m_rows_zone = zone_months[zone_name]
         contacts    = _get_zone_map().get(zone_name, {})
-        any_ov_z    = any(today > due_dates.get(my, date(9999,1,1)) for my in m_rows_zone)
+        any_ov_z    = _has_overdue_pending(m_rows_zone)
         subject     = (
             f"OVERDUE — MIS Submission Pending | {zone_name} | {my_str}"
             if any_ov_z else
@@ -988,7 +1002,14 @@ def send_multimonth_consolidated_reminder(months_data: dict, due_dates: dict,
         1 for rows in months_data.values()
         for r in rows if r.get("status") != "SUBMITTED"
     )
-    any_overdue = any(today > d for d in due_dates.values())
+    # Same rule as the zone reminders: a month only counts as "overdue" here
+    # if it's both past its due date and still has a non-SUBMITTED location
+    # somewhere in scope -- not just because the date happens to have passed.
+    any_overdue = any(
+        today > due_dates.get(my, date(9999, 1, 1))
+        and any(r.get("status") != "SUBMITTED" for r in rows)
+        for my, rows in months_data.items()
+    )
     pfx         = "[TEST] " if test_mode else ""
     subject     = (
         f"{pfx}OVERDUE — Consolidated MIS Pending | {my_str} | {total} pending"
