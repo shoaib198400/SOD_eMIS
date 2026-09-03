@@ -3889,12 +3889,16 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                 sv = f"{int(_d):02d}/{int(_m):02d}/{_y}"
         return sv if sv else None
 
-    # Build label → key inverse map (case-insensitive, strip * and [Auto])
+    # Build label → key inverse map (case-insensitive, strip * and [Auto]),
+    # and key → type so numeric fields can get the percent-cell compensation
+    # below without risking a non-numeric field (textarea/select/date).
     label_map = {}
+    type_map  = {}
     for fields in SECTION_FIELDS.values():
         for f in fields:
             clean = f["label"].strip().rstrip(" *").replace(" [Auto]", "").strip().lower()
             label_map[clean] = f["key"]
+            type_map[f["key"]] = f.get("type")
 
     try:
         wb = load_workbook(_io.BytesIO(file_bytes), data_only=True)
@@ -3907,20 +3911,38 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
         result["errors"].append("Sheet 'MIS Data' not found in uploaded file.")
     else:
         ws = wb["MIS Data"]
-        rows = list(ws.iter_rows(values_only=True))
+        rows = list(ws.iter_rows())   # Cell objects, not values_only -- need
+                                       # number_format on the data row below
         if len(rows) < 4:
             result["errors"].append("MIS Data sheet has fewer than 4 rows — expected header + hint + data.")
         else:
-            hdr_row  = [str(v or "").strip().rstrip(" *").replace(" [Auto]", "").strip() for v in rows[1]]
-            data_row = rows[3]   # row index 3 = row 4 (data)
+            hdr_row  = [str(c.value or "").strip().rstrip(" *").replace(" [Auto]", "").strip() for c in rows[1]]
+            data_row = rows[3]   # row index 3 = row 4 (data) -- Cell objects
             N_ID = 4             # first 4 cols are identity (User ID, Location, Zone, Month-Year)
             for ci, hdr in enumerate(hdr_row):
                 if ci < N_ID:
                     continue    # skip identity cols
                 key = label_map.get(hdr.lower())
                 if key and ci < len(data_row):
-                    val = _norm(data_row[ci])
+                    cell = data_row[ci]
+                    val  = _norm(cell.value)
                     if val:
+                        # A location's own copy of the template can end up with
+                        # Excel's Percentage number format applied to a numeric
+                        # cell (very natural to do on a field literally labelled
+                        # "OLA %" etc.) -- Excel then stores what you type as
+                        # value/100 (typing "85" becomes raw 0.85, displayed
+                        # "85%"). openpyxl with data_only=True reads that raw
+                        # 0.85, not the "85%" text, so it silently arrives here
+                        # 100x too small. Confirmed live: 37 cells across OLA%/
+                        # COLA%/CAT-A% were exactly this. Detect it from the
+                        # cell's own number_format and compensate, for every
+                        # numeric field, not just the ones already spotted.
+                        if type_map.get(key) in ("number", "int") and "%" in (cell.number_format or ""):
+                            try:
+                                val = str(round(float(val) * 100, 4))
+                            except (TypeError, ValueError):
+                                pass
                         result["fields"][key] = val
 
     # ── Detail sheets ────────────────────────────────────────────────────
