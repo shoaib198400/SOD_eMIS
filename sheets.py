@@ -1428,6 +1428,17 @@ def approve_submission(maker_id: str, month_year: str, checker_id: str,
         else:
             ws.append_row(row, value_input_option="RAW")
 
+        # Invalidate the "what's physically in MIS_Submitted" cache immediately after writing
+        # the row above. Without this, _revert_if_deleted() (used by get_month_status() below,
+        # and by any dashboard read in the next 120s -- including the rerun this same Approve
+        # click triggers) can still see the pre-approval snapshot, conclude the just-written row
+        # is "missing", and silently flip status back to IN_PROGRESS with no audit trail. Root
+        # cause of a real production bug: Secunderabad Terminal's Aug-2026 approval on 04-Sep
+        # showed IN_PROGRESS for 4 days despite a clean ApproveSubmission audit entry and a
+        # correctly-written MIS_Submitted row -- the checker's own post-approval rerun tripped
+        # this exact race.
+        _mis_submitted_keys.clear()
+
         sd = get_month_status(maker_id, month_year)
         _update_submission_status(maker_id, month_year, "SUBMITTED",
                                   sd.get("completion_pct", 100),
