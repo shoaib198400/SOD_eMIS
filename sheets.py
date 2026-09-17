@@ -3089,10 +3089,22 @@ def generate_mis_pdf_report(
     zone_name = user_info.get("zone", "")
 
     def _s(text):
-        """Sanitise to latin-1 for fpdf2 core fonts."""
+        """Sanitise to latin-1 for fpdf2 core fonts (Helvetica is a base-14 PDF
+        font with no Unicode support). Without this, any character outside
+        Latin-1 -- most commonly an em/en dash or smart quote, used throughout
+        SECTION_NAMES, field hints, and this function's own header/footer
+        strings -- gets silently turned into "?" by encode(..., "replace"),
+        which is exactly the "?" seen in section headers and the report
+        footer. Map the common typographic ones to their plain-ASCII
+        equivalent first so they render as a real dash/quote instead."""
         if text is None:
             return ""
-        return str(text).encode("latin-1", "replace").decode("latin-1")
+        t = (str(text)
+             .replace("—", "-").replace("–", "-")   # em dash, en dash
+             .replace("‘", "'").replace("’", "'")   # smart single quotes
+             .replace("“", '"').replace("”", '"')   # smart double quotes
+             .replace("…", "..."))                        # ellipsis
+        return t.encode("latin-1", "replace").decode("latin-1")
 
     def _val(v):
         return _s(v) if v not in (None, "", "None") else "-"
