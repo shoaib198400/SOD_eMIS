@@ -1,6 +1,7 @@
 """HPCL SOD MIS — Main Streamlit Application. Build: 20260614-1."""
 
 import base64
+import html
 import os
 import platform
 from datetime import date, datetime, timedelta
@@ -457,6 +458,11 @@ def _render_field(field: dict, sk: str, disabled: bool, all_vals: dict):
     hint    = field.get("hint", "")
     tooltip = _field_help(field)
     label   = field["label"] + (" *" if field.get("req") else "")
+    errs    = st.session_state.get("_field_errs", {}).get(sk)
+    if errs:
+        # Refused at the last save: mark the label and put the reason in the hover tooltip
+        label   = "⚠️ " + label
+        tooltip = "⛔ NOT SAVED — " + "  \n⛔ ".join(errs) + "  \n\n" + tooltip
 
     if is_auto:
         val = all_vals.get(field["key"])
@@ -529,6 +535,12 @@ def _render_field(field: dict, sk: str, disabled: bool, all_vals: dict):
                         min_value=min_v, max_value=max_v,
                         key=sk, disabled=disabled, help=tooltip)
 
+    if errs:
+        st.markdown(
+            '<div style="color:#c62828;font-size:11.5px;margin:-8px 0 8px;line-height:1.4;">'
+            + "<br>".join(f"⛔ {html.escape(m)}" for m in errs) + "</div>",
+            unsafe_allow_html=True)
+
 
 def _do_save(user_id: str, month_year: str, section_num: int,
              fields: list, is_locked: bool) -> dict:
@@ -550,6 +562,13 @@ def _do_save(user_id: str, month_year: str, section_num: int,
     from datetime import date as _date_cls
     field_data, all_req_filled = {}, True
     range_errors = []
+    field_errs: dict = {}      # field key -> [reasons], shown on the field after a refused save
+
+    def _flag(keys, msg):
+        range_errors.append(msg)
+        for k in keys:
+            field_errs.setdefault(k, []).append(msg)
+
     cur_vals = {f["key"]: st.session_state.get(_sk(month_year, f["key"])) for f in fields}
     for f in fields:
         # A show_when field that's currently hidden must be force-cleared, not
@@ -571,12 +590,12 @@ def _do_save(user_id: str, month_year: str, section_num: int,
                     num_val = float(val)
                     f_min, f_max = f.get("min"), f.get("max")
                     if f_min is not None and num_val < float(f_min):
-                        range_errors.append(
-                            f"{f['label']}: {val} is below the minimum allowed ({f_min})")
+                        _flag([f["key"]],
+                              f"{f['label']}: {val} is below the minimum allowed ({f_min})")
                     elif f_max is not None and num_val > float(f_max):
-                        range_errors.append(
-                            f"{f['label']}: {val} is above the maximum allowed ({f_max}) "
-                            f"— check the unit (e.g. Lakhs vs Rupees)")
+                        _flag([f["key"]],
+                              f"{f['label']}: {val} is above the maximum allowed ({f_max}) "
+                              f"— check the unit (e.g. Lakhs vs Rupees)")
                 except (ValueError, TypeError):
                     pass
             field_data[f["key"]] = val
@@ -588,18 +607,29 @@ def _do_save(user_id: str, month_year: str, section_num: int,
     sec_keys = {f["key"] for f in fields}
     merged = {k: v for k, v in sheets.load_draft(user_id, month_year).items() if not k.startswith("_")}
     merged.update(field_data)
-    range_errors += [m for keys, m in mis_rules.cross_field_errors(merged) if keys & sec_keys]
+    for keys, m in mis_rules.cross_field_errors(merged):
+        if keys & sec_keys:
+            _flag(keys & sec_keys, m)
     ack_key = f"unit_ack_{month_year}_{section_num}"
     if not st.session_state.get(ack_key):
         prev = sheets.load_draft(user_id, mis_rules.prev_month_key(month_year))
-        unit_msgs = [m for keys, m in mis_rules.unit_guard_errors(merged, prev) if keys & sec_keys]
-        if unit_msgs:
+        unit_hits = [(keys, m) for keys, m in mis_rules.unit_guard_errors(merged, prev) if keys & sec_keys]
+        if unit_hits:
             st.session_state[f"unit_ack_needed_{month_year}_{section_num}"] = True
-            range_errors += unit_msgs + ["If the change is genuine, tick 'Values verified' "
-                                         "below the Save button and save again."]
+            for keys, m in unit_hits:
+                _flag(keys & sec_keys, m + " (if genuine, tick 'Values verified' below Save)")
+
+    # Remember per-field reasons so the next render marks each offending field;
+    # cleared again by a successful save.
+    errs_all = st.session_state.setdefault("_field_errs", {})
+    for f in fields:
+        errs_all.pop(_sk(month_year, f["key"]), None)
+    for k, msgs in field_errs.items():
+        errs_all[_sk(month_year, k)] = msgs
 
     if range_errors:
-        return {"ok": False, "msg": "Please correct before saving:  \n" + "  \n".join(range_errors)}
+        return {"ok": False, "msg": "Please correct before saving:  \n"
+                                    + "  \n".join(f"• {m}" for m in range_errors)}
     # Cross-field: complied recommendations cannot exceed total
     if section_num == 1 and all_req_filled:
         try:
@@ -2419,6 +2449,15 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
             st.session_state[sk] = val
             all_vals[f["key"]]   = val
 
+    # Reason the last save was refused (kept across the refresh that marks the fields)
+    _save_err_key = f"_save_err_{month_year}_{section_num}"
+    if st.session_state.get(_save_err_key):
+        st.error("⛔ **Not saved.** " + st.session_state[_save_err_key]
+                 + "  \nFields marked ⚠️ below show the reason — hover the ? next to the label.")
+    _ok_flash = st.session_state.pop(f"_save_ok_{month_year}_{section_num}", None)
+    if _ok_flash:
+        st.success(_ok_flash)
+
     # ── Render fields grouped by sub-section ──────────────────────────────────
     seen_subs: list = []
     sub_groups: dict = {}
@@ -2511,6 +2550,10 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         if not is_locked:
             save_clicked = st.button("💾  Save Draft", key="btn_save",
                                      use_container_width=True, type="primary")
+            if st.session_state.get(f"_save_err_{month_year}_{section_num}"):
+                st.markdown('<div style="color:#c62828;font-size:12px;text-align:center;">'
+                            '⛔ Last save was refused — see the message at the top of this section'
+                            '</div>', unsafe_allow_html=True)
             if st.session_state.get(f"unit_ack_needed_{month_year}_{section_num}"):
                 st.checkbox("Values verified — the large change from last month is genuine",
                             key=f"unit_ack_{month_year}_{section_num}")
@@ -2548,8 +2591,11 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
             # this branch never checked _do_save's result at all, so a
             # validation failure here would have been silently discarded
             # and the user would move on unaware anything was wrong.
-            st.error(f"Save failed: {_nav_res.get('msg', 'Unknown error')}")
-        elif navigate_to == "dashboard":
+            # Keep the reason and refresh, so the offending fields get marked.
+            st.session_state[_save_err_key] = _nav_res.get("msg", "Unknown error")
+            st.rerun()
+        st.session_state.pop(_save_err_key, None)
+        if navigate_to == "dashboard":
             st.session_state.selected_section = None
             st.rerun()
         elif navigate_to == "mi_mis":
@@ -2566,20 +2612,27 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         if _det_errs and res.get("ok"):
             res = {"ok": False, "msg": "Section values saved, but these table rows were NOT saved:  \n"
                                       + "  \n".join(_det_errs)}
+        if not res.get("ok"):
+            st.session_state[_save_err_key] = res.get("msg", "Unknown error")
+            st.rerun()
+        _had_err = st.session_state.pop(_save_err_key, None)
         if res.get("ok"):
             st.session_state.pop(lock_cache_key, None)
             pct = int(res.get("pct", 0))
             if section_num in res.get("secs_done", []):
-                st.success(f"Draft saved! Overall completion: {pct}%  ✅ Section complete!")
+                _ok_msg = f"Draft saved! Overall completion: {pct}%  ✅ Section complete!"
             else:
                 _missing = [f["label"] for f in fields
                             if f.get("req") and not f.get("auto")
                             and st.session_state.get(_sk(month_year, f["key"])) in (None, "")]
                 _warn = (f"  ⚠️ Required field(s) not filled: **{', '.join(_missing)}** "
                          f"— section not marked complete yet.") if _missing else ""
-                st.success(f"Draft saved! Overall completion: {pct}%{_warn}")
-        else:
-            st.error(f"Save failed: {res.get('msg', 'Unknown error')}")
+                _ok_msg = f"Draft saved! Overall completion: {pct}%{_warn}"
+            if _had_err:
+                # Refresh once so the ⚠️ markers from the refused save disappear
+                st.session_state[f"_save_ok_{month_year}_{section_num}"] = _ok_msg
+                st.rerun()
+            st.success(_ok_msg)
 
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
