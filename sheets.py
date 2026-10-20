@@ -25,6 +25,8 @@ from datetime import datetime, date, timedelta
 
 import gspread
 import streamlit as st
+
+import mis_rules
 from google.oauth2.service_account import Credentials
 
 
@@ -152,6 +154,13 @@ _DETAIL_DEF = {
         ],
         "prefix_count": 5,   # Sr. No, Zone, Location, Month-Year, user_id
     },
+}
+
+# Date columns per detail tab — DD/MM/YYYY (or NA) in template, form and upload
+_DETAIL_DATE_KEYS = {
+    "RAILWAY_CLAIMS": {"last_hearing", "next_hearing"},
+    "IRR_DETAILS":    {"irr_date", "closure_date"},
+    "LEGAL_CASES":    {"last_hearing", "next_hearing"},
 }
 
 _MONTHS_S = ["Jan","Feb","Mar","Apr","May","Jun",
@@ -1408,6 +1417,9 @@ def approve_submission(maker_id: str, month_year: str, checker_id: str,
                        flat_data: dict, user_info: dict) -> dict:
     """Checker approves — writes flat row to MIS_Submitted and locks the month."""
     try:
+        # Auto-calculated fields are computed here so they are never blank or stale
+        # in MIS_Submitted (bulk-uploaded drafts never ran the form's calculation).
+        flat_data  = {**flat_data, **mis_rules.compute_autos(flat_data)}
         canon      = _canonical_mis_field_order()
         field_keys = [k for k, _ in canon]
         col_labels = [lbl for _, lbl in canon]
@@ -2248,7 +2260,7 @@ _MI_DROPDOWNS: dict[str, dict] = {
     "MI_VRU":             {"vru_operational": "Yes,No"},
     "MI_AUDIT_2627":      {"audit_carried_out": "Yes,No"},
     "MI_EQUIP_BREAKDOWN": {"equipment_name": "Pipeline,Pump,Fire Fighting Equipment,Fire Engine,DG Set,Other"},
-    "MI_EXT_PIPELINE":    {"pipeline_type": "UG,AG"},
+    "MI_EXT_PIPELINE":    {"pipeline_type": "UG,AG,AG+UG"},
     "MI_TANK_STATUS":     {"extension_taken": "Yes,No,NA",
                            "tank_status":     "Operational,Under Repair,Under Cleaning,Idle,Revamp,Others"},
 }
@@ -2589,13 +2601,6 @@ def generate_mis_template(
     ws1.protection.selectLockedCells   = False   # allow clicking locked cells
     ws1.protection.selectUnlockedCells = False
 
-    # Date field keys per detail tab — these get DD/MM/YYYY formula validation
-    _DETAIL_DATE_KEYS = {
-        "RAILWAY_CLAIMS": {"last_hearing", "next_hearing"},
-        "IRR_DETAILS":    {"irr_date", "closure_date"},
-        "LEGAL_CASES":    {"last_hearing", "next_hearing"},
-    }
-
     # ── Helper: protected detail sheet ──────────────────────────────────
     def _detail_sheet(sheet_name: str, tab_key: str):
         ddef      = _DETAIL_DEF[tab_key]
@@ -2633,13 +2638,13 @@ def generate_mis_template(
             col_ref = f"{cl}2:{cl}200"
             if key in date_keys:
                 cell0   = f"{cl}2"
-                formula = (f'=AND(LEN({cell0})=10,'
+                formula = (f'=OR(UPPER({cell0})="NA",AND(LEN({cell0})=10,'
                            f'MID({cell0},3,1)="/",'
-                           f'MID({cell0},6,1)="/")')
+                           f'MID({cell0},6,1)="/"))')
                 dv = DataValidation(
                     type="custom", formula1=formula,
                     allow_blank=True, showErrorMessage=True,
-                    errorStyle="warning", errorTitle="Invalid Date Format",
+                    errorStyle="stop", errorTitle="Invalid Date Format",
                     error='Enter date as DD/MM/YYYY (e.g. 25/06/2025) or "NA" if unknown.',
                     showInputMessage=True, promptTitle=lbl[:32],
                     prompt="DD/MM/YYYY — e.g. 25/06/2025  (or NA)")
@@ -3962,34 +3967,6 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                 return d.strftime("%d/%m/%Y"), True
         return sv, False
 
-    def _check_mis_field(f: dict, val):
-        """Same rules as the in-app section form (_do_save / widgets).
-        Returns (normalised_value, problem_or_None)."""
-        t = f.get("type")
-        if t in ("number", "int"):
-            try:
-                num = float(str(val).replace(",", "").strip())
-            except ValueError:
-                return val, "must be a number"
-            if t == "int" and num != int(num):
-                return val, "must be a whole number"
-            if f.get("min") is not None and num < float(f["min"]):
-                return val, f"is below the minimum allowed ({f['min']})"
-            if f.get("max") is not None and num > float(f["max"]):
-                return val, (f"is above the maximum allowed ({f['max']}) "
-                             f"— check the unit (e.g. Lakhs vs Rupees)")
-            return str(int(num)) if t == "int" else str(val).replace(",", "").strip(), None
-        if t == "select":
-            opts = f.get("opts") or []
-            sv = str(val).strip()
-            yn = {"Y": "Yes", "N": "No"}.get(sv.upper(), sv)
-            match = next((o for o in opts if o.lower() in (sv.lower(), yn.lower())), None)
-            return (match, None) if match else (val, f"must be one of: {', '.join(opts)}")
-        if t == "date":
-            nv, ok = _mi_date(val)
-            return (nv, None) if ok else (val, "must be a date as DD/MM/YYYY")
-        return val, None
-
     # Build label → key inverse map (case-insensitive, strip * and [Auto]),
     # and key → field def so values can be checked against the form's rules.
     label_map = {}
@@ -4051,7 +4028,7 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                                 pass
                         fdef = fdef_map[key]
                         if not fdef.get("auto"):
-                            val, problem = _check_mis_field(fdef, val)
+                            val, problem = mis_rules.check_field(fdef, val)
                             if problem:
                                 field_problems.append(f"'{fdef['label']}' = '{val}' — {problem}")
                                 continue
@@ -4086,15 +4063,32 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
 
         file_hdrs = [str(v or "").strip().lower() for v in rows2[0]]
         col_map   = {ci: hdr_to_key[h] for ci, h in enumerate(file_hdrs) if h in hdr_to_key}
+        date_keys = _DETAIL_DATE_KEYS.get(tab_key, set())
+        key_to_hdr = dict(zip(data_keys, col_hdrs))
 
-        for raw_row in rows2[1:]:
+        recs, problems = [], []
+        for xl_row, raw_row in enumerate(rows2[1:], 2):
             if all(v is None or str(v).strip() == "" for v in raw_row):
                 continue  # skip blank rows
             rec = {col_map[ci]: _norm(v)
                    for ci, v in enumerate(raw_row)
                    if ci in col_map and _norm(v)}
+            for k in date_keys & rec.keys():
+                nv, ok = mis_rules.norm_date(rec[k])
+                if ok:
+                    rec[k] = nv
+                else:
+                    problems.append(f"Row {xl_row}, '{key_to_hdr[k]}' = '{rec[k]}' — enter a date "
+                                    f"as DD/MM/YYYY or NA (put remarks in a status column)")
             if rec:
-                result[out_key].append(rec)
+                recs.append(rec)
+        if problems:
+            result["errors"].append(
+                f"⚠️ Sheet '{sheet_name}' was NOT imported — {len(problems)} problem(s). "
+                f"Previously saved rows are unchanged. Fix these and re-upload:  \n"
+                + "  \n".join(f"• {p}" for p in problems[:10]))
+            return
+        result[out_key].extend(recs)
 
     _parse_detail("Railway Claims", "RAILWAY_CLAIMS", "railway_claims")
     _parse_detail("IRR Details",    "IRR_DETAILS",    "irr_details")

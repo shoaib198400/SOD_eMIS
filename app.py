@@ -26,8 +26,9 @@ except Exception:
     pass
 # ─────────────────────────────────────────────────────────────────────────────
 
+import mis_rules
 import sheets
-from form_defs import SECTION_FIELDS, SECTION_NAMES, S5_FIELDS
+from form_defs import SECTION_FIELDS, SECTION_NAMES, S5_FIELDS, get_excluded_fields
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -582,8 +583,23 @@ def _do_save(user_id: str, month_year: str, section_num: int,
         elif f.get("req") and not f.get("auto"):
             all_req_filled = False
 
+    # Cross-field and unit checks (shared with bulk upload and approval) — only
+    # rules touching this section's fields, so another section's data never blocks.
+    sec_keys = {f["key"] for f in fields}
+    merged = {k: v for k, v in sheets.load_draft(user_id, month_year).items() if not k.startswith("_")}
+    merged.update(field_data)
+    range_errors += [m for keys, m in mis_rules.cross_field_errors(merged) if keys & sec_keys]
+    ack_key = f"unit_ack_{month_year}_{section_num}"
+    if not st.session_state.get(ack_key):
+        prev = sheets.load_draft(user_id, mis_rules.prev_month_key(month_year))
+        unit_msgs = [m for keys, m in mis_rules.unit_guard_errors(merged, prev) if keys & sec_keys]
+        if unit_msgs:
+            st.session_state[f"unit_ack_needed_{month_year}_{section_num}"] = True
+            range_errors += unit_msgs + ["If the change is genuine, tick 'Values verified' "
+                                         "below the Save button and save again."]
+
     if range_errors:
-        return {"ok": False, "msg": "Please correct before saving:\n" + "\n".join(range_errors)}
+        return {"ok": False, "msg": "Please correct before saving:  \n" + "  \n".join(range_errors)}
     # Cross-field: complied recommendations cannot exceed total
     if section_num == 1 and all_req_filled:
         try:
@@ -1834,8 +1850,8 @@ _DETAIL_UI = {
             "rly":               {"label": "Rly.",              "type": "text"},
             "pending_stage":     {"label": "Pending Stage",     "type": "text"},
             "status_claim":      {"label": "Status of Claim",   "type": "text"},
-            "last_hearing":      {"label": "Last Hearing Date", "type": "text"},
-            "next_hearing":      {"label": "Next Hearing Date", "type": "text"},
+            "last_hearing":      {"label": "Last Hearing Date", "type": "date"},
+            "next_hearing":      {"label": "Next Hearing Date", "type": "date"},
             "rct_status":        {"label": "RCT Status",        "type": "text"},
             "case_facts":        {"label": "Case Facts",        "type": "text"},
             "rejection_reasons": {"label": "Rejection Reasons", "type": "text"},
@@ -1849,11 +1865,11 @@ _DETAIL_UI = {
         "sub":   "IRR Data",
         "cols": {
             "irr_no":       {"label": "IRR #",          "type": "text"},
-            "irr_date":     {"label": "IRR Date",       "type": "text"},
+            "irr_date":     {"label": "IRR Date",       "type": "date"},
             "description":  {"label": "Description",    "type": "text"},
             "amount":       {"label": "Amount (Rs)",    "type": "float"},
             "status":       {"label": "Status",         "type": "select", "opts": ["OPEN", "CLOSED"]},
-            "closure_date": {"label": "Closure Date",   "type": "text"},
+            "closure_date": {"label": "Closure Date",   "type": "date"},
         },
     },
     "LEGAL_CASES": {
@@ -1868,8 +1884,8 @@ _DETAIL_UI = {
             "dealership":  {"label": "Dealership / Location",   "type": "text"},
             "background":  {"label": "Background",              "type": "text"},
             "status":      {"label": "Status",                  "type": "text"},
-            "last_hearing":{"label": "Last Hearing Date",       "type": "text"},
-            "next_hearing":{"label": "Next Hearing Date",       "type": "text"},
+            "last_hearing":{"label": "Last Hearing Date",       "type": "date"},
+            "next_hearing":{"label": "Next Hearing Date",       "type": "date"},
         },
     },
 }
@@ -1910,6 +1926,9 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
         lbl = cfg["label"]
         if t == "text":
             col_cfg[k] = st.column_config.TextColumn(lbl)
+        elif t == "date":
+            col_cfg[k] = st.column_config.TextColumn(
+                lbl, validate=mis_rules.DATE_OR_NA, help="DD/MM/YYYY, or NA")
         elif t == "float":
             col_cfg[k] = st.column_config.NumberColumn(lbl, format="%.2f")
         elif t == "int":
@@ -1979,16 +1998,37 @@ def _render_detail_table(tab_key: str, month_year: str, is_locked: bool) -> pd.D
     return edited
 
 
-def _save_detail_tables(detail_dfs: dict, user: dict, month_year: str, is_locked: bool):
-    """Save each detail table DataFrame to its Google Sheet tab."""
+def _save_detail_tables(detail_dfs: dict, user: dict, month_year: str, is_locked: bool) -> list:
+    """Save each detail table DataFrame to its Google Sheet tab.
+    Returns a list of validation errors; a table with errors is not saved."""
+    errors = []
     if is_locked or not detail_dfs:
-        return
+        return errors
     for tab_key, df in detail_dfs.items():
         if df is None or df.empty:
             continue
         rows = df.dropna(how="all").to_dict("records")
-        rows = [r for r in rows if any(str(v).strip() for v in r.values())]
+        rows = [r for r in rows if any(str(v).strip() for v in r.values() if v is not None)]
+        cols = _DETAIL_UI[tab_key]["cols"]
+        tab_errs = []
+        for i, r in enumerate(rows, 1):
+            for k, cfg in cols.items():
+                if cfg["type"] != "date":
+                    continue
+                v = r.get(k)
+                if v is None or (isinstance(v, float) and v != v):
+                    continue
+                nv, ok = mis_rules.norm_date(v)
+                if ok:
+                    r[k] = nv
+                else:
+                    tab_errs.append(f"{_DETAIL_UI[tab_key]['title']} row {i}: '{cfg['label']}' = '{v}' "
+                                    f"— enter a date as DD/MM/YYYY or NA (put remarks in a status column)")
+        if tab_errs:
+            errors += tab_errs
+            continue
         sheets.save_detail_table(user["userId"], month_year, tab_key, rows, user)
+    return errors
 
 
 # ── Section data-entry form (Phase 3) ────────────────────────────────────────
@@ -2471,6 +2511,9 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
         if not is_locked:
             save_clicked = st.button("💾  Save Draft", key="btn_save",
                                      use_container_width=True, type="primary")
+            if st.session_state.get(f"unit_ack_needed_{month_year}_{section_num}"):
+                st.checkbox("Values verified — the large change from last month is genuine",
+                            key=f"unit_ack_{month_year}_{section_num}")
         else:
             st.markdown(
                 '<p style="text-align:center;color:#8c9db5;font-style:italic;padding-top:8px;">'
@@ -2497,7 +2540,9 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
     if navigate_to is not None:
         with st.spinner("Saving…"):
             _nav_res = _do_save(user["userId"], month_year, section_num, fields, is_locked)
-            _save_detail_tables(detail_dfs, user, month_year, is_locked)
+            _det_errs = _save_detail_tables(detail_dfs, user, month_year, is_locked)
+        if _det_errs and _nav_res.get("ok"):
+            _nav_res = {"ok": False, "msg": "  \n".join(_det_errs)}
         if not _nav_res.get("ok"):
             # Stay on this section instead of navigating away -- previously
             # this branch never checked _do_save's result at all, so a
@@ -2517,7 +2562,10 @@ def show_section_form(section_num: int, user: dict, month_year: str, month_label
     elif save_clicked:
         with st.spinner("Saving…"):
             res = _do_save(user["userId"], month_year, section_num, fields, is_locked)
-            _save_detail_tables(detail_dfs, user, month_year, is_locked)
+            _det_errs = _save_detail_tables(detail_dfs, user, month_year, is_locked)
+        if _det_errs and res.get("ok"):
+            res = {"ok": False, "msg": "Section values saved, but these table rows were NOT saved:  \n"
+                                      + "  \n".join(_det_errs)}
         if res.get("ok"):
             st.session_state.pop(lock_cache_key, None)
             pct = int(res.get("pct", 0))
@@ -2965,6 +3013,20 @@ def show_review(user: dict, month_year: str, month_label: str):
                     f"⛔  **Cannot Approve — {len(_incomplete)} section(s) incomplete:**  "
                     + ", ".join(f"S{n}" for n in _incomplete)
                     + "  |  The Maker must fill and save all sections before approval."
+                )
+
+            # Data-quality gate: the same rules as form save / upload, run on the
+            # whole draft, so inconsistent data can never be locked into MIS_Submitted.
+            _val_errs = mis_rules.validate_all(
+                {k: v for k, v in draft.items() if not k.startswith("_")},
+                skip_keys=get_excluded_fields(_maker_loc_type))
+            if _val_errs:
+                _all_complete = False
+                st.error(
+                    f"⛔  **Cannot Approve — {len(_val_errs)} data problem(s).** "
+                    "Reject with these notes so the Maker can correct them:  \n"
+                    + "  \n".join(f"• {m}" for m in _val_errs[:25])
+                    + (f"  \n• …and {len(_val_errs) - 25} more" if len(_val_errs) > 25 else "")
                 )
 
             _rej_key = f"_chk_rej_{maker_id}_{month_year}"
@@ -3788,6 +3850,23 @@ def _quick_links(user: dict, month_year: str, data: dict):
                             if not f.get("auto")
                             and st.session_state.get(f"draft_{mc}_{f['key']}") not in (None, "")
                         }
+                        # Same interlocks as the section form: hidden fields cleared,
+                        # auto fields computed, cross-field + unit checks on the whole MIS.
+                        all_vals = mis_rules.clear_hidden(all_vals)
+                        all_vals.update(mis_rules.compute_autos(all_vals))
+                        _excl = get_excluded_fields(sheets.get_loc_type(user["userId"]))
+                        _prev = sheets.load_draft(user["userId"], mis_rules.prev_month_key(month_year))
+                        _xf_errs = [m for keys, m in (mis_rules.cross_field_errors(all_vals)
+                                                      + mis_rules.unit_guard_errors(all_vals, _prev))
+                                    if not keys & set(_excl)]
+                        if _xf_errs:
+                            _prog.empty()
+                            for s in range(1, 11):
+                                st.session_state.pop(f"draft_loaded_{mc}_s{s}", None)
+                            st.error("⚠️ Upload NOT saved — the template has inconsistent values. "
+                                     "Correct them and upload again:  \n"
+                                     + "  \n".join(f"• {m}" for m in _xf_errs))
+                            st.stop()
                         save_res = sheets.save_draft(
                             user["userId"], month_year,
                             field_data=all_vals,
@@ -8381,7 +8460,7 @@ def _mi_tab_ext_pipeline(uid: str, month_year: str):
     sk_loaded = f"mi_{T}_{uid}_{month_year}_loaded"
 
     DATE_FIELDS    = ["last_ut_date", "last_hydrotest_date", "last_dcvg_date", "last_lrut_date"]
-    PIPE_TYPE_OPTS = ["UG", "AG"]
+    PIPE_TYPE_OPTS = ["UG", "AG", "AG+UG"]
 
     if not st.session_state.get(sk_loaded):
         saved = sheets.load_mi_data("MI_EXT_PIPELINE", uid, month_year)
