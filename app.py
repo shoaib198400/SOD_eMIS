@@ -2,6 +2,7 @@
 
 import base64
 import html
+import re
 import os
 import platform
 from datetime import date, datetime, timedelta
@@ -4262,6 +4263,8 @@ def show_dashboard():
     with col_links:
         _quick_links(user, selected["value"], data)
 
+    _period_mis_download(user)
+
     # ── Footer ────────────────────────────────────────────────────────────────
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
@@ -4271,6 +4274,112 @@ def show_dashboard():
       <span>HPCL SOD &nbsp;·&nbsp; Supply Operations & Distribution &nbsp;·&nbsp; Authorised Users Only</span>
     </div>
     """, unsafe_allow_html=True)
+
+
+# ── Consolidated MIS download for a period (all logins) ──────────────────────
+
+def _period_mis_download(user: dict):
+    """Quarterly / half-yearly / full-year / custom-range consolidated MIS download.
+    Scope follows the login: Location (Maker/Checker) → own location; Zone → its
+    locations (all or one); HQO Admin / SOD View → all zones, one zone or one location.
+    Only Checker-approved months are included; the rest are listed on the cover."""
+    role = user.get("role", "")
+    uid  = user["userId"]
+    st.markdown(
+        '<div style="border-top:1px solid #dde3ed;margin-top:20px;padding-top:14px;">'
+        '<div style="font-size:14px;font-weight:700;color:#002b8f;margin-bottom:2px;">'
+        '📥 Consolidated MIS — Quarterly / Half-yearly Download</div>'
+        '<div style="font-size:11.5px;color:#666;margin-bottom:8px;">'
+        'One Excel workbook: period summary per location (and per zone), month-wise MIS '
+        'data and all S5A M&amp;I sheets. Only approved MIS is included.</div></div>',
+        unsafe_allow_html=True,
+    )
+    today  = date.today()
+    cur_fy = today.year if today.month >= 4 else today.year - 1
+    fys    = list(range(cur_fy, 2025, -1)) or [cur_fy]
+
+    c_fy, c_per, c_rng = st.columns([1.2, 1.6, 2.4])
+    with c_fy:
+        fy = st.selectbox("Financial Year", fys, key=f"pd_fy_{uid}",
+                          format_func=lambda y: f"FY {y}-{str(y + 1)[2:]}")
+    with c_per:
+        period = st.selectbox("Period", list(sheets.PERIODS) + ["Custom range"], key=f"pd_per_{uid}")
+    fy_months = sheets.period_month_keys(fy, sheets.PERIODS["Full Year"])
+    if period == "Custom range":
+        with c_rng:
+            r1, r2 = st.columns(2)
+            m_from = r1.selectbox("From", fy_months, key=f"pd_from_{uid}")
+            m_to   = r2.selectbox("To", fy_months, index=len(fy_months) - 1, key=f"pd_to_{uid}")
+        i1, i2 = fy_months.index(m_from), fy_months.index(m_to)
+        months = fy_months[min(i1, i2):max(i1, i2) + 1]
+        period_lbl = f"{months[0]} to {months[-1]}"
+    else:
+        months = sheets.period_month_keys(fy, sheets.PERIODS[period])
+        period_lbl = period.split(" ")[0]
+    months = [m for m in months if datetime.strptime(m, "%b-%Y").date() <= today]
+
+    # ── Scope by login ────────────────────────────────────────────────────────
+    sel_zone, sel_loc = None, None
+    if role in ("Admin", "Viewer"):
+        all_locs = sheets.get_all_maker_locations()
+        zones = sorted({l["zone"] for l in all_locs if l["zone"]})
+        s1, s2 = st.columns(2)
+        z = s1.selectbox("Zone", ["All Zones"] + zones, key=f"pd_zone_{uid}")
+        sel_zone = None if z == "All Zones" else z
+        zl = sorted((l for l in all_locs if l["zone"] == sel_zone), key=lambda l: l["locName"]) if sel_zone else []
+        lc = s2.selectbox("Location", ["All locations"] + [f"{l['locName']} ({l['userId']})" for l in zl],
+                          key=f"pd_loc_{uid}", disabled=not sel_zone)
+        sel_loc = None if lc == "All locations" else lc.rsplit("(", 1)[1].rstrip(")")
+        scope_lbl = (f"Location {lc}" if sel_loc else f"{sel_zone} — all locations" if sel_zone
+                     else "All zones, all locations")
+    elif role == "Zone":
+        zone_locs = sorted(sheets.get_locations_by_zone(user["zone"]), key=lambda l: l["locName"])
+        lc = st.selectbox("Location", [f"All locations in {user['zone']}"]
+                          + [f"{l['locName']} ({l['userId']})" for l in zone_locs], key=f"pd_loc_{uid}")
+        sel_loc = None if lc.startswith("All locations") else lc.rsplit("(", 1)[1].rstrip(")")
+        scope_lbl = f"Location {lc}" if sel_loc else f"{user['zone']} — all locations"
+    else:
+        scope_lbl = f"Location {user.get('locName', uid)} ({uid})"
+
+    if not months:
+        st.info("The selected period has not started yet.")
+        return
+    st.caption(f"Scope: **{scope_lbl}**  ·  Months: {', '.join(months)}")
+
+    sig = (fy, period, tuple(months), sel_zone, sel_loc)
+    state_key = f"_pd_file_{uid}"
+    if st.button("⬇ Generate Consolidated MIS", key=f"pd_gen_{uid}", type="primary"):
+        with st.spinner(f"Building consolidated MIS for {len(months)} month(s)…"):
+            zone_locs_all = sheets.get_locations_by_zone(user["zone"]) if role == "Zone" else None
+            month_rows = []
+            for m in months:
+                if role in ("Admin", "Viewer"):
+                    rows = sheets.get_all_status_for_month(m)
+                elif role == "Zone":
+                    rows = sheets.get_submissions_for_locations(zone_locs_all, m)
+                else:
+                    rows = [{"userId": uid, "locName": user.get("locName", uid),
+                             "zone": user.get("zone", ""),
+                             "status": sheets.get_month_status(uid, m).get("status", "NOT_STARTED")}]
+                if sel_zone:
+                    rows = [r for r in rows if r.get("zone") == sel_zone]
+                if sel_loc:
+                    rows = [r for r in rows if r.get("userId") == sel_loc]
+                month_rows.append((m, rows))
+            data = sheets.generate_full_mis_consolidated_excel_fy(
+                month_rows, title=f"Consolidated MIS — {period} (FY {fy}-{str(fy + 1)[2:]})",
+                scope=scope_lbl)
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", scope_lbl).strip("_")[:40]
+        st.session_state[state_key] = (sig, data, f"MIS_{slug}_FY{fy}-{str(fy + 1)[2:]}_{re.sub(r'[^A-Za-z0-9]+', '_', period_lbl)}.xlsx")
+
+    saved = st.session_state.get(state_key)
+    if saved and saved[0] == sig:
+        if saved[1]:
+            st.download_button("⬇️ Download Consolidated MIS (Excel)", data=saved[1], file_name=saved[2],
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               key=f"pd_dl_{uid}", use_container_width=True)
+        else:
+            st.warning("No approved MIS found for this selection — nothing to download yet.")
 
 
 # ── Phase-6: Zone dashboard ──────────────────────────────────────────────────
@@ -6385,6 +6494,8 @@ def show_zone_dashboard(user: dict):
                 key=f"dl_z_mis_{month_year}",
             )
 
+    _period_mis_download(user)
+
     st.markdown("""
     <div style="margin-top:24px;padding:10px 4px;border-top:1px solid #dde3ed;
                 display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
@@ -6577,6 +6688,8 @@ def show_hqo_dashboard(user: dict):
                 use_container_width=True,
                 key=f"dl_h_mis_{month_year}_{sel_zone}",
             )
+
+    _period_mis_download(user)
 
     footer_label = "HQO View" if is_viewer else "HQO Admin View"
     st.markdown(f"""

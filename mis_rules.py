@@ -72,6 +72,31 @@ def check_field(f: dict, val):
     return val, None
 
 
+# ── period aggregation (quarterly / half-yearly downloads) ────────────────────
+# Point-in-time values (capacity, headcount, fleet, inventory, cumulative or
+# pending amounts): the period figure is the latest month's value.
+_LATEST_KEYS = {
+    "f9", "f13", "f16", "f24", "f144", "f147", "f148", "f149", "f150", "f151",
+    "f27", "f28", "f29", "f30", "f31", "f32", "f33", "f34",
+    "f36", "f37", "f157", "f158", "f38", "f39", "f40", "f41", "f42",
+    "f69", "f71", "f72", "f73", "f77", "f78", "f105", "f106", "f107", "f108",
+    "f110", "f111", "f112", "f113", "f114", "f115", "f116", "f117", "f118", "f119",
+    "f120", "f121", "f127", "f131", "f159", "f160", "f161", "f162", "f163", "f164",
+}
+_AVG_HINTS = ("%", "Rs/MT", "Index", "Power Factor", "LPM", "(Min", "Minutes",
+              "First 2 Hours", "Demand in Current Month", "Operating Hours", "SEC (", "SWC (")
+
+
+def period_basis(k: str) -> str:
+    """How a field is rolled up over a quarter / half-year: Sum, Average or Latest."""
+    f = FIELDS[k]
+    if f["type"] not in ("number", "int") or k in _LATEST_KEYS:
+        return "Latest"
+    if f.get("max") == 100 or any(h in f["label"] for h in _AVG_HINTS):
+        return "Average"
+    return "Sum"
+
+
 # ── auto-calculated fields ────────────────────────────────────────────────────
 def compute_autos(vals: dict) -> dict:
     """Return {auto_key: value_str} for every auto field whose inputs are present."""

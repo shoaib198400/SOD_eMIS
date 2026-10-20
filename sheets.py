@@ -3650,13 +3650,34 @@ def generate_mi_mis_consolidated_excel(month_year: str, rows: list) -> bytes | N
     return buf.getvalue()
 
 
-def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | None:
-    """One workbook covering every SUBMITTED location for every FY month: a
+# ── Period definitions for consolidated downloads (financial year Apr–Mar) ──
+PERIODS = {
+    "Q1 (Apr–Jun)":   (4, 5, 6),
+    "Q2 (Jul–Sep)":   (7, 8, 9),
+    "Q3 (Oct–Dec)":   (10, 11, 12),
+    "Q4 (Jan–Mar)":   (1, 2, 3),
+    "H1 (Apr–Sep)":   (4, 5, 6, 7, 8, 9),
+    "H2 (Oct–Mar)":   (10, 11, 12, 1, 2, 3),
+    "Full Year":      (4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3),
+}
+
+
+def period_month_keys(fy_start_year: int, months: tuple) -> list:
+    """FY month numbers -> ['Apr-2026', ...] in FY order (Jan–Mar fall in the next year)."""
+    return [f"{_MONTHS_S[m - 1]}-{fy_start_year if m >= 4 else fy_start_year + 1}" for m in months]
+
+
+def generate_full_mis_consolidated_excel_fy(month_year_rows: list, title: str = None,
+                                            scope: str = None) -> bytes | None:
+    """One workbook covering every SUBMITTED location for the given months: a
     "Full MIS Data" sheet with every flat S1-S10 field (read straight from
     MIS_Submitted, one row per location/month) alongside the 10 M&I (S5A)
     sheets. TOP/HMEL locations are included in the flat-data sheet (M&I is
     not applicable to them, but their other sections are) and excluded only
     from the M&I sheets.
+    With a title (period downloads) it also adds a Period Summary per
+    location, a Zone Summary when several locations are included, and lists
+    location-months not yet approved on the cover.
     Returns None if there is nothing to include.
     """
     import io as _io
@@ -3667,10 +3688,15 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
 
     all_month_entries = []   # every SUBMITTED location, all sections
     mi_month_entries   = []   # SUBMITTED + M&I-applicable only (excludes TOP/HMEL)
+    not_approved       = []   # (month, zone, location, status) — listed on the cover
     for my, rows in month_year_rows:
         all_locs, mi_locs = [], []
         for r in rows:
             if r.get("status") != "SUBMITTED":
+                if r.get("userId"):
+                    not_approved.append((my, r.get("zone", ""),
+                                         f"{r.get('locName', '')} ({r.get('userId')})",
+                                         str(r.get("status", "NOT_STARTED")).replace("_", " ").title()))
                 continue
             uid = r.get("userId", "").strip()
             if not uid:
@@ -3731,10 +3757,15 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
     ws0.title = "Cover"
     total_loc_months = sum(len(locs) for _, locs in all_month_entries)
     cover_data = [
-        ("Report",  "Consolidated MIS (Full + M&I) — All Months, All Locations"),
+        ("Report",  title or "Consolidated MIS (Full + M&I) — All Months, All Locations"),
         ("Months",  ", ".join(my for my, _ in all_month_entries)),
         ("Location-Months Included", str(total_loc_months)),
     ]
+    if scope:
+        cover_data.insert(1, ("Scope", scope))
+        cover_data.append(("Generated", datetime.now().strftime("%d/%m/%Y %H:%M")))
+        cover_data.append(("Note", "Only Checker-approved (SUBMITTED) MIS is included. "
+                                   "Months not yet approved are listed at the bottom."))
     for ri, (k, v) in enumerate(cover_data, 1):
         ws0.cell(row=ri, column=1, value=k).font = _font(bold=True, color="0033A0", size=11)
         ws0.cell(row=ri, column=2, value=v).font = _font(size=11)
@@ -3753,6 +3784,18 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
             ws0.cell(row=ri, column=3, value=f"{loc['locName']} ({loc['userId']})")
             ri += 1
     ws0.column_dimensions["C"].width = 40
+    if scope and not_approved:
+        ri += 1
+        ws0.cell(row=ri, column=1, value="NOT INCLUDED — not yet approved").font = \
+            _font(bold=True, color="B71C1C", size=10)
+        ri += 1
+        for ci, h in enumerate(("Month", "Zone", "Location", "Status"), 1):
+            ws0.cell(row=ri, column=ci, value=h).font = _font(bold=True, color="B71C1C", size=10)
+        for rec in not_approved:
+            ri += 1
+            for ci, v in enumerate(rec, 1):
+                ws0.cell(row=ri, column=ci, value=v)
+        ws0.column_dimensions["D"].width = 18
 
     # ── Full MIS Data sheet (flat S1-S10 fields, all months/locations) ──────
     ws_full = wb.create_sheet("Full MIS Data")
@@ -3784,6 +3827,10 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
     ws_full.protection.password = "HPCL@MIS"
     ws_full.protection.selectLockedCells   = False
     ws_full.protection.selectUnlockedCells = False
+
+    if title and len(sub_vals) >= 2:
+        _period_summary_sheets(wb, sub_vals, all_month_entries, _hdr_row, _data_row,
+                               _font, HT_FONT, CENTER)
 
     # ── 10 M&I (S5A) subsection sheets ──────────────────────────────────────
     lead_headers = ["Month", "Zone", "Location Code", "Location Name"]
@@ -3818,6 +3865,84 @@ def generate_full_mis_consolidated_excel_fy(month_year_rows: list) -> bytes | No
     buf = _io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _period_summary_sheets(wb, sub_vals, all_month_entries, _hdr_row, _data_row,
+                           _font, note_font, center):
+    """Add 'Period Summary' (one row per location) and, for multi-location scopes,
+    'Zone Summary'. Each field is rolled up per mis_rules.period_basis():
+    Sum (flows / counts), Average (%, ratios, rates) or Latest (stock, capacity,
+    headcount, cumulative/pending values). The basis is printed under each header."""
+    headers = sub_vals[0]
+    lab2key = {f["label"]: k for k, f in mis_rules.FIELDS.items()}
+    fcols   = [(i, lab2key[h]) for i, h in enumerate(headers) if h in lab2key]
+    uid_idx = next((i for i, h in enumerate(headers) if h.strip().lower() in ("user id", "user_id")), 0)
+    mon_idx = next((i for i, h in enumerate(headers) if "month" in h.lower()), 3)
+    order   = {my: n for n, (my, _) in enumerate(all_month_entries)}
+    locinfo = {loc["userId"]: loc for _, locs in all_month_entries for loc in locs}
+    wanted  = {(loc["userId"], my) for my, locs in all_month_entries for loc in locs}
+    by_loc: dict = {}
+    for row in sub_vals[1:]:
+        row = (row + [""] * len(headers))[:len(headers)]
+        uid, my = row[uid_idx].strip(), row[mon_idx].strip()
+        if (uid, my) in wanted:
+            by_loc.setdefault(uid, []).append((order[my], row))
+
+    def roll(rows, ci, k):
+        vals = [(o, r[ci]) for o, r in sorted(rows) if str(r[ci]).strip() != ""]
+        if not vals:
+            return ""
+        basis = mis_rules.period_basis(k)
+        if basis == "Latest":
+            return vals[-1][1]
+        nums = [mis_rules.num(v) for _, v in vals]
+        nums = [x for x in nums if x is not None]
+        if not nums:
+            return vals[-1][1]
+        x = sum(nums) if basis == "Sum" else sum(nums) / len(nums)
+        return round(x, 3)
+
+    lead = ["Zone", "Location Code", "Location Name", "Months Approved"]
+    basis_row = ["", "", "", ""] + [mis_rules.period_basis(k) for _, k in fcols]
+
+    ws = wb.create_sheet("Period Summary", 1)
+    _hdr_row(ws, lead + [headers[ci] for ci, _ in fcols])
+    for ci, v in enumerate(basis_row, 1):
+        c = ws.cell(row=2, column=ci, value=v)
+        c.font = note_font; c.alignment = center
+    summary = []
+    for uid, rows in sorted(by_loc.items(), key=lambda t: (locinfo[t[0]]["zone"], locinfo[t[0]]["locName"])):
+        loc = locinfo[uid]
+        vals = [roll(rows, ci, k) for ci, k in fcols]
+        summary.append((loc["zone"], vals))
+        _data_row(ws, len(summary) + 2,
+                  [loc["zone"], uid, loc["locName"], len(rows)] + vals, len(summary) % 2 == 0)
+    ws.freeze_panes = ws["E3"]
+
+    if len(by_loc) > 1:
+        wz = wb.create_sheet("Zone Summary", 2)
+        _hdr_row(wz, ["Zone", "Locations"] + [headers[ci] for ci, _ in fcols])
+        zb = ["", ""] + [("Total of locations" if mis_rules.period_basis(k) != "Average"
+                          else "Average of locations") for _, k in fcols]
+        for ci, v in enumerate(zb, 1):
+            c = wz.cell(row=2, column=ci, value=v)
+            c.font = note_font; c.alignment = center
+        zones: dict = {}
+        for z, vals in summary:
+            zones.setdefault(z, []).append(vals)
+        for n, (z, lst) in enumerate(sorted(zones.items()), 3):
+            out = []
+            for j, (_, k) in enumerate(fcols):
+                nums = [mis_rules.num(v[j]) for v in lst]
+                nums = [x for x in nums if x is not None]
+                if not nums or mis_rules.FIELDS[k]["type"] not in ("number", "int"):
+                    out.append("")
+                elif mis_rules.period_basis(k) == "Average":
+                    out.append(round(sum(nums) / len(nums), 3))
+                else:
+                    out.append(round(sum(nums), 3))
+            _data_row(wz, n, [z, len(lst)] + out, n % 2 == 0)
+        wz.freeze_panes = wz["C3"]
 
 
 def scan_missing_mi_data(month_year_rows: list) -> list:
