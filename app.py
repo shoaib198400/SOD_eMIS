@@ -3678,6 +3678,8 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                     unsafe_allow_html=True,
                                 )
                         st.info("Fill the missing fields in the app or re-upload a corrected template.")
+                    for err in _prev.get("mi_errors", []):
+                        st.error(err)
                     if _prev.get("msg"):
                         st.success(_prev["msg"])
                 else:
@@ -3696,8 +3698,9 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                   "legal_cases": [], "mi_tabs": {}}
 
                     if parsed["errors"]:
-                        _mi_errs  = [e for e in parsed["errors"] if "M&I sheet" in e]
-                        _oth_errs = [e for e in parsed["errors"] if "M&I sheet" not in e]
+                        # "⚠️"-prefixed = data rejected by validation (M&I sheets / MIS Data)
+                        _mi_errs  = [e for e in parsed["errors"] if e.startswith("⚠️")]
+                        _oth_errs = [e for e in parsed["errors"] if not e.startswith("⚠️")]
                         for err in _mi_errs:
                             st.error(err)
                         for err in _oth_errs:
@@ -3820,6 +3823,11 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                         [{"na_flag": "Y"}])
                                     mi_tabs_saved += 1
                                 elif isinstance(mi_rows, list) and mi_rows:
+                                    # Same identity columns the in-app form writes
+                                    for _ri, _r in enumerate(mi_rows, 1):
+                                        _r.update({"row_no": str(_ri), "na_flag": "N",
+                                                   "zone": user.get("zone", ""),
+                                                   "loc_name": user.get("locName", "")})
                                     sheets.save_mi_data(
                                         mi_tab_key, user["userId"], month_year,
                                         mi_rows)
@@ -3867,6 +3875,7 @@ def _quick_links(user: dict, month_year: str, data: dict):
                                 "missing":  missing_fields,
                                 "secs_done": secs_complete,
                                 "msg":      msg,
+                                "mi_errors": [e for e in parsed["errors"] if e.startswith("⚠️")],
                             }
                             st.rerun()   # single clean rerun to refresh dashboard
 

@@ -2215,6 +2215,37 @@ def seed_email_master(location_map: dict, zone_map: dict) -> dict:
 
 # ── Phase-7: Excel Template Download & Upload ─────────────────────────────────
 
+# Date field keys per M&I tab — DD/MM/YYYY validation in the template and
+# server-side validation on upload.
+_MI_DATE_KEYS: dict[str, set] = {
+    "MI_TANK_OUTAGE":     {"planned_start", "planned_end", "actual_start", "actual_end"},
+    "MI_MAJOR_REPAIR":    {"etc_date"},
+    "MI_VRU":             {"date_not_operating", "etc_date"},
+    "MI_AUDIT_2526":      {"audit_date"},
+    "MI_AUDIT_2627":      {"audit_date"},
+    "MI_TECH_AUDIT":      {"audit_date"},
+    "MI_EQUIP_BREAKDOWN": {"start_date", "proposed_date", "actual_end_date"},
+    "MI_INT_PIPELINE":    {"last_ut_date", "last_hydrotest_date",
+                           "last_dcvg_date", "last_lrut_date"},
+    "MI_EXT_PIPELINE":    {"last_ut_date", "last_hydrotest_date",
+                           "last_dcvg_date", "last_lrut_date"},
+    "MI_TANK_STATUS":     {"cleaning_completed_date", "cleaning_due_date",
+                           "inspection_date", "inspection_due_date",
+                           "painting_date", "painting_due_date"},
+}
+
+# Fixed-choice columns per M&I tab (same lists as the app's M&I form dropdowns).
+_MI_DROPDOWNS: dict[str, dict] = {
+    "MI_MAJOR_REPAIR":    {"revenue_capex": "Revenue,Capex"},
+    "MI_VRU":             {"vru_operational": "Yes,No"},
+    "MI_AUDIT_2627":      {"audit_carried_out": "Yes,No"},
+    "MI_EQUIP_BREAKDOWN": {"equipment_name": "Pipeline,Pump,Fire Fighting Equipment,Fire Engine,DG Set,Other"},
+    "MI_EXT_PIPELINE":    {"pipeline_type": "UG,AG"},
+    "MI_TANK_STATUS":     {"extension_taken": "Yes,No,NA",
+                           "tank_status":     "Operational,Under Repair,Under Cleaning,Idle,Revamp,Others"},
+}
+
+
 def generate_mis_template(
     user_id: str,
     month_year: str,
@@ -2660,7 +2691,7 @@ def generate_mis_template(
           "AR code if applicable", "Current repair status", "DD/MM/YYYY — Expected completion"],
          ["tank_no", "other_tank_desc", "nature_of_repair",
           "revenue_capex", "ar_code", "current_status", "etc_date"],
-         {"revenue_capex": "Revenue,Capex"}),
+         _MI_DROPDOWNS["MI_MAJOR_REPAIR"]),
 
         ("MI_VRU", "S5A-3 VRU",
          ["VRU Operational", "Date Not Operating", "Action Taken", "ETC Date",
@@ -2681,7 +2712,7 @@ def generate_mis_template(
           "voc_value_mgcc", "inlet_emission_mgcc",
           "ms_gasohol_tt_vol_kl", "hsd_tt_vol_kl",
           "ms_gasohol_tw_vol_kl", "hsd_tw_vol_kl", "vru_uptime_pct"],
-         {"vru_operational": "Yes,No"}),
+         _MI_DROPDOWNS["MI_VRU"]),
 
         ("MI_AUDIT_2526", "S5A-4 M&I Audit 25-26",
          ["Audit Date", "No. of Recommendations", "No. Pending", "External Score"],
@@ -2697,7 +2728,7 @@ def generate_mis_template(
           "Pending recommendations", "Score from external auditor"],
          ["audit_carried_out", "audit_date", "no_recommendations",
           "no_pending", "external_score"],
-         {"audit_carried_out": "Yes,No"}),
+         _MI_DROPDOWNS["MI_AUDIT_2627"]),
 
         ("MI_TECH_AUDIT", "S5A-6 Tech. Audit",
          ["Audit Date", "No. of Recommendations", "No. Pending", "Ref. No."],
@@ -2716,7 +2747,7 @@ def generate_mis_template(
          ["equipment_name", "equipment_other", "equipment_details",
           "start_date", "issue", "proposed_date", "actual_end_date",
           "resolution_action"],
-         {"equipment_name": "Pipeline,Pump,Fire Fighting Equipment,Fire Engine,DG Set,Other"}),
+         _MI_DROPDOWNS["MI_EQUIP_BREAKDOWN"]),
 
         ("MI_INT_PIPELINE", "S5A-8 Int. Pipeline",
          ["Last UT Date", "Last Hydrotest Date", "Last DCVG Date",
@@ -2739,7 +2770,7 @@ def generate_mis_template(
          ["pipeline_type", "pipeline_details", "length_metres", "product", "size_inch",
           "last_ut_date", "last_hydrotest_date", "last_dcvg_date",
           "last_lrut_date", "other_testing"],
-         {"pipeline_type": "UG,AG"}),
+         _MI_DROPDOWNS["MI_EXT_PIPELINE"]),
 
         ("MI_TANK_STATUS", "S5A-10 Tank Status",
          ["Tank No", "Cleaning Completed Date", "Cleaning Due Date",
@@ -2760,32 +2791,13 @@ def generate_mis_template(
           "inspection_date", "inspection_due_date",
           "painting_date", "painting_due_date",
           "tank_status", "tank_status_other"],
-         {"extension_taken": "Yes,No,NA",
-          "tank_status":     "Operational,Under Repair,Under Cleaning,Idle,Revamp,Others"}),
+         _MI_DROPDOWNS["MI_TANK_STATUS"]),
     ]
 
     BANNER_FILL = _fill("1a1a6e")
     BANNER_FONT = _font(bold=True, color="FFFFFF", size=11)
     NA_FONT     = _font(italic=True, color="888888", size=10)
     NA_FILL     = _fill("F5F5F5")
-
-    # Date field keys per M&I tab — these get DD/MM/YYYY formula validation
-    _MI_DATE_KEYS: dict[str, set] = {
-        "MI_TANK_OUTAGE":     {"planned_start", "planned_end", "actual_start", "actual_end"},
-        "MI_MAJOR_REPAIR":    {"etc_date"},
-        "MI_VRU":             {"date_not_operating", "etc_date"},
-        "MI_AUDIT_2526":      {"audit_date"},
-        "MI_AUDIT_2627":      {"audit_date"},
-        "MI_TECH_AUDIT":      {"audit_date"},
-        "MI_EQUIP_BREAKDOWN": {"start_date", "proposed_date", "actual_end_date"},
-        "MI_INT_PIPELINE":    {"last_ut_date", "last_hydrotest_date",
-                               "last_dcvg_date", "last_lrut_date"},
-        "MI_EXT_PIPELINE":    {"last_ut_date", "last_hydrotest_date",
-                               "last_dcvg_date", "last_lrut_date"},
-        "MI_TANK_STATUS":     {"cleaning_completed_date", "cleaning_due_date",
-                               "inspection_date", "inspection_due_date",
-                               "painting_date", "painting_due_date"},
-    }
 
     for tab_key, sheet_name, hdrs, hints, keys, dropdowns in _MI_TAB_DEFS:
         ws_mi  = wb.create_sheet(sheet_name)
@@ -2853,13 +2865,13 @@ def generate_mis_template(
             if key in date_keys_tab:
                 # Custom formula: check DD/MM/YYYY text format
                 cell0   = f"{cl}4"
-                formula = (f'=AND(LEN({cell0})=10,'
+                formula = (f'=OR(UPPER({cell0})="NA",AND(LEN({cell0})=10,'
                            f'MID({cell0},3,1)="/",'
-                           f'MID({cell0},6,1)="/")')
+                           f'MID({cell0},6,1)="/"))')
                 dv = DataValidation(
                     type="custom", formula1=formula,
                     allow_blank=True, showErrorMessage=True,
-                    errorStyle="warning", errorTitle="Invalid Date Format",
+                    errorStyle="stop", errorTitle="Invalid Date Format",
                     error='Enter date as DD/MM/YYYY (e.g. 25/06/2025) or "NA" if not applicable.',
                     showInputMessage=True, promptTitle=hdr[:32],
                     prompt=f"DD/MM/YYYY (e.g. 25/06/2025) or NA")
@@ -2877,7 +2889,7 @@ def generate_mis_template(
                 dv = DataValidation(
                     type="list", formula1=f'"{dropdowns[key]}"',
                     allow_blank=True, showErrorMessage=True,
-                    errorStyle="warning", error=f"Select: {dropdowns[key]}",
+                    errorStyle="stop", error=f"Select: {dropdowns[key]}",
                     showInputMessage=True, promptTitle=hdr[:32], prompt=hint)
             else:
                 dv = DataValidation(
@@ -3912,16 +3924,75 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                 sv = f"{int(_d):02d}/{int(_m):02d}/{_y}"
         return sv if sv else None
 
+    import re as _re
+
+    _NA_WORDS = {"NA", "N/A", "N.A.", "N.A", "NIL", "-", "NOT APPLICABLE"}
+    _DATE_FMTS = ("%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%y", "%d.%m.%y",
+                  "%d-%m-%y", "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%Y-%m-%d",
+                  "%Y-%m-%d %H:%M:%S")
+    _DATE_LIKE = _re.compile(r'^\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}$')
+
+    def _mi_date(v):
+        """Coerce a date cell to 'DD/MM/YYYY' or 'NA'.
+        Returns (value, ok). Blank → ("", True)."""
+        if v is None or str(v).strip() == "":
+            return "", True
+        if isinstance(v, (_dt, _date)):
+            return v.strftime("%d/%m/%Y"), True
+        if isinstance(v, (int, float)) and 20000 <= v <= 80000:
+            # Excel date serial pasted as a plain number
+            return (_date(1899, 12, 30) + timedelta(days=int(v))).strftime("%d/%m/%Y"), True
+        sv = str(v).strip()
+        if sv.upper() in _NA_WORDS or sv.lower().startswith("na if not applicable"):
+            return "NA", True
+        for fmt in _DATE_FMTS:
+            try:
+                d = _dt.strptime(sv, fmt).date()
+            except ValueError:
+                continue
+            if 1950 <= d.year <= 2100:
+                return d.strftime("%d/%m/%Y"), True
+        return sv, False
+
+    def _check_mis_field(f: dict, val):
+        """Same rules as the in-app section form (_do_save / widgets).
+        Returns (normalised_value, problem_or_None)."""
+        t = f.get("type")
+        if t in ("number", "int"):
+            try:
+                num = float(str(val).replace(",", "").strip())
+            except ValueError:
+                return val, "must be a number"
+            if t == "int" and num != int(num):
+                return val, "must be a whole number"
+            if f.get("min") is not None and num < float(f["min"]):
+                return val, f"is below the minimum allowed ({f['min']})"
+            if f.get("max") is not None and num > float(f["max"]):
+                return val, (f"is above the maximum allowed ({f['max']}) "
+                             f"— check the unit (e.g. Lakhs vs Rupees)")
+            return str(int(num)) if t == "int" else str(val).replace(",", "").strip(), None
+        if t == "select":
+            opts = f.get("opts") or []
+            sv = str(val).strip()
+            yn = {"Y": "Yes", "N": "No"}.get(sv.upper(), sv)
+            match = next((o for o in opts if o.lower() in (sv.lower(), yn.lower())), None)
+            return (match, None) if match else (val, f"must be one of: {', '.join(opts)}")
+        if t == "date":
+            nv, ok = _mi_date(val)
+            return (nv, None) if ok else (val, "must be a date as DD/MM/YYYY")
+        return val, None
+
     # Build label → key inverse map (case-insensitive, strip * and [Auto]),
-    # and key → type so numeric fields can get the percent-cell compensation
-    # below without risking a non-numeric field (textarea/select/date).
+    # and key → field def so values can be checked against the form's rules.
     label_map = {}
     type_map  = {}
+    fdef_map  = {}
     for fields in SECTION_FIELDS.values():
         for f in fields:
             clean = f["label"].strip().rstrip(" *").replace(" [Auto]", "").strip().lower()
             label_map[clean] = f["key"]
             type_map[f["key"]] = f.get("type")
+            fdef_map[f["key"]] = f
 
     try:
         wb = load_workbook(_io.BytesIO(file_bytes), data_only=True)
@@ -3942,13 +4013,17 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
             hdr_row  = [str(c.value or "").strip().rstrip(" *").replace(" [Auto]", "").strip() for c in rows[1]]
             data_row = rows[3]   # row index 3 = row 4 (data) -- Cell objects
             N_ID = 4             # first 4 cols are identity (User ID, Location, Zone, Month-Year)
+            field_problems = []
             for ci, hdr in enumerate(hdr_row):
                 if ci < N_ID:
                     continue    # skip identity cols
                 key = label_map.get(hdr.lower())
                 if key and ci < len(data_row):
                     cell = data_row[ci]
-                    val  = _norm(cell.value)
+                    if type_map.get(key) == "date" and isinstance(cell.value, (int, float)):
+                        val = _mi_date(cell.value)[0] or None   # Excel date serial
+                    else:
+                        val = _norm(cell.value)
                     if val:
                         # A location's own copy of the template can end up with
                         # Excel's Percentage number format applied to a numeric
@@ -3966,7 +4041,23 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
                                 val = str(round(float(val) * 100, 4))
                             except (TypeError, ValueError):
                                 pass
+                        fdef = fdef_map[key]
+                        if not fdef.get("auto"):
+                            val, problem = _check_mis_field(fdef, val)
+                            if problem:
+                                field_problems.append(f"'{fdef['label']}' = '{val}' — {problem}")
+                                continue
                         result["fields"][key] = val
+            if field_problems:
+                shown = "  \n".join(f"• {p}" for p in field_problems[:15])
+                more  = (f"  \n• …and {len(field_problems) - 15} more"
+                         if len(field_problems) > 15 else "")
+                result["errors"].append(
+                    f"⚠️ MIS Data: {len(field_problems)} value(s) were NOT imported "
+                    f"(any earlier saved value for these fields is unchanged). "
+                    f"Correct them in the template and re-upload, or enter them in the app:"
+                    f"  \n{shown}{more}"
+                )
 
     # ── Detail sheets ────────────────────────────────────────────────────
     def _parse_detail(sheet_name, tab_key, out_key):
@@ -4044,14 +4135,56 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
 
     result["mi_tabs"] = {}   # {tab_key: [row_dict, ...] or "NA"}
 
-    import re as _re
-
     def _clean_h(s: str) -> str:
         """Normalise a header for fuzzy matching: strip dots, parens, slashes,
         unicode superscripts, standalone 'of', then remove all non-alphanumeric."""
         s = s.lower().replace("³", "3").replace("²", "2")
         s = _re.sub(r'\bof\b', '', s)
         return _re.sub(r'[^a-z0-9]', '', s)
+
+    def _validate_mi_rows(tab_key: str, hdr_row: list, col_map: dict, rows: list) -> list:
+        """Apply the same interlocks as the in-app M&I form to uploaded rows.
+        Normalises dates/choices in place; returns a list of problem strings."""
+        key_to_hdr = {k: hdr_row[ci] for ci, k in col_map.items()}
+        date_keys  = _MI_DATE_KEYS.get(tab_key, set())
+        choices    = {k: v.split(",") for k, v in _MI_DROPDOWNS.get(tab_key, {}).items()}
+        all_opts   = {o.lower() for opts in choices.values() for o in opts}
+        problems   = []
+        for xl_row, rec in rows:
+            def bad(key, msg):
+                problems.append(f"Row {xl_row}, '{key_to_hdr.get(key, key)}' = "
+                                f"'{rec.get(key, '')}' — {msg}")
+            if "tank_no" in col_map.values():
+                tn = str(rec.get("tank_no", "")).strip()
+                if not tn:
+                    problems.append(f"Row {xl_row}, 'Tank No' is empty — select a tank from the list.")
+                elif _DATE_LIKE.match(tn) or tn.lower() in all_opts:
+                    bad("tank_no", "this is not a tank number. Check that the "
+                                   "columns are not shifted (copy-paste).")
+            for k in col_map.values():   # column order
+                if k not in rec:
+                    continue
+                if k in date_keys:
+                    val, ok = _mi_date(rec[k])
+                    if ok:
+                        rec[k] = val
+                    else:
+                        bad(k, "not a valid date. Enter one date as DD/MM/YYYY, or NA.")
+                elif k in choices:
+                    opts  = choices[k]
+                    match = next((o for o in opts if o.lower() == str(rec[k]).strip().lower()), None)
+                    if match:
+                        rec[k] = match
+                    else:
+                        bad(k, f"must be one of: {', '.join(opts)}.")
+            if tab_key == "MI_TANK_STATUS":
+                if not rec.get("tank_status"):
+                    problems.append(f"Row {xl_row}, 'Tank Status' is empty.")
+                if rec.get("extension_taken") == "Yes" and not rec.get("extension_efn_no"):
+                    problems.append(f"Row {xl_row}, 'Extension EFN No' is required when Extension Taken = Yes.")
+                if rec.get("tank_status") == "Others" and not rec.get("tank_status_other"):
+                    problems.append(f"Row {xl_row}, 'Tank Status Other' is required when Tank Status = Others.")
+        return problems
 
     for sheet_name, tab_key, data_keys in _MI_UPLOAD_DEFS:
         if sheet_name not in wb.sheetnames:
@@ -4073,9 +4206,10 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
             if hc in clean_to_key:
                 col_map[ci] = clean_to_key[hc]
 
+        date_keys = _MI_DATE_KEYS.get(tab_key, set())
         tab_data = []
         had_data_row = False
-        for raw in mi_rows[3:]:   # skip banner(0), header(1), hint(2)
+        for xl_row, raw in enumerate(mi_rows[3:], 4):   # skip banner(0), header(1), hint(2)
             if all(v is None or str(v).strip() == "" for v in raw):
                 continue
             had_data_row = True
@@ -4087,11 +4221,26 @@ def parse_mis_upload(file_bytes: bytes) -> dict:
             rec = {}
             for ci, v in enumerate(raw):
                 if ci in col_map:
-                    nv = _norm(v)
-                    if nv:
+                    # Date cells keep their raw value (Excel serials, datetimes)
+                    # for _mi_date() during validation below.
+                    nv = v if col_map[ci] in date_keys and not isinstance(v, str) else _norm(v)
+                    if nv not in (None, ""):
                         rec[col_map[ci]] = nv
             if rec:
-                tab_data.append(rec)
+                tab_data.append((xl_row, rec))
+
+        if isinstance(tab_data, list) and tab_data:
+            problems = _validate_mi_rows(tab_key, hdr_row, col_map, tab_data)
+            if problems:
+                shown = "  \n".join(f"• {p}" for p in problems[:10])
+                more  = f"  \n• …and {len(problems) - 10} more" if len(problems) > 10 else ""
+                result["errors"].append(
+                    f"⚠️ M&I sheet '{sheet_name}' was NOT imported — "
+                    f"{len(problems)} problem(s) found. Previously saved data for "
+                    f"this section is unchanged. Fix these and re-upload:  \n{shown}{more}"
+                )
+                continue
+            tab_data = [rec for _, rec in tab_data]
 
         # Loud failure: the sheet had real data rows, but NOT ONE of them
         # produced a recognised field — almost always a header-text mismatch
