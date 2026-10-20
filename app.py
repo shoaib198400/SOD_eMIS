@@ -2975,7 +2975,9 @@ def show_review(user: dict, month_year: str, month_label: str):
                              use_container_width=True, type="primary", key="rev_approve",
                              disabled=not _all_complete):
                     with st.spinner("Approving…"):
-                        maker_info = {"locName": maker_id, "zone": user.get("zone", "")}
+                        maker_info = sheets.get_maker_info(maker_id)
+                        if not maker_info.get("zone"):
+                            maker_info["zone"] = user.get("zone", "")
                         res = sheets.approve_submission(
                             maker_id, month_year, user["userId"], draft, maker_info
                         )

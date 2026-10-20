@@ -51,6 +51,14 @@ def _api_call(fn, *args, retries: int = 6, **kwargs):
             else:
                 raise
 
+
+def _cell_str(v) -> str:
+    """Value → sheet cell text. Only None/NaN become blank — a numeric 0 must
+    stay "0" (the old `str(v or "")` idiom silently blanked every zero)."""
+    if v is None or (isinstance(v, float) and v != v):
+        return ""
+    return str(v)
+
 _SCOPES = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
@@ -1274,7 +1282,7 @@ def save_detail_table(user_id: str, month_year: str, tab_key: str,
                 prefix = [sr, zone, user_id, loc, month_year, user_id]
             else:
                 prefix = [sr, zone, loc, month_year, user_id]
-            data_vals = [str(rec.get(k, "") or "") for k in defn["data_keys"]]
+            data_vals = [_cell_str(rec.get(k)) for k in defn["data_keys"]]
             ws.append_row(prefix + data_vals, value_input_option="RAW")
 
         audit_log(user_id, f"SaveDetail {tab_key}",
@@ -1412,7 +1420,7 @@ def approve_submission(maker_id: str, month_year: str, checker_id: str,
 
         row = ([maker_id, user_info.get("locName", ""), user_info.get("zone", ""),
                 month_year, now_str, now_str, checker_id]
-               + [str(flat_data.get(k, "") or "") for k in field_keys])
+               + [_cell_str(flat_data.get(k)) for k in field_keys])
 
         if len(all_r) >= 2:
             hdr    = all_r[0]
